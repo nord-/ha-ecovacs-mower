@@ -97,13 +97,12 @@ ENTITY_DESCRIPTIONS: tuple[EcovacsSensorEntityDescription, ...] = (
         key="total_stats_area",
         translation_key="total_stats_area",
         device_class=SensorDeviceClass.AREA,
-        # Lämnad som core har den, men enheten är osäker: stats_area ovan
-        # härleder sin enhet via get_area_native_unit_of_measurement och får
-        # cm² för en gräsklippare, medan den här hårdkodar m². Rapporterar
-        # enheten totalytan i cm² blir värdet 10 000 gånger för högt. Samma
-        # asymmetri finns i HA 2026.7.4, så det är antingen en uppströmsbugg
-        # eller två fält som faktiskt använder olika enheter. Avgörs mot
-        # Ecovacs-appen vid hårdvaruverifieringen — se issue #3.
+        # m² är rätt, trots att stats_area ovan får cm² via
+        # get_area_native_unit_of_measurement. De två fälten använder faktiskt
+        # olika enheter på tråden: enheten rapporterar ytan per pass i cm² och
+        # totalytan i m². Verifierat mot hårdvara och mot Ecovacs-appen — se
+        # issue #3. Asymmetrin ser ut som ett slarvfel men är korrekt; ändra
+        # inte till get_area_native_unit_of_measurement.
         native_unit_of_measurement=UnitOfArea.SQUARE_METERS,
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
