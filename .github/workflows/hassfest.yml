@@ -22,3 +22,9 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
+          # brands kräver en ikon i home-assistant/brands, vilket bara behövs
+          # för listning i HACS default-store. Integrationen installeras som
+          # custom repository, så kontrollen kan aldrig bli grön och skulle
+          # göra jobbet permanent rött. Ta bort raden den dag brands-PR:en är
+          # inne och default-store blir aktuellt.
+          ignore: brands
