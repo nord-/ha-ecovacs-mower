@@ -11,6 +11,7 @@ it never raises and never touches the control path.
 
 from __future__ import annotations
 
+from abc import ABC
 from dataclasses import dataclass
 import logging
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -64,8 +65,12 @@ class MowerNoGoZonesEvent(Event):
     zones: list[Polygon]
 
 
-class _MapMessage(MessageBodyDataDict):
-    """Shared multipart buffering and best-effort decoding."""
+class _MapMessage(MessageBodyDataDict, ABC):
+    """Shared multipart buffering and best-effort decoding.
+
+    ABC must be a direct base: the library's __init_subclass__ NAME check
+    exempts only classes with ABC in __bases__.
+    """
 
     _buffer: ClassVar[FragmentBuffer]
 
