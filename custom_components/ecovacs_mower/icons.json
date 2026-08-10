@@ -17,6 +17,11 @@
         "default": "mdi:string-lights"
       }
     },
+    "device_tracker": {
+      "position": {
+        "default": "mdi:crosshairs-gps"
+      }
+    },
     "event": {
       "last_job": {
         "default": "mdi:history"

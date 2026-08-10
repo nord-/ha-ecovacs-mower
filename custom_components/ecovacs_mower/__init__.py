@@ -10,6 +10,7 @@ from .controller import EcovacsController
 
 PLATFORMS = [
     Platform.BUTTON,
+    Platform.DEVICE_TRACKER,
     Platform.EVENT,
     Platform.LAWN_MOWER,
     Platform.NUMBER,

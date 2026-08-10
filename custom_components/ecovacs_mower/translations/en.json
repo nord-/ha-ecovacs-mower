@@ -56,6 +56,9 @@
       "reset_lifespan_trimmer_brush": { "name": "Reset trimmer brush" },
       "reset_lifespan_weed_rope": { "name": "Reset weed rope" }
     },
+    "device_tracker": {
+      "position": { "name": "Position" }
+    },
     "event": {
       "last_job": {
         "name": "Last mowing job",
