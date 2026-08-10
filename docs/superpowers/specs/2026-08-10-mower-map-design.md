@@ -53,6 +53,10 @@ No deebot-client imports, no HA imports; runnable and testable on Windows.
 - `decompress(data: str) -> bytes` — base64 + LZMA_ALONE with the 4 missing
   uncompressed-size bytes re-inserted at offset 8 (same scheme as upstream's
   `decompress_7z_base64_data`).
+- **Multipart reassembly** — a pure fragment buffer (dict of
+  `index -> fragment` per `batid`; returns decoded bytes when the LZMA
+  attempt succeeds at `infoSize`, else `None`). Lives here, not in the
+  message classes, so it is testable without deebot-client.
 - Chain code → list of `(x, y)` mm points (see appendix for the encoding).
   Unknown digits (`0` occurs as a marker in traces) are skipped.
 - Parsers for the four blob structures, returning plain dataclasses
@@ -64,17 +68,24 @@ No deebot-client imports, no HA imports; runnable and testable on Windows.
 - Four message classes following the `OnChargeInfo` pattern: `OnMapTrack`,
   `OnMI`, `OnArI`, `OnSpecialContour`. Registered by `apply()` alongside the
   existing two. Exact name match in `MESSAGES` wins before the legacy
-  fallback, so `map=None` on our device classes is irrelevant.
+  fallback, so `map=None` on our device classes is irrelevant. The classes
+  are thin wrappers: fragment buffering and decoding delegate to
+  `geometry.py`.
 - Custom event dataclasses carrying decoded geometry, one per category:
   `MowerMapInfoEvent` (boundary/zones/corridors from `onMI` + `onArI`),
   `MowerObstaclesEvent` (`onArI` section 3), `MowerCoverageEvent`
-  (`onMapTrack`), `MowerNoGoZonesEvent` (`onSpecialContour`).
-- **Multipart reassembly:** large blobs arrive split (`index` 0, 1, …) with
-  no total-parts field. Parts are buffered per `batid`; after each part,
-  concatenation in index order is tried against LZMA — success with length
-  `infoSize` emits the event and clears the buffer, failure waits for the
-  next part. The buffer is capped (~16 batids per message type, oldest
-  evicted) so a lost part cannot leak memory.
+  (`onMapTrack`), `MowerNoGoZonesEvent` (`onSpecialContour`). All inherit
+  `deebot_client.events.base.Event` — `EventBus` keys on the event type and
+  `entity._subscribe` is typed `[EventT: Event]`.
+- **Update semantics are per section, never wholesale.** `onMI` carries
+  only the boundary, and both messages have "no update" variants (`onMI`
+  idle `s1;0;`, `onArI` sections with payload `"0"`). Event fields are
+  therefore `| None` where `None` means "unchanged"; producers set `None`
+  for absent/`"0"` sections, and a message decoding to no geometry at all
+  notifies nothing. `MowerMap` merges field-wise and ignores `None`.
+- **Multipart:** large blobs arrive split (`index` 0, 1, …) with no
+  total-parts field; the buffer is capped (~16 batids per message type,
+  oldest evicted) so a lost part cannot leak memory.
 - **New contract assumption:** custom event types are notified on
   deebot-client's `EventBus`, whose refresh-command lookup must degrade to a
   no-op for unknown event types. Guarded by a new test in
@@ -83,17 +94,21 @@ No deebot-client imports, no HA imports; runnable and testable on Windows.
 ### `map.py` — `MowerMap` model
 
 One instance per device, created by `EcovacsController` alongside the device
-list. Plain data holder — no HA or deebot coupling.
+list. Plain data holder — no HA or deebot coupling. The controller owns the
+event subscriptions that feed it and subscribes **eagerly at setup** —
+`EventBus.notify` drops events without subscribers, so lazy subscription
+from the entity would lose data. The controller also owns the `Store`
+(keeping `MowerMap` itself HA-free).
 
-- **Geometry:** latest version per category; each event replaces its
-  category wholesale (every message carries the complete current state —
-  confirmed by capture).
+- **Geometry:** latest value per category, merged field-wise from events;
+  `None` fields leave the previous value untouched (see update semantics
+  above).
 - **Coverage:** dict keyed `(zone, lane_row)` → segments. `onMapTrack`
   resends the same row with growing extents; replace-per-key gives
   last-state-wins and lets a re-mowed row overwrite the previous session.
 - **Position track:** bounded deque fed by `PositionsEvent` (cap ~2000
-  points; dense recent tail, older points thinned). `invalid: 1` points are
-  filtered out.
+  points; dense recent tail, older points thinned). Invalid points never
+  reach the event — the library's `GetPos` filters them before notifying.
 - **Heading:** latest `a` retained for the mower marker's direction.
 
 ### Persistence
@@ -101,9 +116,11 @@ list. Plain data holder — no HA or deebot coupling.
 Map data is push-only: without persistence the map is empty after a restart
 until the next mowing session. Geometry + coverage are saved via
 `helpers.storage.Store` (one file per config entry, keyed by device id),
-debounced ~30 s. The position track is **not** persisted, and neither is the
-mower's position (see marker rules). Corrupt store → log a warning, start
-with an empty map — never `ConfigEntryError` for map data.
+owned by the controller, using `Store.async_delay_save` with ~30 s delay —
+it flushes automatically at HA stop, so a clean restart loses nothing. The
+position track is **not** persisted, and neither is the mower's position
+(see marker rules). Corrupt store → log a warning, start with an empty map
+— never `ConfigEntryError` for map data.
 
 ### `image.py` — the entity
 
