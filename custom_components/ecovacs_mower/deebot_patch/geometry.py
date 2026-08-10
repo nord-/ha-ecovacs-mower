@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import lzma
 import re
+from collections import OrderedDict
 
 STEP_MM = 50
 
@@ -59,3 +60,39 @@ def chain_to_points(spec: str) -> Polygon:
             y += dy * STEP_MM
             points.append((x, y))
     return points
+
+
+class FragmentBuffer:
+    """Reassemble multipart blobs.
+
+    The wire format has no total-parts field; completion is detected by a
+    decompression attempt succeeding at exactly ``info_size`` bytes.
+    Bounded so a lost fragment cannot leak memory.
+    """
+
+    def __init__(self, max_batches: int = 16) -> None:
+        self._batches: OrderedDict[str, dict[int, str]] = OrderedDict()
+        self._max_batches = max_batches
+
+    def add(
+        self, batid: str, index: int, fragment: str, info_size: int
+    ) -> bytes | None:
+        """Add a fragment; return the decoded blob once complete, else None."""
+        parts = self._batches.setdefault(batid, {})
+        self._batches.move_to_end(batid)
+        parts[index] = fragment
+        while len(self._batches) > self._max_batches:
+            self._batches.popitem(last=False)
+
+        joined = "".join(parts[i] for i in sorted(parts))
+        try:
+            blob = decompress(joined)
+        except (lzma.LZMAError, ValueError):
+            # binascii.Error is a ValueError: a partial base64 string can
+            # fail either at decode or at decompression. Both mean
+            # "incomplete — wait for the next fragment".
+            return None
+        if len(blob) != info_size:
+            return None
+        del self._batches[batid]
+        return blob
