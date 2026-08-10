@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import lzma
 import re
 from collections import OrderedDict
 from dataclasses import dataclass
+
+_LOGGER = logging.getLogger(__name__)
 
 STEP_MM = 50
 
@@ -166,6 +169,12 @@ def parse_area_info(blob: bytes) -> AreaInfo:
     # like the rest at that point.
     zones: list[Polygon] | None = None
     if "1" in sections or "2" in sections:
+        if ("1" in sections) != ("2" in sections):
+            _LOGGER.debug(
+                "onArI updated zone section %s without its pair; the "
+                "sections-always-move-together assumption may be wrong",
+                "1" if "1" in sections else "2",
+            )
         zones = _polygons(sections.get("1", []) + sections.get("2", []))
 
     boundary: Polygon | None = None

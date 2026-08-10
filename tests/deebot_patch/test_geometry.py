@@ -11,6 +11,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from custom_components.ecovacs_mower.deebot_patch.geometry import (
     STEP_MM,
     FragmentBuffer,
@@ -163,6 +165,30 @@ def test_parse_area_info_zero_sections_mean_no_update() -> None:
     assert area.map_info.zones is None
     assert area.map_info.corridors is None
     assert len(area.obstacles) == 14
+
+
+def test_parse_area_info_logs_when_zone_sections_split(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Every captured onArI moves sections 1/2 together (both "1" or both
+    # "0"). If firmware ever splits them, the merge below would silently
+    # drop the other section's zones — this DEBUG line is the only trace.
+    blob = json.dumps([["m", "1", "1", "10;0,0;2"]]).encode()
+    with caplog.at_level("DEBUG"):
+        area = parse_area_info(blob)
+    assert area.map_info.zones is not None
+    assert "without its pair" in caplog.text
+
+
+def test_parse_area_info_does_not_log_when_sections_match(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    blob = json.dumps(
+        [["m", "1", "1", "10;0,0;2"], ["m", "2", "1", "11;0,0;2"]]
+    ).encode()
+    with caplog.at_level("DEBUG"):
+        parse_area_info(blob)
+    assert "without its pair" not in caplog.text
 
 
 def test_parse_map_track_single_lane() -> None:
