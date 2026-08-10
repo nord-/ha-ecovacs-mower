@@ -19,6 +19,7 @@ from deebot_client.messages.json import MESSAGES
 
 from .commands import CleanMower
 from .hardware import SUPPORTED_CLASSES, patch_device_info
+from .map_messages import OnArI, OnMapTrack, OnMI, OnSpecialContour
 from .messages import OnChargeInfo, OnScheduleTaskInfo
 
 __all__ = [
@@ -56,13 +57,17 @@ def apply() -> None:
 
     # Mutated in place: messages/__init__.py holds a reference to the same
     # object, so a rebinding would not be visible in get_message().
-    for message in (OnChargeInfo, OnScheduleTaskInfo):
+    for message in (
+        OnChargeInfo,
+        OnScheduleTaskInfo,
+        OnArI,
+        OnMapTrack,
+        OnMI,
+        OnSpecialContour,
+    ):
         MESSAGES[message.NAME] = message
-
-    if MESSAGES.get("onChargeInfo") is not OnChargeInfo:
-        _fail("registration of onChargeInfo did not take")
-    if MESSAGES.get("onScheduleTaskInfo") is not OnScheduleTaskInfo:
-        _fail("registration of onScheduleTaskInfo did not take")
+        if MESSAGES.get(message.NAME) is not message:
+            _fail(f"registration of {message.NAME} did not take")
 
     _LOGGER.debug("Message handlers registered")
 
