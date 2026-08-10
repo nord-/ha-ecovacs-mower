@@ -2,67 +2,67 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Vad projektet är
+## What this project is
 
-Home Assistant-custom integration (`custom_components/ecovacs_mower`) för Ecovacs GOAT-gräsklippare. Den är en **fork av HA cores `ecovacs`-integration** med XMPP/legacy-stödet bortklippt (MQTT-only) plus ett patchlager som rättar tre fel i `deebot-client` som gör GOAT ostyrbar. Se README.md för felbeskrivningarna och länkar till uppströms-PR:erna.
+Home Assistant custom integration (`custom_components/ecovacs_mower`) for Ecovacs GOAT lawn mowers. It's a **fork of HA core's `ecovacs` integration** with XMPP/legacy support cut out (MQTT-only), plus a patch layer that fixes three bugs in `deebot-client` that make the GOAT uncontrollable. See README.md for the bug descriptions and links to the upstream PRs.
 
-## Kommandon
+## Commands
 
 ```bash
-# Hela sviten — kräver Linux/CI
+# Full suite — requires Linux/CI
 python -m pytest tests/ -v
 
-# Enskild fil / test
+# Single file / test
 python -m pytest tests/test_sensor.py -v
 python -m pytest tests/test_sensor.py::test_name -v
 
-# Lokalt på Windows: bara protokoll-lagret går att köra
+# Locally on Windows: only the protocol layer can run
 python -m pytest tests/deebot_patch/ -p no:homeassistant -v
 
 pip install -r requirements-test.txt
 ```
 
-**Home Assistant går inte att importera på Windows** (`homeassistant/runner.py` gör ett oskyddat `import fcntl`). Därför:
+**Home Assistant can't be imported on Windows** (`homeassistant/runner.py` does an unguarded `import fcntl`). Therefore:
 
-- Allt som importerar HA ligger i en fil märkt `pytestmark = requires_ha` (från `tests/__init__.py`).
-- `-p no:homeassistant` krävs lokalt eftersom `pytest_homeassistant_custom_component` autoladdas som entry point — flaggan hör **inte** hemma i `pytest.ini`, CI behöver pluginet.
-- Sanningskällan för testresultat är CI (`.github/workflows/test.yml`, ubuntu-latest, Python 3.14). Påstå aldrig att sviten är grön utifrån en Windows-körning.
+- Anything that imports HA lives in a file marked `pytestmark = requires_ha` (from `tests/__init__.py`).
+- `-p no:homeassistant` is required locally because `pytest_homeassistant_custom_component` auto-loads as an entry point — the flag does **not** belong in `pytest.ini`, CI needs the plugin.
+- The source of truth for test results is CI (`.github/workflows/test.yml`, ubuntu-latest, Python 3.14). Never claim the suite is green based on a Windows run.
 
-CI kör dessutom hassfest och HACS-validering (`.github/workflows/hassfest.yml`). HACS-jobbets `topics`/`brands`-fel är förväntade — de gäller bara listning i default-storen.
+CI also runs hassfest and HACS validation (`.github/workflows/hassfest.yml`). The HACS job's `topics` error is expected — it only applies to listing in the default store. The `brands` check is explicitly ignored in the workflow for the same reason.
 
-## Arkitektur
+## Architecture
 
-### Patchlagret är den enda kopplingen till deebot-clients internals
+### The patch layer is the only connection to deebot-client's internals
 
-`deebot_patch/` är avgränsningen: **ingen annan modul får röra privata delar av `deebot_client`** (`_DEVICES`, `MESSAGES`). Byts biblioteket mot en vendrad klient skrivs bara den mappen om.
+`deebot_patch/` is the boundary: **no other module may touch private parts of `deebot_client`** (`_DEVICES`, `MESSAGES`). If the library is swapped for a vendored client, only that folder needs rewriting.
 
-- `commands.py` — `CleanMower`, ärver `Clean` (topic `clean`) med V2-nyttolast. Ersätter `CleanV2` som publicerar på `clean_V2`, vilket GOAT-firmware ignorerar.
-- `hardware.py` — `patch_device_info()` såddar `_DEVICES`-cachen med rättade `Capabilities` (`CleanMower` + `GetCleanInfo` istället för `GetCleanInfoV2`). Använder bibliotekets egen cachemekanism istället för monkeypatch. `SUPPORTED_CLASSES` listar verifierade enhetsklasser (`2i0fns` = O1200 LiDAR Pro).
-- `messages.py` — `OnChargeInfo` och `OnScheduleTaskInfo`, de två oombedda meddelanden biblioteket saknar handler för.
-- `__init__.py` — `apply()` (registrerar meddelandena, idempotent) och `verify_capabilities()`.
+- `commands.py` — `CleanMower`, inherits from `Clean` (topic `clean`) with a V2 payload. Replaces `CleanV2`, which publishes on `clean_V2`, which GOAT firmware ignores.
+- `hardware.py` — `patch_device_info()` seeds the `_DEVICES` cache with corrected `Capabilities` (`CleanMower` + `GetCleanInfo` instead of `GetCleanInfoV2`). Uses the library's own caching mechanism instead of monkeypatching. `SUPPORTED_CLASSES` lists verified device classes (`2i0fns` = O1200 LiDAR Pro).
+- `messages.py` — `OnChargeInfo` and `OnScheduleTaskInfo`, the two unsolicited messages the library lacks a handler for.
+- `__init__.py` — `apply()` (registers the messages, idempotent) and `verify_capabilities()`.
 
-### Ordningen i `EcovacsController.initialize()` är en hård invariant
+### The order in `EcovacsController.initialize()` is a hard invariant
 
 ```
-apply() → patch_device_info(varje SUPPORTED_CLASS) → get_devices() → verify_capabilities()
+apply() → patch_device_info(each SUPPORTED_CLASS) → get_devices() → verify_capabilities()
 ```
 
-`get_devices()` bakar in kapabiliteterna i `DeviceInfo.static`, en frozen dataclass. Patchar man efteråt har enheterna redan fått de opatchade. `verify_capabilities()` kontrollerar därför **objektet enheten faktiskt fick**, inte cachen — en cacheuppslagning skulle se rätt ut ändå.
+`get_devices()` bakes the capabilities into `DeviceInfo.static`, a frozen dataclass. Patching afterwards means the devices already got the unpatched ones. `verify_capabilities()` therefore checks **the object the device actually received**, not the cache — a cache lookup would look correct regardless.
 
-Fail-fast är avsiktligt: ser `deebot-client` inte ut som patchlagret förväntar sig kastas `PatchContractError` → `ConfigEntryError`, och integrationen vägrar starta hellre än att tyst sluta rapportera klipparens tillstånd. `tests/deebot_patch/test_contract.py` fångar samma antaganden i CI.
+Failing fast is intentional: if `deebot-client` doesn't look like the patch layer expects, it raises `PatchContractError` → `ConfigEntryError`, and the integration refuses to start rather than silently stop reporting the mower's state. `tests/deebot_patch/test_contract.py` catches the same assumptions in CI.
 
-### Entitetsplattformar
+### Entity platforms
 
-`lawn_mower` filtrerar på `device_type is DeviceType.MOWER`. De övriga (`sensor`, `switch`, `number`, `button`, `event`) byggs deklarativt: en `ENTITY_DESCRIPTIONS`-tuple av `EcovacsCapabilityEntityDescription`-subklasser med `capability_fn`, matad genom `util.get_supported_entities()`. Nya entiteter läggs till som en post i den tuplen — inte som en ny klass.
+`lawn_mower` filters on `device_type is DeviceType.MOWER`. The others (`sensor`, `switch`, `number`, `button`, `event`) are built declaratively: an `ENTITY_DESCRIPTIONS` tuple of `EcovacsCapabilityEntityDescription` subclasses with `capability_fn`, fed through `util.get_supported_entities()`. New entities are added as an entry in that tuple — not as a new class.
 
-`entity.py` har basklasserna (`EcovacsEntity`, `EcovacsDescriptionEntity`); prenumeration på events sker via `_subscribe()` i `async_added_to_hass`.
+`entity.py` has the base classes (`EcovacsEntity`, `EcovacsDescriptionEntity`); subscribing to events happens via `_subscribe()` in `async_added_to_hass`.
 
-## Konventioner
+## Conventions
 
-- **Docstrings och kommentarer skrivs på svenska**, kod-identifierare på engelska. Forkade moduler inleder sin docstring med vad som togs bort jämfört med core.
-- Kommentarer förklarar *varför*, särskilt där koden ser onödigt omständlig ut (exakt typjämförelse istället för `isinstance`, mutation på plats istället för ombindning). Ta inte bort dem för att "städa".
-- `strings.json` och `translations/en.json` ska vara **identiska** — `test_translations.py` vaktar det, ingen automatik synkar dem. Skapa aldrig en `sv.json`; HA-frontendens språk är engelska här.
-- Varje translation-nyckel och `icons.json`-nyckel ska höra till en verklig entitet — plattformstesterna kontrollerar båda riktningarna.
-- Ny hårdvara stöds genom att lägga till enhetsklassen i `SUPPORTED_CLASSES`. Icke-stödda MOWER-klasser loggar en warning med klassträngen; det är den sträng användare ombeds rapportera.
-- Version bumpas i `manifest.json`. `deebot-client` är hårt pinnad där och i `requirements-test.txt` — håll dem lika.
-- Conventional commits, inga AI-attributioner.
+- **This is a public repo — all outward-facing text is English**: docstrings, comments, commit messages, PR descriptions, issue/discussion replies. Code identifiers are English too. Forked modules open their docstring with what was removed compared to core.
+- Comments explain *why*, especially where the code looks needlessly convoluted (exact type comparison instead of `isinstance`, in-place mutation instead of rebinding). Don't remove them to "clean up".
+- `strings.json` and `translations/en.json` must be **identical** — `test_translations.py` guards this, nothing syncs them automatically. Never create an `sv.json`; the HA frontend's language here is English.
+- Every translation key and `icons.json` key must belong to a real entity — the platform tests check both directions.
+- New hardware is supported by adding the device class to `SUPPORTED_CLASSES`. Unsupported MOWER classes log a warning with the class string; that's the string users are asked to report.
+- Version is bumped in `manifest.json`. `deebot-client` is pinned there and in `requirements-test.txt` — keep them in sync.
+- Conventional commits, no AI attribution.
