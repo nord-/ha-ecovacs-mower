@@ -167,7 +167,20 @@ class EcovacsController:
                         await device.initialize(mqtt)
                         self._devices.append(device)
                         if device.capabilities.device_type is DeviceType.MOWER:
-                            await self._setup_map(device)
+                            # Map data is best effort; mower control is sacred.
+                            # A failure here must not fail the TaskGroup and
+                            # take mower control down with it.
+                            did = device.device_info["did"]
+                            try:
+                                await self._setup_map(device)
+                            except Exception:
+                                _LOGGER.warning(
+                                    "Map setup failed for %s; the map is "
+                                    "unavailable but the mower remains "
+                                    "controllable",
+                                    did,
+                                    exc_info=True,
+                                )
 
                     for device in mqtt_devices:
                         tg.create_task(_init(device))
@@ -257,7 +270,14 @@ class EcovacsController:
     async def teardown(self) -> None:
         """Disconnect controller."""
         for did, store in self._map_stores.items():
-            await store.async_save(self.maps[did].as_dict())
+            # A failed save must never block device teardown or the MQTT
+            # disconnect below: map is best effort, mower control is sacred.
+            try:
+                await store.async_save(self.maps[did].as_dict())
+            except Exception:
+                _LOGGER.warning(
+                    "Failed to save map store for %s", did, exc_info=True
+                )
         for device in self._devices:
             await device.teardown()
         if self._mqtt_client is not None:
