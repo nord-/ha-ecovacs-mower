@@ -60,8 +60,10 @@ No deebot-client imports, no HA imports; runnable and testable on Windows.
 - Chain code → list of `(x, y)` mm points (see appendix for the encoding).
   Unknown digits (`0` occurs as a marker in traces) are skipped.
 - Parsers for the four blob structures, returning plain dataclasses
-  (boundary, zones, corridors, obstacles, no-go polygons, coverage lanes,
-  perimeter traces).
+  (boundary, zones, corridors, obstacles, no-go polygons, coverage lanes).
+  Perimeter-trace records (onMapTrack kind 2) are parsed past but not
+  returned — they are not rendered (see the layer list) and the live
+  position track covers that visual.
 
 ### `deebot_patch/map_messages.py` — message classes and events
 
