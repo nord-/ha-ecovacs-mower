@@ -1,7 +1,7 @@
 # Mower map design (issue #13)
 
 Date: 2026-08-10
-Status: approved design, pending implementation plan
+Status: implemented (PR #20)
 
 ## Goal
 
