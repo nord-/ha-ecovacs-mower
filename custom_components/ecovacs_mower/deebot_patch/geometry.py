@@ -9,9 +9,11 @@ in docs/superpowers/specs/2026-08-10-mower-map-design.md (appendix).
 from __future__ import annotations
 
 import base64
+import json
 import lzma
 import re
 from collections import OrderedDict
+from dataclasses import dataclass
 
 STEP_MM = 50
 
@@ -96,3 +98,124 @@ class FragmentBuffer:
             return None
         del self._batches[batid]
         return blob
+
+
+@dataclass(frozen=True)
+class MapInfo:
+    """Static map geometry. None means "no update", never "empty"."""
+
+    boundary: Polygon | None = None
+    zones: list[Polygon] | None = None
+    corridors: list[Polygon] | None = None
+
+
+@dataclass(frozen=True)
+class AreaInfo:
+    """Decoded onArI payload."""
+
+    map_info: MapInfo
+    obstacles: list[Polygon] | None
+
+
+@dataclass(frozen=True)
+class MapTrack:
+    """Decoded onMapTrack coverage. An empty segment list clears the row."""
+
+    lanes: dict[tuple[str, int], list[Segment]]
+
+
+def parse_map_info(blob: bytes) -> MapInfo:
+    """Parse onMI: ``[["1","s1;1;<x,y>;<chain>"],["2","1"]]``.
+
+    The idle variant ``s1;0;`` carries no geometry and yields all-None.
+    """
+    boundary: Polygon | None = None
+    for entry in json.loads(blob):
+        fields = entry[1].split(";")
+        if entry[0] == "1" and fields[0] == "s1" and fields[1] == "1":
+            boundary = chain_to_points(";".join(fields[2:]))
+    return MapInfo(boundary=boundary)
+
+
+def _polygons(items: list[str]) -> list[Polygon]:
+    """Decode ``<id>;<x,y>;<chain>`` items, skipping id-only entries."""
+    result: list[Polygon] = []
+    for item in items:
+        _, _, spec = item.partition(";")
+        if spec:
+            result.append(chain_to_points(spec))
+    return result
+
+
+def parse_area_info(blob: bytes) -> AreaInfo:
+    """Parse onArI sections: 1/2 zones, 3 obstacles, 5 boundary, 6 corridors.
+
+    Entry format: ``["<mid>", "<section>", "<flag>", *items]`` where flag
+    "0" means "no update" for that section — represented as None so stored
+    geometry is never wiped by a heartbeat.
+    """
+    sections: dict[str, list[str]] = {}
+    for entry in json.loads(blob):
+        if len(entry) > 2 and entry[2] == "1":
+            sections[entry[1]] = entry[3:]
+
+    # ponytail: sections 1 and 2 are merged into one zones list — every
+    # captured onArI updates them together (both flag "1" or both "0").
+    # If a capture ever shows one without the other, one section's zones
+    # would wipe the other's: split them into separate None-able fields
+    # like the rest at that point.
+    zones: list[Polygon] | None = None
+    if "1" in sections or "2" in sections:
+        zones = _polygons(sections.get("1", []) + sections.get("2", []))
+
+    boundary: Polygon | None = None
+    if "5" in sections:
+        boundary_polygons = _polygons(sections["5"])
+        boundary = boundary_polygons[0] if boundary_polygons else None
+
+    corridors = _polygons(sections["6"]) if "6" in sections else None
+    obstacles = _polygons(sections["3"]) if "3" in sections else None
+
+    return AreaInfo(
+        map_info=MapInfo(boundary=boundary, zones=zones, corridors=corridors),
+        obstacles=obstacles,
+    )
+
+
+def parse_map_track(blob: bytes) -> MapTrack:
+    """Parse onMapTrack lane records: ``<zone>;1;<row>[;x,y;x,y…]``.
+
+    Coordinate pairs are mowed spans on a 100 mm row; a record without
+    coordinates clears the row. Perimeter-trace records (kind 2) are
+    ignored — the live position track covers that visual, and rendering
+    them is not in scope (see spec, "layers").
+    """
+    lanes: dict[tuple[str, int], list[Segment]] = {}
+    for entry in json.loads(blob):
+        for record in entry[2:]:
+            fields = record.split(";")
+            if len(fields) < 3 or fields[1] != "1":
+                continue
+            points = [
+                tuple(int(value) for value in part.split(","))
+                for part in fields[3:]
+                if "," in part
+            ]
+            lanes[(fields[0], int(fields[2]))] = list(
+                zip(points[::2], points[1::2])
+            )
+    return MapTrack(lanes=lanes)
+
+
+def parse_special_contour(blob: bytes) -> list[Polygon]:
+    """Parse onSpecialContour no-go zones: plain ``x,y;x,y;…;`` polygons."""
+    result: list[Polygon] = []
+    for entry in json.loads(blob):
+        result.append(
+            [
+                tuple(int(value) for value in part.split(","))
+                for part in entry[4].rstrip(";").split(";")
+                if part
+            ]
+        )
+    return result

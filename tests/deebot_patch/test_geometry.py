@@ -16,6 +16,10 @@ from custom_components.ecovacs_mower.deebot_patch.geometry import (
     FragmentBuffer,
     chain_to_points,
     decompress,
+    parse_area_info,
+    parse_map_info,
+    parse_map_track,
+    parse_special_contour,
 )
 
 FIXTURES: dict[str, list[Any]] = json.loads(
@@ -122,3 +126,61 @@ def test_fragment_buffer_evicts_oldest_when_full() -> None:
     assert (
         buffer.add("stale", 1, second["info"], second["infoSize"]) is None
     )
+
+
+def _blob(key: str) -> bytes:
+    """Decode a fixture, joining fragments when multipart."""
+    fragments = _fragments(key)
+    return decompress("".join(f["info"] for f in fragments))
+
+
+def test_parse_map_info_extracts_boundary() -> None:
+    info = parse_map_info(_blob("on_mi_full"))
+    assert info.boundary is not None
+    assert info.boundary[0] == (-31000, 1800)
+    assert len(info.boundary) == 2415
+    assert info.zones is None and info.corridors is None
+
+
+def test_parse_map_info_idle_carries_nothing() -> None:
+    info = parse_map_info(_blob("on_mi_idle"))
+    assert info.boundary is None
+    assert info.zones is None and info.corridors is None
+
+
+def test_parse_area_info_full_snapshot() -> None:
+    area = parse_area_info(_blob("on_ari_multipart"))
+    assert area.map_info.boundary is not None
+    assert area.map_info.boundary[0] == (-31000, 1800)
+    assert len(area.map_info.zones) == 5  # sections 1 + 2
+    assert len(area.map_info.corridors) == 3  # section 6
+    assert len(area.obstacles) == 15  # section 3, ids 100-114
+
+
+def test_parse_area_info_zero_sections_mean_no_update() -> None:
+    area = parse_area_info(_blob("on_ari_obstacles_only"))
+    assert area.map_info.boundary is None
+    assert area.map_info.zones is None
+    assert area.map_info.corridors is None
+    assert len(area.obstacles) == 14
+
+
+def test_parse_map_track_single_lane() -> None:
+    track = parse_map_track(_blob("on_map_track_single_lane"))
+    assert track.lanes == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
+
+
+def test_parse_map_track_bare_record_clears_the_row() -> None:
+    track = parse_map_track(_blob("on_map_track_multipart"))
+    assert track.lanes[("1", 36)] == []  # record "1;1;36" — no coordinates
+    assert track.lanes[("1", 41)] == [
+        ((-30850, 4025), (-28000, 4025))
+    ]
+
+
+def test_parse_special_contour() -> None:
+    polygons = parse_special_contour(_blob("on_special_contour"))
+    assert len(polygons) == 2
+    assert polygons[0] == [
+        (-29233, 1843), (-28568, 2576), (-27815, 1891), (-28481, 1158)
+    ]
