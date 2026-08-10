@@ -100,9 +100,10 @@ class _MapMessage(MessageBodyDataDict, ABC):
             return HandlingResult.success()
         try:
             return cls._notify(event_bus, blob)
-        except (ValueError, KeyError, IndexError):
-            # json.JSONDecodeError is a ValueError. Best effort: log and
-            # drop, never disturb the control path.
+        except (TypeError, ValueError, KeyError, IndexError):
+            # json.JSONDecodeError is a ValueError. TypeError covers a blob
+            # that decodes to something non-iterable (e.g. a bare int).
+            # Best effort: log and drop, never disturb the control path.
             _LOGGER.debug(
                 "Undecodable %s blob (batid %s)", cls.NAME, data.get("batid")
             )

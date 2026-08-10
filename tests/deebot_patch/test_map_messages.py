@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from custom_components.ecovacs_mower.deebot_patch.map_messages import (
     MowerCoverageEvent,
@@ -116,6 +116,32 @@ def test_corrupt_info_is_swallowed() -> None:
         },
     }
     OnMI.handle(event_bus, payload)  # must not raise
+    assert not [
+        call
+        for call in event_bus.notify.call_args_list
+        if isinstance(call.args[0], _MAP_EVENTS)
+    ]
+
+
+def test_scalar_blob_type_error_is_swallowed() -> None:
+    # A blob that decodes to a JSON scalar (not a list) raises TypeError
+    # while iterating in the parsers — must be swallowed like any other
+    # malformed payload, never escape to deebot-client's dispatch.
+    event_bus = Mock()
+    payload = {
+        "header": {"ts": "0", "tzm": 120, "fwVer": "1.11.31"},
+        "body": {
+            "data": {
+                "mid": "1",
+                "batid": "scalar",
+                "index": "0",
+                "infoSize": 2,
+                "info": "ignored",
+            }
+        },
+    }
+    with patch.object(OnMI._buffer, "add", return_value=b"42"):
+        OnMI.handle(event_bus, payload)  # must not raise
     assert not [
         call
         for call in event_bus.notify.call_args_list
