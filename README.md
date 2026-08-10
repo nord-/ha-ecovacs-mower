@@ -134,7 +134,7 @@ Enter it and setup continues.
 
 ## What you get
 
-Thirty entities on the mower's device page, across six platforms:
+Thirty-one entities on the mower's device page, across seven platforms:
 
 | Platform | Count | What |
 |---|---|---|
@@ -144,14 +144,15 @@ Thirty entities on the mower's device page, across six platforms:
 | `number` | 2 | Notification volume, cutting direction |
 | `button` | 5 | Reset each of the four consumable lifespans, plus "Locate mower" (plays a sound on the device) |
 | `event` | 1 | Last mowing job (finished / finished with warnings / manually stopped) |
+| `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`); the format is documented in `docs/superpowers/specs/2026-08-10-mower-map-design.md`. Geometry survives restarts; the position track is live-only |
 
-Not included yet: **RTK diagnostics** (position and satellite data), zone
-control, and maps. RTK is planned for the next release; the other two have
-no committed date.
+Not included yet: **RTK diagnostics** (position and satellite data) and
+zone control. RTK is planned for the next release; the other has no
+committed date.
 
 ### Entities disabled by default
 
-**17 of the 30 entities** ship with `entity_registry_enabled_default=False`,
+**17 of the 31 entities** ship with `entity_registry_enabled_default=False`,
 all inherited unchanged from upstream Home Assistant core's `ecovacs`
 integration — they're advanced settings or diagnostics, off by default
 there too. They appear in the mower's entity list right after setup, but
@@ -182,10 +183,11 @@ do what they should. Its start command is also confirmed on an O800 RTK by
 the user who reported that model.
 
 The `sensor`, `switch`, `number`, `button`, and `event` platforms listed above
-were added in 0.2.0. The test suite, hassfest and HACS validation all pass in
-CI. The HACS job skips the `brands` check, which requires an icon in the Home
-Assistant brands repository — a requirement for listing in the HACS default
-store that does not affect installation as a custom repository.
+were added in 0.2.0. The `image` entity (the mower's map) was added in 0.3.0.
+The test suite, hassfest and HACS validation all pass in CI. The HACS job
+skips the `brands` check, which requires an icon in the Home Assistant brands
+repository — a requirement for listing in the HACS default store that does
+not affect installation as a custom repository.
 
 But **none of those entities have been verified against real hardware yet.**
 That verification hasn't happened. Install with that in mind. If something
