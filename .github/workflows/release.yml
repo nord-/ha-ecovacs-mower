@@ -1,0 +1,77 @@
+name: Release
+
+# The version in manifest.json is the single source of truth. When a push to
+# master lands a version that has no matching tag, this cuts v<version> and
+# publishes a release from it. HACS resolves this repository by its releases,
+# so without a release the bump reaches nobody except the handful of users who
+# track the default branch.
+on:
+  workflow_run:
+    workflows: [Test]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Two pushes landing close together would otherwise race for the same tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # A red test suite must never become a release. workflow_dispatch has no
+    # triggering run to inspect, so it is let through for manual re-runs.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # workflow_run would otherwise check out whatever master points at
+          # right now. Pin it to the commit the test suite actually ran on.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Read the version from manifest.json
+        id: manifest
+        run: |
+          version="$(jq -er .version custom_components/ecovacs_mower/manifest.json)"
+          # A typo in the bump would otherwise be published as a nonsense tag,
+          # and a tag is far more annoying to retract than a failed job.
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::manifest.json version '$version' is not X.Y.Z"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether the tag already exists
+        id: tag
+        env:
+          TAG: v${{ steps.manifest.outputs.version }}
+        run: |
+          # Every push to master reaches this job, but only the ones that
+          # carry a new version should release. Asking the remote rather than
+          # the local clone keeps this correct on a shallow checkout.
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "$TAG already exists — nothing to release."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create the tag and publish the release
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          TAG: v${{ steps.manifest.outputs.version }}
+          VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          # gh creates the tag at --target itself, so there is no separate push.
+          gh release create "$TAG" \
+            --target "$SHA" \
+            --title "$VERSION" \
+            --generate-notes

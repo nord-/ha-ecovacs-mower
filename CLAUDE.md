@@ -30,6 +30,8 @@ pip install -r requirements-test.txt
 
 CI also runs hassfest and HACS validation (`.github/workflows/hassfest.yml`). The HACS job's `topics` error is expected — it only applies to listing in the default store. The `brands` check is explicitly ignored in the workflow for the same reason.
 
+Releases are cut by `.github/workflows/release.yml`, which runs after the test suite succeeds on `master`: if the version in `manifest.json` has no matching `v<version>` tag, it creates the tag and publishes a release with generated notes. A push whose version is already tagged is a no-op, so the bump commit is what triggers a release — never a hand-made tag.
+
 ## Architecture
 
 ### The patch layer is the only connection to deebot-client's internals
@@ -64,5 +66,5 @@ Failing fast is intentional: if `deebot-client` doesn't look like the patch laye
 - `strings.json` and `translations/en.json` must be **identical** — `test_translations.py` guards this, nothing syncs them automatically. Never create an `sv.json`; the HA frontend's language here is English.
 - Every translation key and `icons.json` key must belong to a real entity — the platform tests check both directions.
 - New hardware is supported by adding the device class to `SUPPORTED_CLASSES`. Unsupported MOWER classes log a warning with the class string; that's the string users are asked to report.
-- Version is bumped in `manifest.json`. `deebot-client` is pinned there and in `requirements-test.txt` — keep them in sync.
+- Version is bumped in `manifest.json`, and that bump is what publishes a release once it lands on `master` (see above). `deebot-client` is pinned there and in `requirements-test.txt` — keep them in sync.
 - Conventional commits, no AI attribution.
