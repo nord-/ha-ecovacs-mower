@@ -27,14 +27,30 @@ FIXTURES: dict[str, list[Any]] = json.loads(
 )
 
 
+_MAP_EVENTS = (
+    MowerCoverageEvent,
+    MowerMapInfoEvent,
+    MowerNoGoZonesEvent,
+    MowerObstaclesEvent,
+)
+
+
 def _notified(message, key: str) -> list[Any]:
-    """Feed every captured fragment of a fixture through the handler."""
+    """Feed every captured fragment of a fixture through the handler.
+
+    Only map events are returned: the library notifies a FirmwareEvent
+    from the real headers' fwVer before body handling runs.
+    """
     event_bus = Mock()
     for item in sorted(
         FIXTURES[key], key=lambda i: int(i["payload"]["body"]["data"]["index"])
     ):
         message.handle(event_bus, item["payload"])
-    return [call.args[0] for call in event_bus.notify.call_args_list]
+    return [
+        call.args[0]
+        for call in event_bus.notify.call_args_list
+        if isinstance(call.args[0], _MAP_EVENTS)
+    ]
 
 
 def test_on_mi_notifies_boundary() -> None:
@@ -100,7 +116,11 @@ def test_corrupt_info_is_swallowed() -> None:
         },
     }
     OnMI.handle(event_bus, payload)  # must not raise
-    assert event_bus.notify.call_args_list == []
+    assert not [
+        call
+        for call in event_bus.notify.call_args_list
+        if isinstance(call.args[0], _MAP_EVENTS)
+    ]
 
 
 def test_apply_registers_the_map_messages() -> None:
