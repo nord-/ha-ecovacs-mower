@@ -22,6 +22,11 @@
         "default": "mdi:history"
       }
     },
+    "image": {
+      "map": {
+        "default": "mdi:map"
+      }
+    },
     "number": {
       "cut_direction": {
         "default": "mdi:angle-acute"
