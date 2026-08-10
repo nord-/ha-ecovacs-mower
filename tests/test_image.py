@@ -69,6 +69,51 @@ async def test_async_image_renders_the_map() -> None:
     assert b'class="boundary"' in image
 
 
+def test_translation_exists() -> None:
+    import json
+    from pathlib import Path
+
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+
+    root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
+    strings = json.loads((root / "strings.json").read_text(encoding="utf-8"))
+    key = EcovacsMowerMap.entity_description.translation_key
+    assert key in strings["entity"]["image"]
+
+
+def test_map_entity_has_an_icon() -> None:
+    import json
+    from pathlib import Path
+
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+
+    root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
+    icons = json.loads((root / "icons.json").read_text(encoding="utf-8"))
+    key = EcovacsMowerMap.entity_description.translation_key
+    assert key in icons["entity"]["image"]
+
+
+def test_no_stale_image_translations_or_icons() -> None:
+    """Every key in strings.json/icons.json must belong to a real image entity.
+
+    The converse of the tests above: they check description -> string/icon, not
+    the other way around. Without this, a leftover key for a removed image entity would
+    go unnoticed.
+    """
+    import json
+    from pathlib import Path
+
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+
+    root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
+    strings = json.loads((root / "strings.json").read_text(encoding="utf-8"))
+    icons = json.loads((root / "icons.json").read_text(encoding="utf-8"))
+    key = EcovacsMowerMap.entity_description.translation_key
+
+    assert set(strings["entity"]["image"]) <= {key}
+    assert set(icons["entity"]["image"]) <= {key}
+
+
 async def test_position_bumps_are_throttled() -> None:
     from datetime import timedelta
     from unittest.mock import MagicMock
