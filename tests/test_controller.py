@@ -1,9 +1,10 @@
-"""Controllern får inte släpa med sig dammsugararvet.
+"""The controller must not drag the vacuum legacy along.
 
-Modulerna under test importerar Home Assistant, som inte går att importera på
-Windows (``fcntl``). Importerna ligger därför inne i testfunktionerna och hela
-filen är märkt ``requires_ha`` — annars kraschar redan insamlingen, innan någon
-skip-markör hinner gälla. Sanningskällan är CI på ubuntu-latest.
+The modules under test import Home Assistant, which cannot be imported on
+Windows (``fcntl``). The imports therefore live inside the test functions and the
+whole file is marked ``requires_ha`` — otherwise collection itself crashes before
+any skip marker gets a chance to apply. The source of truth is CI on
+ubuntu-latest.
 """
 
 import ast
@@ -15,7 +16,7 @@ from . import requires_ha
 
 pytestmark = requires_ha
 
-# Register i deebot-client som bara deebot_patch/ får röra.
+# Registries in deebot-client that only deebot_patch/ may touch.
 FORBIDDEN_MODULES = ("deebot_client.hardware", "deebot_client.messages")
 
 
@@ -56,11 +57,11 @@ def test_controller_exposes_devices() -> None:
 
 
 def _call_order(func: object) -> list[str]:
-    """Returnera namnen på anropen i *func*, i källkodsordning.
+    """Return the names of the calls in *func*, in source order.
 
-    AST i stället för strängsökning: kommentarerna i initialize() nämner
-    ``get_devices()`` vid namn, och en indexsökning hade träffat kommentaren
-    i stället för anropet.
+    AST rather than a string search: the comments in initialize() mention
+    ``get_devices()`` by name, and an index search would have hit the comment
+    instead of the call.
     """
     source = textwrap.dedent(inspect.getsource(func))  # type: ignore[arg-type]
     found: list[tuple[int, int, str]] = []
@@ -81,18 +82,18 @@ def _call_order(func: object) -> list[str]:
 
 
 def test_patch_runs_before_get_devices() -> None:
-    """Patchen måste sådda cachen innan enheterna byggs.
+    """The patch must seed the cache before the devices are built.
 
-    ``get_devices()`` anropar ``get_static_device_info()`` och bakar in
-    resultatet i ``DeviceInfo.static``, en frozen dataclass. Sker patchen efter
-    det anropet har enheterna redan fått de opatchade kapabiliteterna, och en
-    cacheuppslagning ser ändå rätt ut. Verifieringen måste i sin tur ske efter
-    ``get_devices()``, på det objekt enheten faktiskt fick.
+    ``get_devices()`` calls ``get_static_device_info()`` and bakes the result into
+    ``DeviceInfo.static``, a frozen dataclass. If the patch happens after that
+    call the devices have already got the unpatched capabilities, and a cache
+    lookup still looks correct. The verification in turn must happen after
+    ``get_devices()``, on the object the device actually got.
 
-    Notera vad testet bevisar: **källkodsordning, inte exekveringsordning.**
-    Det skulle passera för ``if False: patch_device_info(...)`` eller för ett
-    anrop som flyttats in i en hjälpfunktion som körs senare. Vad det fångar är
-    den realistiska regressionen — att någon flyttar en rad.
+    Note what the test proves: **source order, not execution order.** It would
+    pass for ``if False: patch_device_info(...)`` or for a call moved into a
+    helper that runs later. What it catches is the realistic regression — someone
+    moving a line.
     """
     from custom_components.ecovacs_mower import controller
 
@@ -103,26 +104,31 @@ def test_patch_runs_before_get_devices() -> None:
 
 
 def test_verification_reads_static_device_info() -> None:
-    """Verifieringen får inte slå upp i cachen — då bevisar den ingenting."""
+    """The verification must not look in the cache — then it proves nothing."""
     from custom_components.ecovacs_mower import controller
 
     source = inspect.getsource(controller.EcovacsController.initialize)
     assert "info.static.capabilities" in source
 
 
-# En annan GOAT-klass än den enda i SUPPORTED_CLASSES. Samtliga 25
-# MOWER-klasser i deebot-client 18.5.1 bär samma CleanV2/GetCleanInfoV2-fel,
-# så den här enheten blir en entitet med döda reglage.
+# A GOAT class outside SUPPORTED_CLASSES. All 25 MOWER classes in deebot-client
+# 18.5.1 carry the same CleanV2/GetCleanInfoV2 bugs, so this device becomes an
+# entity with dead controls.
 _OTHER_MOWER = "cr0e4u"
-# T5PRO-dammsugare: giltig klass, DeviceType.VACUUM, blir aldrig en entitet.
+# The T5PRO vacuum: a valid class, DeviceType.VACUUM, never becomes an entity.
 _VACUUM = "npwtuz"
+# The verified mower classes, spelled out rather than imported: importing
+# deebot_patch at module level would pull in Home Assistant during collection,
+# which is exactly what this file's requires_ha marker exists to avoid.
+_SUPPORTED = ("2i0fns", "9bts2s")
 
 
 async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> None:
-    """Kör ``initialize()`` med enheterna *device_classes* från API:et.
+    """Run ``initialize()`` with the devices *device_classes* coming from the API.
 
-    Allt utanför verifieringsloopen mockas: get_devices, MQTT-klienten och
-    Device. Det som testas är vilken gren en klass hamnar i, inte uppkoppling.
+    Everything outside the verification loop is mocked: get_devices, the MQTT
+    client and Device. What is tested is which branch a class ends up in, not
+    connectivity.
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -139,11 +145,11 @@ async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> Non
     from custom_components.ecovacs_mower.controller import EcovacsController
 
     async def fake_get_devices() -> Devices:
-        # Byggs vid anropet, inte i förväg: den riktiga get_devices() körs
-        # efter patch_device_info() och plockar upp de patchade
-        # kapabiliteterna ur cachen. Byggdes DeviceInfo innan initialize()
-        # skulle den stödda klassen bära den opatchade definitionen och
-        # verifieringen falla — på testets uppställning, inte på koden.
+        # Built at call time, not up front: the real get_devices() runs after
+        # patch_device_info() and picks the patched capabilities out of the cache.
+        # If DeviceInfo were built before initialize(), the supported class would
+        # carry the unpatched definition and the verification would fail — on the
+        # test's setup, not on the code.
         return Devices(
             mqtt=[
                 DeviceInfo(
@@ -186,18 +192,18 @@ async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> Non
             await controller.initialize()
     finally:
         await controller.teardown()
-        # initialize() såddar cachen globalt; lämna den som vi fann den.
-        for class_ in ("2i0fns", *device_classes):
+        # initialize() seeds the cache globally; leave it as we found it.
+        for class_ in (*_SUPPORTED, *device_classes):
             _DEVICES.pop(class_, None)
 
 
 async def test_unsupported_mower_class_warns(hass, caplog) -> None:
-    """En gräsklippare utanför SUPPORTED_CLASSES får inte tystna i debug.
+    """A mower outside SUPPORTED_CLASSES must not go quiet in debug.
 
-    Den användaren får en entitet vars reglage är döda och vars tillstånd
-    släpar — exakt produktionssymtomet projektet finns för att eliminera.
-    Varningen ska namnge klassen, så att modellen går att rapportera och
-    läggas till i SUPPORTED_CLASSES.
+    That user gets an entity whose controls are dead and whose state lags —
+    exactly the production symptom this project exists to eliminate. The warning
+    must name the class, so the model can be reported and added to
+    SUPPORTED_CLASSES.
     """
     import logging
 
@@ -214,11 +220,11 @@ async def test_unsupported_mower_class_warns(hass, caplog) -> None:
 
 
 async def test_vacuum_on_the_same_account_stays_quiet(hass, caplog) -> None:
-    """Motprovet: en dammsugare är inget falsklarm värt.
+    """The counter-proof: a vacuum is not worth a false alarm.
 
-    Utan det här testet vore ``elif ... is DeviceType.MOWER`` i controllern
-    oprövat i sin negativa riktning, och en förenkling till "varna för allt
-    som inte stöds" skulle passera grönt.
+    Without this test the ``elif ... is DeviceType.MOWER`` in the controller would
+    be untested in its negative direction, and a simplification to "warn about
+    everything unsupported" would pass green.
     """
     import logging
 
@@ -229,47 +235,52 @@ async def test_vacuum_on_the_same_account_stays_quiet(hass, caplog) -> None:
     assert any(_VACUUM in r.getMessage() for r in caplog.records)
 
 
-async def test_supported_mower_is_verified(hass, caplog) -> None:
-    """Den stödda klassen ska gå genom verifieringen, utan varning."""
+async def test_supported_mowers_are_verified(hass, caplog) -> None:
+    """Every supported class must pass the verification, without a warning."""
     import logging
 
+    from custom_components.ecovacs_mower.deebot_patch import SUPPORTED_CLASSES
+
+    # The spelled-out tuple above must not drift from the real one.
+    assert set(_SUPPORTED) == set(SUPPORTED_CLASSES)
+
     caplog.set_level(logging.DEBUG)
-    await _initialize_with(hass, ("2i0fns",))
+    await _initialize_with(hass, _SUPPORTED)
 
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
 def _forbidden_imports(path: Path) -> list[str]:
-    """Returnera förbjudna uppströmsmoduler som importeras i *path*.
+    """Return the forbidden upstream modules imported in *path*.
 
-    Fyra former fångas:
+    Four forms are caught:
 
     * ``import deebot_client.hardware``
     * ``from deebot_client.hardware import _DEVICES``
-    * ``from deebot_client import hardware`` — innehåller aldrig strängen
-      ``deebot_client.hardware``, så en substrängsökning hade missat den
-    * ``deebot_client.hardware._DEVICES`` efter ett bart ``import deebot_client``
-      — ren attributåtkomst, den mest närliggande läckan av alla eftersom den
-      inte kräver något ovanligt av den som skriver koden
+    * ``from deebot_client import hardware`` — never contains the string
+      ``deebot_client.hardware``, so a substring search would have missed it
+    * ``deebot_client.hardware._DEVICES`` after a bare ``import deebot_client`` —
+      plain attribute access, the most likely leak of them all since it demands
+      nothing unusual of whoever writes the code
 
-    Strängliteraler granskas också, så att
-    ``import_module("deebot_client.hardware")`` inte slinker igenom.
+    String literals are inspected too, so that
+    ``import_module("deebot_client.hardware")`` does not slip through.
 
-    Gränsen går vid statisk analys. Detta fångas **inte**: alias
-    (``import deebot_client as dc``), strängkonkatenering
-    (``"deebot_client." + "hardware"``) och ``getattr``-indirektion. Den som
-    vill runda vakten kan, men ingen gör det av misstag.
+    The limit is static analysis. These are **not** caught: aliases
+    (``import deebot_client as dc``), string concatenation
+    (``"deebot_client." + "hardware"``) and ``getattr`` indirection. Anyone who
+    wants to get around the guard can, but nobody does it by accident.
 
-    Relativa importer släpps igenom med flit: ``from .deebot_patch.hardware
-    import ...`` är nödutgången, och att tvätta uppströmsobjekt genom den är
-    hela poängen med modulen.
+    Relative imports are let through deliberately: ``from .deebot_patch.hardware
+    import ...`` is the escape hatch, and laundering upstream objects through it
+    is the entire point of the module.
     """
 
     def is_forbidden(name: str) -> bool:
         return any(name == m or name.startswith(f"{m}.") for m in FORBIDDEN_MODULES)
 
     def dotted_name(node: ast.Attribute) -> str | None:
-        """Rekonstruera ``a.b.c`` ur en attributkedja rotad i ett namn."""
+        """Reconstruct ``a.b.c`` from an attribute chain rooted in a name."""
         parts = []
         current: ast.expr = node
         while isinstance(current, ast.Attribute):
@@ -301,18 +312,18 @@ def _forbidden_imports(path: Path) -> list[str]:
             if is_forbidden(node.value):
                 found.append(node.value)
 
-    # ast.walk besöker varje led i en attributkedja, så samma läcka kan
-    # rapporteras flera gånger. Dedupliceras för läsbar felutskrift.
+    # ast.walk visits every link in an attribute chain, so the same leak can be
+    # reported several times. Deduplicated for a readable failure message.
     return list(dict.fromkeys(found))
 
 
 def test_only_deebot_patch_touches_upstream_internals() -> None:
-    """Upprätthåll isoleringsconstrainten mekaniskt.
+    """Enforce the isolation constraint mechanically.
 
-    Hela poängen med deebot_patch/ är att en vendrad klient ska kunna ersätta
-    den utan att någon entitetsfil ändras. Läcker en import av deebot-clients
-    hardware- eller messages-register ut i övriga filer är den garantin borta,
-    och ingen märker det förrän uppströms refaktorerar.
+    The whole point of deebot_patch/ is that a vendored client should be able to
+    replace it without any entity file changing. If an import of deebot-client's
+    hardware or messages registry leaks out into the other files that guarantee
+    is gone, and nobody notices until upstream refactors.
     """
     from custom_components.ecovacs_mower import controller
 
@@ -326,13 +337,13 @@ def test_only_deebot_patch_touches_upstream_internals() -> None:
             offenders.append(f"{path.relative_to(package)}: {name}")
 
     assert not offenders, (
-        "Endast deebot_patch/ får röra deebot-clients interna register. "
-        f"Läckor: {offenders}"
+        "Only deebot_patch/ may touch deebot-client's internal registries. "
+        f"Leaks: {offenders}"
     )
 
 
 def test_constraint_check_catches_a_leak(tmp_path: Path) -> None:
-    """Constraintstestet ska faktiskt fånga en läcka, i varje form det påstår."""
+    """The constraint test must actually catch a leak, in every form it claims."""
     leaks = (
         "from deebot_client.hardware import _DEVICES",
         "from deebot_client import hardware",
@@ -343,10 +354,10 @@ def test_constraint_check_catches_a_leak(tmp_path: Path) -> None:
     for index, leak in enumerate(leaks):
         path = tmp_path / f"leak{index}.py"
         path.write_text(leak, encoding="utf-8")
-        assert _forbidden_imports(path), f"missade läcka: {leak}"
+        assert _forbidden_imports(path), f"missed leak: {leak}"
 
-    # Nödutgången måste fortsätta släppas igenom — att nå uppströmsobjekt via
-    # deebot_patch är hela poängen med modulen.
+    # The escape hatch must keep being let through — reaching upstream objects via
+    # deebot_patch is the entire point of the module.
     clean = tmp_path / "clean.py"
     clean.write_text(
         "from deebot_client.device import Device\n"

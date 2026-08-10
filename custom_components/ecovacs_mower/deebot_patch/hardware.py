@@ -1,9 +1,9 @@
-"""Såddar deebot-clients enhetscache med rättade kapabiliteter.
+"""Seeds deebot-client's device cache with corrected capabilities.
 
-``get_static_device_info()`` läser cachen ``_DEVICES`` innan den importerar
-enhetsmodulen. Genom att låta biblioteket bygga sin definition, byta ut de
-trasiga delarna och lägga tillbaka resultatet slipper vi monkeypatcha någon
-funktion — vi använder samma mekanism som biblioteket självt.
+``get_static_device_info()`` reads the ``_DEVICES`` cache before importing the
+device module. By letting the library build its own definition, swapping out
+the broken parts and putting the result back, we avoid monkeypatching any
+function — we use the same mechanism the library itself uses.
 """
 
 from __future__ import annotations
@@ -21,36 +21,38 @@ from .commands import CleanMower
 
 _LOGGER = logging.getLogger(__name__)
 
-# Enhetsklasser fas 1 stöder. Verifierad hårdvara: O1200 LiDAR Pro.
-SUPPORTED_CLASSES = ("2i0fns",)
+# Device classes this integration patches. Verified hardware:
+#   2i0fns — GOAT O1200 LiDAR Pro (owner-verified)
+#   9bts2s — GOAT O800 RTK (user-verified, issue #8)
+SUPPORTED_CLASSES = ("2i0fns", "9bts2s")
 
 
 async def patch_device_info(class_: str) -> None:
-    """Ersätt cachad enhetsdefinition med en där klippfelen är rättade.
+    """Replace the cached device definition with one where the mow bugs are fixed.
 
-    Två rättelser:
+    Two corrections:
 
-    * ``clean.action.command``: ``CleanV2`` publicerar på ``clean_V2``, som
-      GOAT-firmware ignorerar. Byts mot ``CleanMower`` på ``clean``.
-    * ``state``: ``GetCleanInfoV2`` besvaras inte av GOAT. Byts mot
+    * ``clean.action.command``: ``CleanV2`` publishes on ``clean_V2``, which
+      GOAT firmware ignores. Swapped for ``CleanMower`` on ``clean``.
+    * ``state``: ``GetCleanInfoV2`` is not answered by GOAT. Swapped for
       ``GetCleanInfo``.
 
-    Anropet är idempotent och gör ingenting för klasser utanför
+    The call is idempotent and does nothing for classes outside
     ``SUPPORTED_CLASSES``.
 
-    **Måste anropas före ``ApiClient.get_devices()``.** Den metoden anropar
-    ``get_static_device_info()`` och bakar in resultatet i ``DeviceInfo.static``,
-    som är en frozen dataclass. Patchar man cachen efteråt har enheterna redan
-    fått de opatchade kapabiliteterna.
+    **Must be called before ``ApiClient.get_devices()``.** That method calls
+    ``get_static_device_info()`` and bakes the result into ``DeviceInfo.static``,
+    which is a frozen dataclass. Patching the cache afterwards means the devices
+    already got the unpatched capabilities.
     """
     if class_ not in SUPPORTED_CLASSES:
-        _LOGGER.debug("Device class %s not supported by phase 1, not patching", class_)
+        _LOGGER.debug("Device class %s not supported, not patching", class_)
         return
 
     base = await get_static_device_info(class_)
     if base is None:
-        # Uppströms returnerar None för okända klasser; ingen fallbackdefinition
-        # finns, så här är det inget att patcha.
+        # Upstream returns None for unknown classes; no fallback definition
+        # exists, so there is nothing to patch here.
         _LOGGER.debug("No device definition for %s, skipping patch", class_)
         return
 

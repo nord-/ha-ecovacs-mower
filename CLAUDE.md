@@ -37,7 +37,7 @@ CI also runs hassfest and HACS validation (`.github/workflows/hassfest.yml`). Th
 `deebot_patch/` is the boundary: **no other module may touch private parts of `deebot_client`** (`_DEVICES`, `MESSAGES`). If the library is swapped for a vendored client, only that folder needs rewriting.
 
 - `commands.py` — `CleanMower`, inherits from `Clean` (topic `clean`) with a V2 payload. Replaces `CleanV2`, which publishes on `clean_V2`, which GOAT firmware ignores.
-- `hardware.py` — `patch_device_info()` seeds the `_DEVICES` cache with corrected `Capabilities` (`CleanMower` + `GetCleanInfo` instead of `GetCleanInfoV2`). Uses the library's own caching mechanism instead of monkeypatching. `SUPPORTED_CLASSES` lists verified device classes (`2i0fns` = O1200 LiDAR Pro).
+- `hardware.py` — `patch_device_info()` seeds the `_DEVICES` cache with corrected `Capabilities` (`CleanMower` + `GetCleanInfo` instead of `GetCleanInfoV2`). Uses the library's own caching mechanism instead of monkeypatching. `SUPPORTED_CLASSES` lists verified device classes (`2i0fns` = O1200 LiDAR Pro, `9bts2s` = O800 RTK).
 - `messages.py` — `OnChargeInfo` and `OnScheduleTaskInfo`, the two unsolicited messages the library lacks a handler for.
 - `__init__.py` — `apply()` (registers the messages, idempotent) and `verify_capabilities()`.
 

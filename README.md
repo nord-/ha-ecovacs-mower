@@ -67,12 +67,16 @@ the corresponding patch in this repo becomes dead code and gets deleted.
 
 ## Hardware support
 
-Verified on one device: **Ecovacs GOAT O1200 LiDAR Pro**, device class
-`2i0fns`.
+Verified on two devices:
 
-Other GOAT models (O800 RTK, A1600 RTK, and the rest of the GOAT line) share
-the same three upstream defects described above, and would very likely work
-with the same fix. They are not verified, because I don't own one.
+| Model | Device class | Verified by |
+| --- | --- | --- |
+| **Ecovacs GOAT O1200 LiDAR Pro** | `2i0fns` | the author's own hardware |
+| **Ecovacs GOAT O800 RTK** | `9bts2s` | a user, firmware 1.13.8 ([#8](https://github.com/nord-/ha-ecovacs-mower/issues/8)) |
+
+Other GOAT models (A1600 RTK and the rest of the GOAT line) share the same
+three upstream defects described above, and would very likely work with the
+same fix. They are not verified, because nobody has reported back on one.
 
 If you install this on an unsupported model, the integration will still
 load, but it will not patch that device's commands — meaning you'd be back
