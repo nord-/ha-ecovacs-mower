@@ -367,3 +367,63 @@ def test_constraint_check_catches_a_leak(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert not _forbidden_imports(clean)
+
+
+async def test_setup_map_restores_persisted_geometry() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = MagicMock()
+    controller.maps = {}
+    controller._map_stores = {}
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1"}
+
+    stored = {
+        "boundary": [[0, 0], [100, 0], [100, 100]],
+        "zones": [],
+        "corridors": [],
+        "obstacles": [],
+        "nogo_zones": [],
+        "lanes": [["1", 5, [[[0, 0], [0, 100]]]]],
+    }
+    with patch(
+        "custom_components.ecovacs_mower.controller.Store"
+    ) as store_cls:
+        store_cls.return_value.async_load = AsyncMock(return_value=stored)
+        await controller._setup_map(device)
+
+    mower_map = controller.maps["did-1"]
+    assert mower_map.boundary == [(0, 0), (100, 0), (100, 100)]
+    assert mower_map.lanes == {("1", 5): [((0, 0), (0, 100))]}
+    # Eager subscriptions: 4 map events + PositionsEvent. EventBus.notify
+    # drops events nobody subscribes to, so waiting for the entity to
+    # subscribe would lose data.
+    assert device.events.subscribe.call_count == 5
+
+
+async def test_setup_map_survives_corrupt_store() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = MagicMock()
+    controller.maps = {}
+    controller._map_stores = {}
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1"}
+
+    with patch(
+        "custom_components.ecovacs_mower.controller.Store"
+    ) as store_cls:
+        store_cls.return_value.async_load = AsyncMock(
+            return_value={"lanes": "not-a-list"}
+        )
+        await controller._setup_map(device)  # must not raise
+
+    assert controller.maps["did-1"].is_empty

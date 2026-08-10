@@ -22,7 +22,9 @@ from deebot_client.exceptions import (
     DeviceVerificationRequiredError,
     InvalidAuthenticationError,
 )
+from deebot_client.events.map import PositionsEvent
 from deebot_client.mqtt_client import MqttClient, create_mqtt_config
+from deebot_client.rs.map import PositionType
 from deebot_client.util import md5
 
 from homeassistant.const import (
@@ -38,12 +40,14 @@ from homeassistant.exceptions import (
     ConfigEntryNotReady,
 )
 from homeassistant.helpers import aiohttp_client
+from homeassistant.helpers.storage import Store
 from homeassistant.util.ssl import get_default_no_verify_context
 
 from .const import (
     CONF_OVERRIDE_MQTT_URL,
     CONF_OVERRIDE_REST_URL,
     CONF_VERIFY_MQTT_CERTIFICATE,
+    DOMAIN,
     ISSUE_TRACKER_URL,
 )
 from .deebot_patch import (
@@ -52,8 +56,18 @@ from .deebot_patch import (
     verify_capabilities,
 )
 from .deebot_patch.hardware import SUPPORTED_CLASSES, patch_device_info
+from .deebot_patch.map_messages import (
+    MowerCoverageEvent,
+    MowerMapInfoEvent,
+    MowerNoGoZonesEvent,
+    MowerObstaclesEvent,
+)
+from .map import MowerMap
 
 _LOGGER = logging.getLogger(__name__)
+
+MAP_STORAGE_VERSION = 1
+MAP_SAVE_DELAY = 30  # seconds; Store.async_delay_save flushes at HA stop
 
 
 class EcovacsController:
@@ -63,6 +77,8 @@ class EcovacsController:
         """Initialize controller."""
         self._hass = hass
         self._devices: list[Device] = []
+        self.maps: dict[str, MowerMap] = {}
+        self._map_stores: dict[str, Store[dict[str, Any]]] = {}
         rest_url = config.get(CONF_OVERRIDE_REST_URL)
         self._device_id = config[CONF_DEVICE_ID]
         country = config[CONF_COUNTRY]
@@ -150,6 +166,8 @@ class EcovacsController:
                         """Initialize MQTT device."""
                         await device.initialize(mqtt)
                         self._devices.append(device)
+                        if device.capabilities.device_type is DeviceType.MOWER:
+                            await self._setup_map(device)
 
                     for device in mqtt_devices:
                         tg.create_task(_init(device))
@@ -175,8 +193,71 @@ class EcovacsController:
 
         _LOGGER.debug("Controller initialize complete")
 
+    async def _setup_map(self, device: Device) -> None:
+        """Restore the device's map and wire the events that feed it.
+
+        Subscriptions are eager: EventBus.notify drops events without
+        subscribers, so waiting for the image entity would lose the first
+        messages of a session.
+        """
+        did = device.device_info["did"]
+        store: Store[dict[str, Any]] = Store(
+            self._hass, MAP_STORAGE_VERSION, f"{DOMAIN}.map_{did}"
+        )
+        mower_map = MowerMap()
+        if (data := await store.async_load()) is not None:
+            try:
+                mower_map = MowerMap.from_dict(data)
+            except (KeyError, TypeError, ValueError, IndexError):
+                _LOGGER.warning(
+                    "Discarding corrupt map store for %s; starting empty", did
+                )
+        self.maps[did] = mower_map
+        self._map_stores[did] = store
+
+        def save() -> None:
+            store.async_delay_save(mower_map.as_dict, MAP_SAVE_DELAY)
+
+        async def on_map_info(event: MowerMapInfoEvent) -> None:
+            mower_map.update_map_info(
+                event.boundary, event.zones, event.corridors
+            )
+            save()
+
+        async def on_obstacles(event: MowerObstaclesEvent) -> None:
+            mower_map.update_obstacles(event.obstacles)
+            save()
+
+        async def on_coverage(event: MowerCoverageEvent) -> None:
+            mower_map.update_coverage(event.lanes)
+            save()
+
+        async def on_nogo(event: MowerNoGoZonesEvent) -> None:
+            mower_map.update_nogo(event.zones)
+            save()
+
+        async def on_positions(event: PositionsEvent) -> None:
+            # Position is volatile — no save. A valid charger position has
+            # never been observed on the verified hardware, but if one
+            # arrives it beats the origin assumption.
+            for position in event.positions:
+                if position.type is PositionType.DEEBOT:
+                    mower_map.update_position(
+                        position.x, position.y, position.a
+                    )
+                elif position.type is PositionType.CHARGER:
+                    mower_map.dock = (position.x, position.y)
+
+        device.events.subscribe(MowerMapInfoEvent, on_map_info)
+        device.events.subscribe(MowerObstaclesEvent, on_obstacles)
+        device.events.subscribe(MowerCoverageEvent, on_coverage)
+        device.events.subscribe(MowerNoGoZonesEvent, on_nogo)
+        device.events.subscribe(PositionsEvent, on_positions)
+
     async def teardown(self) -> None:
         """Disconnect controller."""
+        for did, store in self._map_stores.items():
+            await store.async_save(self.maps[did].as_dict())
         for device in self._devices:
             await device.teardown()
         if self._mqtt_client is not None:
