@@ -178,20 +178,20 @@ table.
 
 The `lawn_mower` entity is confirmed working against a real O1200: state
 tracks the mower within seconds, and `start_mowing`, `pause`, and `dock` all
-do what they should. That was the whole of phase 1 and hasn't changed.
+do what they should. Its start command is also confirmed on an O800 RTK by
+the user who reported that model.
 
-Phase 2 (this release) adds the `sensor`, `switch`, `number`, `button`, and
-`event` platforms listed above. The test suite, hassfest and HACS validation
-all pass in CI. The HACS job skips the `brands` check, which requires an icon
-in the Home Assistant brands repository — a requirement for listing in the
-HACS default store that does not affect installation as a custom repository.
+The `sensor`, `switch`, `number`, `button`, and `event` platforms listed above
+were added in 0.2.0. The test suite, hassfest and HACS validation all pass in
+CI. The HACS job skips the `brands` check, which requires an icon in the Home
+Assistant brands repository — a requirement for listing in the HACS default
+store that does not affect installation as a custom repository.
 
-But **none of these new entities have been verified against real hardware
-yet.** That
-verification is the next step and hasn't happened. Install with that in
-mind. If something doesn't match what's documented here, an issue report is
-useful — include your device class from the warning above if you're not on
-the O1200.
+But **none of those entities have been verified against real hardware yet.**
+That verification hasn't happened. Install with that in mind. If something
+doesn't match what's documented here, an issue report is useful — include
+your device class from the warning above if you're not on one of the models
+in the table.
 
 ## License and credit
 
