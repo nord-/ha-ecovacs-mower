@@ -265,7 +265,8 @@ Metadata `totalWidth`/`totalHeight`/`resolution` were all 0 in capture.
 
 ### `onSpecialContour` — no-go zones
 
-Uncompressed plain-text polygons:
+Compressed like the rest, but the decoded content is plain coordinates
+(no chain code):
 `[["1","<id>","1","<ts1,ts2>","x1,y1;x2,y2;…;"], …]` — coordinates in mm,
 trailing semicolon.
 
