@@ -1,4 +1,4 @@
-"""Konstanter för Ecovacs Mower."""
+"""Constants for Ecovacs Mower."""
 
 from enum import StrEnum
 
@@ -6,8 +6,8 @@ from deebot_client.events import LifeSpan
 
 DOMAIN = "ecovacs_mower"
 
-# Speglar manifest.json:s issue_tracker. Används i loggmeddelanden, som inte
-# kan läsa manifestet.
+# Mirrors manifest.json's issue_tracker. Used in log messages, which cannot
+# read the manifest.
 ISSUE_TRACKER_URL = "https://github.com/nord-/ha-ecovacs-mower/issues"
 
 CONF_OVERRIDE_REST_URL = "override_rest_url"
@@ -17,18 +17,18 @@ CONF_VERIFY_MQTT_CERTIFICATE = "verify_mqtt_certificate"
 
 
 class InstanceMode(StrEnum):
-    """Installationsläge."""
+    """Installation mode."""
 
     CLOUD = "cloud"
     SELF_HOSTED = "self_hosted"
 
 
-# Endast de livslängdskomponenter en gräsklippare faktiskt har. Core exponerar
-# 12 av ``LifeSpan``-enumens 26 medlemmar (dammsugarinriktade — moppar,
-# dammpåsar, filter, UV-lampa). BLADE och LENS_BRUSH ingår i den listan, men
-# TRIMMER_BRUSH och WEED_ROPE gör det inte alls: de är gräsklipparspecifika
-# komponenter core aldrig exponerar, inte en trimmad delmängd av dess lista.
-# Det är därför de behövde egna poster i icons.json.
+# Only the life span components a lawn mower actually has. Core exposes 12 of
+# the ``LifeSpan`` enum's 26 members (vacuum-oriented — mops, dust bags,
+# filters, UV lamp). BLADE and LENS_BRUSH are on that list, but TRIMMER_BRUSH
+# and WEED_ROPE are not there at all: they are mower-specific components core
+# never exposes, not a trimmed subset of its list. That is why they needed their
+# own entries in icons.json.
 SUPPORTED_LIFESPANS = (
     LifeSpan.BLADE,
     LifeSpan.LENS_BRUSH,

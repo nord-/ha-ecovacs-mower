@@ -1,8 +1,8 @@
-"""Isolerad koppling mot deebot-clients interna register.
+"""Isolated coupling to deebot-client's internal registries.
 
-Detta är den enda modulen i integrationen som får röra privata delar av
-deebot-client. Byts biblioteket ut mot en vendrad klient är det bara den
-här mappen som skrivs om.
+This is the only module in the integration allowed to touch private parts of
+deebot-client. If the library is swapped for a vendored client, this folder is
+the only one that needs rewriting.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class PatchContractError(Exception):
-    """deebot-client ser inte ut som patchlagret förväntar sig."""
+    """deebot-client does not look like the patch layer expects."""
 
 
 def _fail(what: str) -> NoReturn:
@@ -48,14 +48,14 @@ def _fail(what: str) -> NoReturn:
 
 
 def apply() -> None:
-    """Registrera våra meddelandehandlare. Idempotent."""
+    """Register our message handlers. Idempotent."""
     if not isinstance(_DEVICES, dict):
         _fail("deebot_client.hardware._DEVICES is not a dict")
     if not isinstance(MESSAGES, dict):
         _fail("deebot_client.messages.json.MESSAGES is not a dict")
 
-    # Muteras på plats: messages/__init__.py håller en referens till samma
-    # objekt, och en ombindning skulle därför inte synas i get_message().
+    # Mutated in place: messages/__init__.py holds a reference to the same
+    # object, so a rebinding would not be visible in get_message().
     for message in (OnChargeInfo, OnScheduleTaskInfo):
         MESSAGES[message.NAME] = message
 
@@ -68,12 +68,12 @@ def apply() -> None:
 
 
 def verify_capabilities(capabilities: Capabilities, class_: str) -> None:
-    """Bekräfta att kapabiliteterna en enhet faktiskt fick är de patchade.
+    """Confirm that the capabilities a device actually got are the patched ones.
 
-    Kontrollen görs mot objektet i ``DeviceInfo.static``, inte mot cachen.
-    Det är den enda kontroll som bevisar att patchen hann före
-    ``get_devices()`` — en cacheuppslagning skulle se rätt ut även om
-    enheten byggts av en opatchad definition.
+    The check runs against the object in ``DeviceInfo.static``, not against the
+    cache. That is the only check that proves the patch got in before
+    ``get_devices()`` — a cache lookup would look correct even if the device was
+    built from an unpatched definition.
     """
     if capabilities.clean.action.command is not CleanMower:
         _fail(
@@ -81,9 +81,9 @@ def verify_capabilities(capabilities: Capabilities, class_: str) -> None:
             f"instead of CleanMower — the patch ran too late"
         )
 
-    # Exakt typjämförelse, inte isinstance: GetCleanInfoV2 ärver GetCleanInfo,
-    # så isinstance() hade godkänt precis den opatchade uppsättning vi vill
-    # fånga. Kontrollen hade varit tandlös.
+    # Exact type comparison, not isinstance: GetCleanInfoV2 inherits from
+    # GetCleanInfo, so isinstance() would accept exactly the unpatched set we
+    # want to catch. The check would be toothless.
     commands = capabilities.get_refresh_commands(StateEvent)
     if not any(type(c) is GetCleanInfo for c in commands):
         _fail(f"GetCleanInfo is missing from the state commands for {class_}")

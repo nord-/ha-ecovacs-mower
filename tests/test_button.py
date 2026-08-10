@@ -1,4 +1,4 @@
-"""Knappar: livslängdsåterställning och ljudsignal."""
+"""Buttons: lifespan reset and sound signal."""
 
 from tests import requires_ha
 
@@ -17,7 +17,7 @@ def test_four_lifespan_reset_buttons() -> None:
 
 
 def test_play_sound_button_exists() -> None:
-    """Kapabiliteten finns på 2i0fns men core exponerar den inte."""
+    """The capability exists on 2i0fns but core does not expose it."""
     from custom_components.ecovacs_mower.button import ENTITY_DESCRIPTIONS
 
     assert {d.key for d in ENTITY_DESCRIPTIONS} == {"play_sound"}
@@ -48,7 +48,7 @@ def test_every_description_has_a_translation() -> None:
 
 
 def test_every_button_has_an_icon() -> None:
-    """En knapp utan egen ikon får HA:s generiska ikon — lätt att missa."""
+    """A button without its own icon gets HA's generic icon — easy to miss."""
     import json
     from pathlib import Path
 
@@ -66,11 +66,11 @@ def test_every_button_has_an_icon() -> None:
 
 
 def test_no_stale_button_translations_or_icons() -> None:
-    """Varje nyckel i strings.json/icons.json ska höra till en riktig knapp.
+    """Every key in strings.json/icons.json must belong to a real button.
 
-    Motsatsen till testerna ovan: de kollar beskrivning → sträng/ikon, inte
-    tvärtom. Utan detta skulle en kvarglömd nyckel för en borttagen knapp
-    gå obemärkt förbi.
+    The converse of the tests above: they check description -> string/icon, not
+    the other way around. Without this, a leftover key for a removed button would
+    go unnoticed.
     """
     import json
     from pathlib import Path

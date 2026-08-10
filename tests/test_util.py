@@ -1,18 +1,18 @@
-"""Tester för get_client_device_id — den bärande egenskapen i 1013-fixen.
+"""Tests for get_client_device_id — the load-bearing property of the 1013 fix.
 
-Ecovacs kräver e-postverifiering av klientens enhets-ID (felkod 1013) om
-inte samma ID återanvänds vid varje inloggning. Genererades ett nytt ID
-varje gång skulle användaren hamna i en oändlig verifieringsloop utan att
-förstå varför. Dessa tester bevisar direkt att ett redan känt ID i
-konfigurationen alltid vinner över att generera ett nytt, och att ett nytt
-ID bara genereras när inget finns sedan tidigare.
+Ecovacs requires email verification of the client's device ID (error code 1013)
+unless the same ID is reused on every login. If a new ID were generated every
+time, the user would end up in an endless verification loop without understanding
+why. These tests prove directly that an already known ID in the configuration
+always wins over generating a new one, and that a new ID is only generated when
+none exists from before.
 
-``util.py`` importerar bara ``homeassistant.core``/``const``/``util``, inte
-``homeassistant.runner`` (som gör det oskyddade ``import fcntl`` som annars
-kraschar insamling på Windows). Modulen går därför att importera direkt här
-utan pytest-homeassistant-custom-component-pluginet, och testerna behöver
-ingen ``hass``-fixture — de kan köras på riktigt lokalt, inte bara samlas
-in som skippade.
+``util.py`` only imports ``homeassistant.core``/``const``/``util``, not
+``homeassistant.runner`` (which does the unguarded ``import fcntl`` that otherwise
+crashes collection on Windows). The module can therefore be imported directly
+here without the pytest-homeassistant-custom-component plugin, and the tests need
+no ``hass`` fixture — they can actually run locally, not just be collected as
+skipped.
 """
 
 import string
@@ -25,17 +25,17 @@ _DEVICE_ID_ALPHABET = set(string.ascii_uppercase + string.digits)
 
 
 def test_existing_device_id_is_reused() -> None:
-    """Kärnan i 1013-fixen: ett känt ID återanvänds, aldrig omgenererat."""
+    """The core of the 1013 fix: a known ID is reused, never regenerated."""
     config = {CONF_DEVICE_ID: "ALREADY-VERIFIED-ID"}
 
     assert get_client_device_id(None, False, config) == "ALREADY-VERIFIED-ID"
-    # Gäller oavsett installationsläge — reauth mot en self-hosted-entry
-    # får inte heller trigga en ny verifieringsrunda.
+    # Holds regardless of installation mode — a reauth against a self-hosted entry
+    # must not trigger a new verification round either.
     assert get_client_device_id(None, True, config) == "ALREADY-VERIFIED-ID"
 
 
 def test_missing_device_id_is_generated() -> None:
-    """Utan ett tidigare ID genereras ett nytt, slumpmässigt ID."""
+    """Without a previous ID, a new random ID is generated."""
     device_id = get_client_device_id(None, False, {})
 
     assert device_id
@@ -44,12 +44,11 @@ def test_missing_device_id_is_generated() -> None:
 
 
 def test_supported_lifespans_are_the_four_a_mower_has() -> None:
-    """Endast de komponenter 2i0fns faktiskt deklarerar.
+    """Only the components 2i0fns actually declares.
 
-    Core exponerar 12 av ``LifeSpan``-enumens 26 medlemmar, samtliga
-    dammsugarinriktade. BLADE och LENS_BRUSH ingår i den listan; TRIMMER_BRUSH
-    och WEED_ROPE gör det inte alls — de är gräsklipparspecifika komponenter
-    core aldrig exponerar.
+    Core exposes 12 of the ``LifeSpan`` enum's 26 members, all vacuum-oriented.
+    BLADE and LENS_BRUSH are on that list; TRIMMER_BRUSH and WEED_ROPE are not
+    there at all — they are mower-specific components core never exposes.
     """
     from deebot_client.events import LifeSpan
 
@@ -64,15 +63,15 @@ def test_supported_lifespans_are_the_four_a_mower_has() -> None:
 
 
 def test_supported_lifespans_match_the_target_device() -> None:
-    """Vår lista får inte innehålla något enheten saknar."""
+    """Our list must not contain anything the device does not have."""
     import asyncio
 
     from deebot_client.hardware import _DEVICES, get_static_device_info
 
     from custom_components.ecovacs_mower.const import SUPPORTED_LIFESPANS
 
-    # get_static_device_info seedar den globala cachen. Repokonventionen är att
-    # lämna den som vi fann den — se tests/deebot_patch/test_hardware.py.
+    # get_static_device_info seeds the global cache. The repo convention is to
+    # leave it as we found it — see tests/deebot_patch/test_hardware.py.
     try:
         info = asyncio.run(get_static_device_info("2i0fns"))
         assert info is not None

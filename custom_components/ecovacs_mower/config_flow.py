@@ -147,13 +147,13 @@ class EcovacsMowerConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Ecovacs."""
 
     VERSION = 1
-    # 1, inte 2. Tvåan är ärvd från kärnans fork, där minor 1 är tiden före
-    # enhets-ID:t persisterades. Den här integrationen har aldrig haft någon
-    # annan version än den här — dess första release *är* den här — så ingen
-    # entry med minor 1 kan existera. Att ändå stå på 2 vore en fälla: Home
-    # Assistant accepterar en saknad ``async_migrate_entry`` vid samma major
-    # och fortsätter, så en minor-1-entry skulle nå controllern och krascha på
-    # ``config[CONF_DEVICE_ID]``. Höj den här bara tillsammans med en riktig
+    # 1, not 2. The 2 is inherited from the core fork, where minor 1 is the era
+    # before the device ID was persisted. This integration has never had any
+    # version other than this one — its first release *is* this one — so no entry
+    # with minor 1 can exist. Standing at 2 anyway would be a trap: Home
+    # Assistant accepts a missing ``async_migrate_entry`` at the same major and
+    # carries on, so a minor-1 entry would reach the controller and crash on
+    # ``config[CONF_DEVICE_ID]``. Only raise this together with a real
     # ``async_migrate_entry``.
     MINOR_VERSION = 1
 

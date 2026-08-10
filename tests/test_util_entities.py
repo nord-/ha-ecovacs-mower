@@ -1,4 +1,4 @@
-"""get_supported_entities kräver HA-importer och körs därför i CI."""
+"""get_supported_entities requires HA imports and therefore runs in CI."""
 
 from tests import requires_ha
 
@@ -6,10 +6,10 @@ pytestmark = requires_ha
 
 
 def test_only_devices_with_the_capability_get_an_entity() -> None:
-    """Beskrivningar vars capability_fn ger None ska inte bli entiteter.
+    """Descriptions whose capability_fn yields None must not become entities.
 
-    Det är den här filtreringen som gör att en gräsklippare slipper
-    dammsugarentiteter utan att vi behöver räkna upp dem.
+    It is this filtering that spares a lawn mower from vacuum entities without us
+    having to enumerate them.
     """
     from dataclasses import dataclass
     from unittest.mock import Mock
@@ -24,12 +24,12 @@ def test_only_devices_with_the_capability_get_an_entity() -> None:
         pass
 
     class _Entity:
-        """Stand-in för entity_class.
+        """Stand-in for entity_class.
 
-        Kan inte vara ``Mock`` självt: ``Mock.__init__`` tolkar sitt första
-        positionsargument som ``spec``, och get_supported_entities anropar
-        ``entity_class(device, capability, description)`` positionellt. Med
-        ``device`` som redan är en ``Mock`` krockar det med
+        Cannot be ``Mock`` itself: ``Mock.__init__`` reads its first positional
+        argument as ``spec``, and get_supported_entities calls
+        ``entity_class(device, capability, description)`` positionally. With a
+        ``device`` that is already a ``Mock`` that collides with
         ``InvalidSpecError: Cannot spec a Mock object``.
         """
 

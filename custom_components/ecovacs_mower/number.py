@@ -1,19 +1,19 @@
 """Ecovacs number module.
 
-Forkad från Home Assistant core (``homeassistant/components/ecovacs/number.py``).
-Beskrivningarna för ``clean_count`` och ``water_amount`` är borttagna: de
-kräver kapabiliteter (``clean.count`` respektive ``water.amount``) som
-GOAT-klipparen (2i0fns) inte deklarerar, så ``get_supported_entities`` hade
-filtrerat bort dem ändå — men döda beskrivningar hör inte hemma i en
-klipparspecifik fork. ``volume`` och ``cut_direction`` behålls: båda är
-klipparens egna inställningar (ljudvolym på notiser respektive linjeorientering
-för klippmönstret).
+Forked from Home Assistant core (``homeassistant/components/ecovacs/number.py``).
+The descriptions for ``clean_count`` and ``water_amount`` have been removed: they
+require capabilities (``clean.count`` and ``water.amount`` respectively) that the
+GOAT mower (2i0fns) does not declare, so ``get_supported_entities`` would have
+filtered them out anyway — but dead descriptions do not belong in a
+mower-specific fork. ``volume`` and ``cut_direction`` are kept: both are the
+mower's own settings (notification sound volume and the line orientation of the
+mowing pattern, respectively).
 
-Core's ``EcovacsNumberEntity.__init__`` läser av min/max från kapabiliteten om
-den är en ``CapabilityNumber`` (t.ex. ``water_amount``, ``mop_auto_wash_frequency``
-— moppfunktioner en gräsklippare saknar). ``volume`` och ``cut_direction`` är
-båda vanliga ``CapabilitySet``, inte ``CapabilityNumber``, så den grenen
-triggas aldrig här och är borttagen tillsammans med importen.
+Core's ``EcovacsNumberEntity.__init__`` reads min/max off the capability if it is
+a ``CapabilityNumber`` (e.g. ``water_amount``, ``mop_auto_wash_frequency`` — mop
+features a lawn mower does not have). ``volume`` and ``cut_direction`` are both
+plain ``CapabilitySet``, not ``CapabilityNumber``, so that branch never triggers
+here and has been removed along with the import.
 """
 
 from collections.abc import Callable

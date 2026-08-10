@@ -1,13 +1,12 @@
 """Ecovacs switch module.
 
-Forkad från Home Assistant core (``homeassistant/components/ecovacs/switch.py``).
-Beskrivningarna för ``continuous_cleaning``, ``carpet_auto_fan_boost`` och
-``clean_preference`` är borttagna: de kräver kapabiliteter som GOAT-klipparen
-(2i0fns) inte deklarerar, så ``get_supported_entities`` hade filtrerat bort
-dem ändå — men döda beskrivningar hör inte hemma i en klipparspecifik fork.
-``border_spin`` är också borttagen: det är kantborstning på en dammsugare,
-inte kantklippning. ``border_switch`` är klipparens kantklippningsinställning
-och behålls.
+Forked from Home Assistant core (``homeassistant/components/ecovacs/switch.py``).
+The descriptions for ``continuous_cleaning``, ``carpet_auto_fan_boost`` and
+``clean_preference`` have been removed: they require capabilities the GOAT mower
+(2i0fns) does not declare, so ``get_supported_entities`` would have filtered them
+out anyway — but dead descriptions do not belong in a mower-specific fork.
+``border_spin`` has also been removed: that is edge brushing on a vacuum, not
+edge mowing. ``border_switch`` is the mower's edge-mowing setting and is kept.
 """
 
 from dataclasses import dataclass

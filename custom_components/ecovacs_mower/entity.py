@@ -1,8 +1,8 @@
 """Ecovacs mqtt entity module.
 
-Forkad från Home Assistant core (``homeassistant/components/ecovacs/entity.py``).
-Basklassen för XMPP-anslutna enheter och dess beroende till det äldre
-klientbiblioteket är borttagna: den här integrationen stöder bara MQTT.
+Forked from Home Assistant core (``homeassistant/components/ecovacs/entity.py``).
+The base class for XMPP-connected devices and its dependency on the legacy
+client library have been removed: this integration only supports MQTT.
 """
 
 from collections.abc import Callable, Coroutine

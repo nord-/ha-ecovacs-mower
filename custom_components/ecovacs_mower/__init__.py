@@ -1,4 +1,4 @@
-"""Ecovacs Mower — Home Assistant-integration för GOAT-gräsklippare."""
+"""Ecovacs Mower — Home Assistant integration for GOAT lawn mowers."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ type EcovacsMowerConfigEntry = ConfigEntry[EcovacsController]
 async def async_setup_entry(
     hass: HomeAssistant, entry: EcovacsMowerConfigEntry
 ) -> bool:
-    """Sätt upp integrationen från en config entry."""
+    """Set up the integration from a config entry."""
     controller = EcovacsController(hass, entry.data)
     entry.async_on_unload(controller.teardown)
     await controller.initialize()
@@ -35,5 +35,5 @@ async def async_setup_entry(
 async def async_unload_entry(
     hass: HomeAssistant, entry: EcovacsMowerConfigEntry
 ) -> bool:
-    """Ladda ur config entry."""
+    """Unload the config entry."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

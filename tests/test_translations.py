@@ -1,13 +1,13 @@
-"""strings.json och translations/en.json ska hållas identiska.
+"""strings.json and translations/en.json must be kept identical.
 
-Bara ``translations/en.json`` finns (se CLAUDE.md: aldrig en ``sv.json``).
-``strings.json`` är källan utvecklare redigerar; ``translations/en.json`` är
-vad HA:s frontend faktiskt laddar för engelska. Ingenting i den här
-integrationens verktygskedja synkar filerna automatiskt — det görs annars
-bara av disciplin. Det här testet är vakten mot att de glider isär.
+Only ``translations/en.json`` exists (see CLAUDE.md: never an ``sv.json``).
+``strings.json`` is the source developers edit; ``translations/en.json`` is what
+HA's frontend actually loads for English. Nothing in this integration's toolchain
+syncs the files automatically — otherwise it happens by discipline alone. This
+test is the guard against them drifting apart.
 
-Ingen HA-import krävs (ren JSON-läsning), så testet körs lokalt på Windows
-också, utan ``requires_ha``.
+No HA import is required (plain JSON reading), so the test runs locally on Windows
+too, without ``requires_ha``.
 """
 
 import json
@@ -17,7 +17,7 @@ ROOT = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
 
 
 def test_strings_and_translations_are_identical() -> None:
-    """Jämför tolkat JSON, inte råa bytes: formattering ska inte kunna fälla testet."""
+    """Compare parsed JSON, not raw bytes: formatting must not be able to fail the test."""
     strings = json.loads((ROOT / "strings.json").read_text(encoding="utf-8"))
     translations = json.loads(
         (ROOT / "translations" / "en.json").read_text(encoding="utf-8")

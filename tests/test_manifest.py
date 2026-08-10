@@ -1,4 +1,4 @@
-"""Manifest må uppfylla integrationens hårda krav."""
+"""The manifest must satisfy the integration's hard requirements."""
 
 import json
 from pathlib import Path
@@ -20,7 +20,7 @@ def test_domain_is_ecovacs_mower() -> None:
 
 
 def test_version_present() -> None:
-    # Custom components måste ha version; core-integrationer får inte ha det.
+    # Custom components must have a version; core integrations must not.
     assert _manifest()["version"]
 
 

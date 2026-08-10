@@ -1,12 +1,12 @@
 """Ecovacs util functions.
 
-Forkad från Home Assistant core (``homeassistant/components/ecovacs/util.py``).
-``get_options`` är fortfarande borttagen — den används bara av select-
-plattformen, som denna integration inte har. ``get_supported_entities``
-är återställd i fas 2: sensor-, switch-, number- och buttonplattformarna
-använder den för att bygga sina entiteter ur ``EcovacsCapabilityEntityDescription``.
-``get_name_key`` är återställd i samma fas för eventplattformen, som mappar
-``CleanJobStatus`` till de tillståndsnycklar strings.json deklarerar.
+Forked from Home Assistant core (``homeassistant/components/ecovacs/util.py``).
+``get_options`` is still removed — it is only used by the select platform, which
+this integration does not have. ``get_supported_entities`` was restored in phase
+2: the sensor, switch, number and button platforms use it to build their
+entities from ``EcovacsCapabilityEntityDescription``. ``get_name_key`` was
+restored in the same phase for the event platform, which maps ``CleanJobStatus``
+to the state keys strings.json declares.
 """
 
 from collections.abc import Mapping

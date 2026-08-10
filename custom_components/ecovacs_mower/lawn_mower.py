@@ -1,4 +1,4 @@
-"""lawn_mower-entiteten för Ecovacs GOAT."""
+"""The lawn_mower entity for Ecovacs GOAT."""
 
 from __future__ import annotations
 
@@ -23,9 +23,9 @@ from .entity import EcovacsEntity
 
 _LOGGER = logging.getLogger(__name__)
 
-# IDLE betyder "står stilla", inte "står i dockan" — därför PAUSED.
-# Dockning rapporteras separat via onChargeInfo med state "idle", som
-# deebot_patch.messages översätter till State.DOCKED.
+# IDLE means "standing still", not "standing in the dock" — hence PAUSED.
+# Docking is reported separately via onChargeInfo with state "idle", which
+# deebot_patch.messages translates to State.DOCKED.
 _STATE_TO_MOWER_STATE = {
     State.IDLE: LawnMowerActivity.PAUSED,
     State.CLEANING: LawnMowerActivity.MOWING,
@@ -41,7 +41,7 @@ async def async_setup_entry(
     config_entry: EcovacsMowerConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Lägg till gräsklipparna."""
+    """Add the lawn mowers."""
     controller = config_entry.runtime_data
     mowers = [
         EcovacsMower(device)
@@ -53,7 +53,7 @@ async def async_setup_entry(
 
 
 class EcovacsMower(EcovacsEntity[Capabilities], LawnMowerEntity):
-    """En Ecovacs GOAT-gräsklippare."""
+    """An Ecovacs GOAT lawn mower."""
 
     _attr_supported_features = (
         LawnMowerEntityFeature.DOCK
@@ -64,12 +64,12 @@ class EcovacsMower(EcovacsEntity[Capabilities], LawnMowerEntity):
     entity_description = LawnMowerEntityEntityDescription(key="mower", name=None)
 
     def __init__(self, device: Device) -> None:
-        """Initiera gräsklipparen."""
+        """Initialize the lawn mower."""
         super().__init__(device, device.capabilities)
 
     @override
     async def async_added_to_hass(self) -> None:
-        """Prenumerera på tillståndshändelser."""
+        """Subscribe to state events."""
         await super().async_added_to_hass()
 
         async def on_status(event: StateEvent) -> None:
@@ -89,15 +89,15 @@ class EcovacsMower(EcovacsEntity[Capabilities], LawnMowerEntity):
 
     @override
     async def async_start_mowing(self) -> None:
-        """Starta eller återuppta klippning."""
+        """Start or resume mowing."""
         await self._clean_command(CleanAction.START)
 
     @override
     async def async_pause(self) -> None:
-        """Pausa klippningen."""
+        """Pause mowing."""
         await self._clean_command(CleanAction.PAUSE)
 
     @override
     async def async_dock(self) -> None:
-        """Skicka klipparen till dockan."""
+        """Send the mower back to the dock."""
         await self._device.execute_command(self._capability.charge.execute())

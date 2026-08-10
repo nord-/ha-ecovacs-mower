@@ -1,8 +1,8 @@
 """Controller module.
 
-Forkad från Home Assistant core (``homeassistant/components/ecovacs/controller.py``).
-Stödet för XMPP-anslutna enheter och dess beroende till det äldre
-klientbiblioteket är borttaget: den här integrationen stöder bara MQTT.
+Forked from Home Assistant core (``homeassistant/components/ecovacs/controller.py``).
+Support for XMPP-connected devices and its dependency on the legacy client
+library has been removed: this integration only supports MQTT.
 """
 
 import asyncio
@@ -96,30 +96,31 @@ class EcovacsController:
     async def initialize(self) -> None:
         """Init controller."""
         try:
-            # Patchen måste sådda cachen INNAN get_devices(), som bakar in
-            # kapabiliteterna i DeviceInfo.static.
+            # The patch must seed the cache BEFORE get_devices(), which bakes
+            # the capabilities into DeviceInfo.static.
             apply_deebot_patch()
             for class_ in SUPPORTED_CLASSES:
                 await patch_device_info(class_)
 
             devices = await self._api_client.get_devices()
 
-            # Kontrollera det objekt enheten faktiskt fick, inte cachen.
+            # Check the object the device actually got, not the cache.
             for info in devices.mqtt:
                 device_class = info.api["class"]
                 if device_class in SUPPORTED_CLASSES:
                     verify_capabilities(info.static.capabilities, device_class)
                 elif info.static.capabilities.device_type is DeviceType.MOWER:
-                    # Warning: samtliga 25 MOWER-klasser i deebot-client 18.5.1
-                    # bär samma CleanV2/GetCleanInfoV2-fel, men SUPPORTED_CLASSES
-                    # täcker bara 2i0fns. En annan klippare får alltså en entitet
-                    # vars reglage är döda och vars tillstånd släpar — exakt det
-                    # symtom projektet finns för att eliminera. Den användaren ska
-                    # inte behöva läsa debugloggen för att förstå varför.
+                    # Warning: all 25 MOWER classes in deebot-client 18.5.1
+                    # carry the same CleanV2/GetCleanInfoV2 bugs, but
+                    # SUPPORTED_CLASSES only covers the verified ones. Any other
+                    # mower therefore gets an entity whose controls are dead and
+                    # whose state lags — exactly the symptom this project exists
+                    # to eliminate. That user should not have to read the debug
+                    # log to understand why.
                     #
-                    # Predikatet är detsamma som lawn_mower.py använder för att
-                    # avgöra vad som blir en entitet, så varningen kan inte
-                    # falsklarma på en dammsugare.
+                    # The predicate is the same one lawn_mower.py uses to decide
+                    # what becomes an entity, so the warning cannot false-alarm
+                    # on a vacuum.
                     _LOGGER.warning(
                         "Mower class %s is not supported by this integration "
                         "and is used unpatched: controls will likely not work "
@@ -129,9 +130,9 @@ class EcovacsController:
                         ISSUE_TRACKER_URL,
                     )
                 else:
-                    # Debug, inte warning: en vanlig Deebot-dammsugare på samma
-                    # konto hamnar helt korrekt här, opatchad. Den blir ingen
-                    # entitet och har inget fel att rätta — inget att säga.
+                    # Debug, not warning: an ordinary Deebot vacuum on the same
+                    # account lands here entirely correctly, unpatched. It
+                    # becomes no entity and has no bug to fix — nothing to say.
                     _LOGGER.debug(
                         "Device class %s is not a mower and is used "
                         "unpatched, without capability verification",

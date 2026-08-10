@@ -1,15 +1,15 @@
-"""Kommandon anpassade för GOAT-gräsklippare.
+"""Commands adapted for GOAT lawn mowers.
 
-Biblioteket kopplar alla GOAT-klasser till ``CleanV2``, som publicerar på
-``iot/p2p/clean_V2``. Klipparens firmware lyssnar på ``iot/p2p/clean`` och
-ignorerar clean_V2 helt, vilket ger "No response received for command
-clean_V2" och gör start och paus verkningslösa.
+The library maps every GOAT class to ``CleanV2``, which publishes on
+``iot/p2p/clean_V2``. The mower's firmware listens on ``iot/p2p/clean`` and
+ignores clean_V2 entirely, which yields "No response received for command
+clean_V2" and makes start and pause do nothing.
 
-``CleanMower`` ärver ``Clean`` (topic ``clean``) men skickar V2-formaterad
-nyttolast, vilket är vad Ecovacs egen app gör.
+``CleanMower`` inherits ``Clean`` (topic ``clean``) but sends a V2-formatted
+payload, which is what Ecovacs' own app does.
 
-Motsvarar DeebotUniverse/client.py PR #1624, utan dess cachning av aktiv
-klipptyp — den behövs bara för customArea, som ligger utanför scope.
+Corresponds to DeebotUniverse/client.py PR #1624, without its caching of the
+active clean type — that is only needed for customArea, which is out of scope.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 class CleanMower(Clean):
-    """Klippkommando: topicen ``clean`` med V2-nyttolast."""
+    """Mow command: the ``clean`` topic with a V2 payload."""
 
     def _get_args(self, action: CleanAction) -> dict[str, Any]:
         return {"act": action.value, "content": {"type": CleanMode.AUTO.value}}

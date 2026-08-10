@@ -1,14 +1,14 @@
-"""Meddelandehandlare som deebot-client saknar för gräsklippare.
+"""Message handlers deebot-client lacks for lawn mowers.
 
-Motsvarar DeebotUniverse/client.py PR #1647. GOAT rapporterar sitt tillstånd
-via tre oombedda MQTT-meddelanden, men biblioteket hanterar bara ett av dem:
+Corresponds to DeebotUniverse/client.py PR #1647. GOAT reports its state via
+three unsolicited MQTT messages, but the library only handles one of them:
 
-    onCleanInfo         manuell start/paus      hanteras av biblioteket
-    onScheduleTaskInfo  schemalagt pass         faller igenom som okänt
-    onChargeInfo        hemfärd / klart         faller igenom som okänt
+    onCleanInfo         manual start/pause      handled by the library
+    onScheduleTaskInfo  scheduled run           falls through as unknown
+    onChargeInfo        returning / finished    falls through as unknown
 
-Utan de två sistnämnda lämnar entiteten aldrig "docked" under ett schemalagt
-pass, och återgår aldrig till "returning"/"docked" efter avslutat arbete.
+Without the latter two the entity never leaves "docked" during a scheduled run,
+and never returns to "returning"/"docked" once the work is finished.
 """
 
 from __future__ import annotations
@@ -24,22 +24,22 @@ if TYPE_CHECKING:
 
 
 def handle_clean_info(event_bus: EventBus, data: dict[str, Any]) -> HandlingResult:
-    """Tolka en clean-info-nyttolast och notifiera motsvarande tillstånd.
+    """Parse a clean-info payload and notify the corresponding state.
 
-    Delas av ``onScheduleTaskInfo`` och ``onCleanInfo``, som har identisk
-    nyttolast: ``{"state": "clean", "cleanState": {"motionState": "working"}}``.
+    Shared by ``onScheduleTaskInfo`` and ``onCleanInfo``, which have identical
+    payloads: ``{"state": "clean", "cleanState": {"motionState": "working"}}``.
 
-    Tillståndet härleds ur ``state`` — vad enheten gör — inte ur ``trigger``,
-    som bara anger vem som begärde åtgärden.
+    The state is derived from ``state`` — what the device is doing — not from
+    ``trigger``, which only says who requested the action.
     """
     status: State | None = None
     state = data.get("state")
     if data.get("trigger") == "alert":
         status = State.ERROR
-    # "washing" är mopptvätt och kan aldrig förekomma på en gräsklippare.
-    # Den behålls ändå: grenen är kopierad ordagrant från bibliotekets egen
-    # clean-info-parsning, och en identisk kopia är lättare att jämföra mot
-    # uppströms den dag PR #1647 mergas och det här kan raderas.
+    # "washing" is mop washing and can never occur on a lawn mower. It is kept
+    # anyway: the branch is copied verbatim from the library's own clean-info
+    # parsing, and an identical copy is easier to diff against upstream the day
+    # PR #1647 is merged and this can be deleted.
     elif state in ("clean", "washing"):
         clean_state = data.get("cleanState", {})
         motion_state = clean_state.get("motionState")
@@ -62,7 +62,7 @@ def handle_clean_info(event_bus: EventBus, data: dict[str, Any]) -> HandlingResu
 
 
 class OnChargeInfo(MessageBodyDataDict):
-    """Hemfärd och dockning."""
+    """Returning home and docking."""
 
     NAME = "onChargeInfo"
 
@@ -70,16 +70,16 @@ class OnChargeInfo(MessageBodyDataDict):
     def _handle_body_data_dict(
         cls, event_bus: EventBus, data: dict[str, Any]
     ) -> HandlingResult:
-        """Hantera message->body->data.
+        """Handle message->body->data.
 
-        Till skillnad från clean-info ligger tillståndet här på toppnivå:
-        "goCharging" på väg hem, "idle" när arbetet är klart.
+        Unlike clean-info, the state here sits at the top level: "goCharging"
+        on the way home, "idle" once the work is finished.
         """
-        # Kontrollen ligger före state-matchningen så den vinner oavsett
-        # vilket state som råkar följa med. Inte observerad i enhetsloggarna
-        # (bara "app" och "workComplete" har setts för onChargeInfo), men
-        # "trigger": "alert" är entydigt ett feltillstånd och får inte falla
-        # igenom tyst bara därför att kombinationen är ovanlig.
+        # The check comes before the state matching so it wins regardless of
+        # which state happens to come along. Not observed in the device logs
+        # (only "app" and "workComplete" have been seen for onChargeInfo), but
+        # "trigger": "alert" unambiguously means an error state and must not
+        # fall through silently just because the combination is unusual.
         if data.get("trigger") == "alert":
             event_bus.notify(StateEvent(State.ERROR))
             return HandlingResult.success()
@@ -97,7 +97,7 @@ class OnChargeInfo(MessageBodyDataDict):
 
 
 class OnScheduleTaskInfo(MessageBodyDataDict):
-    """Schemalagt klippass."""
+    """Scheduled mowing run."""
 
     NAME = "onScheduleTaskInfo"
 
@@ -105,5 +105,5 @@ class OnScheduleTaskInfo(MessageBodyDataDict):
     def _handle_body_data_dict(
         cls, event_bus: EventBus, data: dict[str, Any]
     ) -> HandlingResult:
-        """Hantera message->body->data."""
+        """Handle message->body->data."""
         return handle_clean_info(event_bus, data)

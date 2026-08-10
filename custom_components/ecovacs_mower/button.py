@@ -1,23 +1,23 @@
 """Ecovacs button module.
 
-Forkad från Home Assistant core (``homeassistant/components/ecovacs/button.py``).
-``relocate`` är borttagen: den är gated på ``caps.map``, som GOAT-klipparen
-(2i0fns) saknar. ``STATION_ENTITY_DESCRIPTIONS`` och
-``EcovacsStationActionButtonEntity`` beskriver en dammsugarstations tömning
-och mopptork — inga knappar en klippare har — och är borttagna tillsammans
-med importen av ``SUPPORTED_STATION_ACTIONS``.
+Forked from Home Assistant core (``homeassistant/components/ecovacs/button.py``).
+``relocate`` has been removed: it is gated on ``caps.map``, which the GOAT mower
+(2i0fns) does not have. ``STATION_ENTITY_DESCRIPTIONS`` and
+``EcovacsStationActionButtonEntity`` describe a vacuum station's emptying and mop
+drying — no buttons a mower has — and have been removed along with the import of
+``SUPPORTED_STATION_ACTIONS``.
 
-Tillagt utöver core: ``play_sound``. Kapabiliteten finns på ``2i0fns`` men
-exponeras inte av core-integrationen. Den återanvänder cores befintliga
-``EcovacsButtonEntity``/``EcovacsButtonEntityDescription`` — ingen ny
-entitetsklass krävs, se ``play_sound: CapabilityExecute[[]]`` i
+Added beyond core: ``play_sound``. The capability exists on ``2i0fns`` but is not
+exposed by the core integration. It reuses core's existing
+``EcovacsButtonEntity``/``EcovacsButtonEntityDescription`` — no new entity class
+is needed, see ``play_sound: CapabilityExecute[[]]`` in
 ``deebot_client/capabilities.py``.
 
-Annoteringen på ``EcovacsButtonEntity.entity_description`` är rättad mot core,
-som anger ``EcovacsLifespanButtonEntityDescription`` — sannolikt en
-copy-paste-miss, eftersom klassen aldrig använder livslängdsbeskrivningen.
-Harmlöst vid körning, men en felaktig typ i en fork är svårare att upptäcka
-än i uppströms.
+The annotation on ``EcovacsButtonEntity.entity_description`` is corrected
+relative to core, which states ``EcovacsLifespanButtonEntityDescription`` —
+likely a copy-paste slip, since the class never uses the lifespan description.
+Harmless at runtime, but an incorrect type in a fork is harder to spot than in
+upstream.
 """
 
 from dataclasses import dataclass
@@ -61,12 +61,12 @@ ENTITY_DESCRIPTIONS: tuple[EcovacsButtonEntityDescription, ...] = (
         capability_fn=lambda caps: caps.play_sound,
         key="play_sound",
         translation_key="play_sound",
-        # Medvetet utan entity_category. Att lokalisera klipparen är en åtgärd
-        # man tar till när den fastnat, inte felsökningsdata, så den hör hemma
-        # bland kontrollerna. HA exponerar dessutom inte diagnostik- och
-        # konfigurationsentiteter till röstassistenter som standard — och att
-        # kunna be klipparen låta är just vad man vill kunna göra utan att
-        # först leta upp den i gränssnittet.
+        # Deliberately without entity_category. Locating the mower is an action
+        # you reach for when it is stuck, not diagnostic data, so it belongs
+        # among the controls. HA also does not expose diagnostic and
+        # configuration entities to voice assistants by default — and asking the
+        # mower to make a sound is exactly what you want to be able to do
+        # without first hunting it down in the UI.
     ),
 )
 

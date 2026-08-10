@@ -1,4 +1,4 @@
-"""Switcharna ska motsvara inställningarna en GOAT har."""
+"""The switches must correspond to the settings a GOAT has."""
 
 from tests import requires_ha
 
@@ -6,7 +6,7 @@ pytestmark = requires_ha
 
 
 def test_expected_switch_keys() -> None:
-    """Låser uppsättningen. Ändras den ska det vara ett beslut, inte ett olycksfall."""
+    """Locks the set. If it changes, that must be a decision, not an accident."""
     from custom_components.ecovacs_mower.switch import ENTITY_DESCRIPTIONS
 
     assert {d.key for d in ENTITY_DESCRIPTIONS} == {
@@ -21,7 +21,7 @@ def test_expected_switch_keys() -> None:
 
 
 def test_no_vacuum_only_switches() -> None:
-    """Kapabiliteterna finns inte på 2i0fns, så entiteterna vore ändå tomma."""
+    """The capabilities do not exist on 2i0fns, so the entities would be empty anyway."""
     from custom_components.ecovacs_mower.switch import ENTITY_DESCRIPTIONS
 
     keys = {d.key for d in ENTITY_DESCRIPTIONS}
@@ -31,7 +31,7 @@ def test_no_vacuum_only_switches() -> None:
 
 
 def test_every_description_has_a_translation() -> None:
-    """En saknad nyckel ger råa strängar i gränssnittet."""
+    """A missing key yields raw strings in the UI."""
     import json
     from pathlib import Path
 
@@ -46,7 +46,7 @@ def test_every_description_has_a_translation() -> None:
 
 
 def test_every_switch_has_an_icon() -> None:
-    """En switch utan egen ikon får HA:s generiska toggle — lätt att missa."""
+    """A switch without its own icon gets HA's generic toggle — easy to miss."""
     import json
     from pathlib import Path
 
@@ -61,11 +61,11 @@ def test_every_switch_has_an_icon() -> None:
 
 
 def test_no_stale_switch_translations_or_icons() -> None:
-    """Varje nyckel i strings.json/icons.json ska höra till en riktig switch.
+    """Every key in strings.json/icons.json must belong to a real switch.
 
-    Motsatsen till testerna ovan: de kollar beskrivning → sträng/ikon, inte
-    tvärtom. Utan detta skulle en kvarglömd nyckel för en borttagen switch
-    gå obemärkt förbi.
+    The converse of the tests above: they check description -> string/icon, not
+    the other way around. Without this, a leftover key for a removed switch would
+    go unnoticed.
     """
     import json
     from pathlib import Path

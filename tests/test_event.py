@@ -1,4 +1,4 @@
-"""Senaste jobbet som händelseentitet."""
+"""The last job as an event entity."""
 
 from tests import requires_ha
 
@@ -12,18 +12,18 @@ def test_last_job_entity_exists() -> None:
 
 
 def test_event_types_cover_the_report_states() -> None:
-    """Ett rapporterat tillstånd utanför listan tappas av HA."""
+    """A reported state outside the list is dropped by HA."""
     from custom_components.ecovacs_mower.event import EcovacsLastJobEventEntity
 
     types = EcovacsLastJobEventEntity.entity_description.event_types
-    assert types, "event_types får inte vara tom"
+    assert types, "event_types must not be empty"
 
 
 def test_event_types_match_get_name_key_of_the_reportable_statuses() -> None:
-    """event_types låses mot de CleanJobStatus-värden entiteten faktiskt triggar på.
+    """event_types is locked to the CleanJobStatus values the entity triggers on.
 
-    NO_STATUS och CLEANING filtreras bort i on_event — bara avslutade jobb
-    ska nå _trigger_event, så bara de tre återstående statusarna hör hemma här.
+    NO_STATUS and CLEANING are filtered out in on_event — only finished jobs
+    should reach _trigger_event, so only the three remaining statuses belong here.
     """
     from deebot_client.events import CleanJobStatus
 
@@ -54,7 +54,7 @@ def test_translation_exists() -> None:
 
 
 def test_translated_states_cover_every_event_type() -> None:
-    """Ett tillstånd utan översättning visar en rå sträng i gränssnittet."""
+    """A state without a translation shows a raw string in the UI."""
     import json
     from pathlib import Path
 
@@ -70,7 +70,7 @@ def test_translated_states_cover_every_event_type() -> None:
 
 
 def test_last_job_entity_has_an_icon() -> None:
-    """En händelseentitet utan egen ikon får HA:s generiska ikon."""
+    """An event entity without its own icon gets HA's generic icon."""
     import json
     from pathlib import Path
 
@@ -83,11 +83,11 @@ def test_last_job_entity_has_an_icon() -> None:
 
 
 def test_no_stale_event_translations_or_icons() -> None:
-    """Varje nyckel i strings.json/icons.json ska höra till en riktig händelse.
+    """Every key in strings.json/icons.json must belong to a real event entity.
 
-    Motsatsen till testerna ovan: de kollar beskrivning → sträng/ikon, inte
-    tvärtom. Utan detta skulle en kvarglömd nyckel för en borttagen
-    händelseentitet gå obemärkt förbi.
+    The converse of the tests above: they check description -> string/icon, not
+    the other way around. Without this, a leftover key for a removed event entity would
+    go unnoticed.
     """
     import json
     from pathlib import Path

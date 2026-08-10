@@ -1,4 +1,4 @@
-"""Tester för de meddelandehandlare biblioteket saknar."""
+"""Tests for the message handlers the library lacks."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def _wrap(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _notified_states(message, data: dict[str, Any]) -> list[State]:
-    """Kör handlern och returnera de tillstånd som notifierades."""
+    """Run the handler and return the states that were notified."""
     event_bus = Mock()
     message.handle(event_bus, _wrap(data))
     return [
@@ -48,8 +48,8 @@ def _notified_states(message, data: dict[str, Any]) -> list[State]:
     ],
 )
 def test_on_charge_info(state: str, expected: State) -> None:
-    # GOAT rapporterar återgång till dockan via onChargeInfo: "goCharging" på
-    # väg hem, "idle" när jobbet är klart och den står i dockan.
+    # GOAT reports its return to the dock via onChargeInfo: "goCharging" on the
+    # way home, "idle" once the job is done and it is standing in the dock.
     data = {"cid": "122", "trigger": "app", "state": state, "other": "0"}
     assert _notified_states(OnChargeInfo, data) == [expected]
 
@@ -61,14 +61,14 @@ def test_on_charge_info_ignores_other_states(state: str) -> None:
 
 
 def test_on_charge_info_alert_overrides_docked_state() -> None:
-    # "idle" betyder normalt DOCKED, men trigger="alert" är ett feltillstånd
-    # och måste vinna även om state annars skulle tolkas som en lyckad dockning.
+    # "idle" normally means DOCKED, but trigger="alert" is an error state and must
+    # win even if state would otherwise read as a successful docking.
     data = {"cid": "122", "trigger": "alert", "state": "idle"}
     assert _notified_states(OnChargeInfo, data) == [State.ERROR]
 
 
 def test_on_charge_info_alert_overrides_ignored_state() -> None:
-    # Samma kontroll måste även slå igenom för ett state som annars ignoreras.
+    # The same check must also take effect for a state that is otherwise ignored.
     data = {"cid": "122", "trigger": "alert", "state": "unknownState"}
     assert _notified_states(OnChargeInfo, data) == [State.ERROR]
 
@@ -86,8 +86,8 @@ def test_on_charge_info_alert_overrides_ignored_state() -> None:
 def test_on_schedule_task_info(
     state: str, clean_state: dict[str, Any] | None, expected: State
 ) -> None:
-    # Schemalagda pass rapporteras via onScheduleTaskInfo med samma nyttolast
-    # som onCleanInfo.
+    # Scheduled runs are reported via onScheduleTaskInfo with the same payload as
+    # onCleanInfo.
     data: dict[str, Any] = {"trigger": "continue", "other": "0", "state": state}
     if clean_state is not None:
         data["cleanState"] = clean_state
@@ -106,6 +106,6 @@ def test_on_schedule_task_info_ignores_other_states(state: str) -> None:
 
 
 def test_message_names() -> None:
-    # Namnen är nycklarna i bibliotekets register och måste stämma exakt.
+    # The names are the keys in the library's registry and must match exactly.
     assert OnChargeInfo.NAME == "onChargeInfo"
     assert OnScheduleTaskInfo.NAME == "onScheduleTaskInfo"

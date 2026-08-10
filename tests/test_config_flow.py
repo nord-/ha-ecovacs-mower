@@ -1,9 +1,9 @@
-"""Config flow, med tonvikt på enhetsverifieringen som löser felkod 1013.
+"""Config flow, with emphasis on the device verification that solves error 1013.
 
-Home Assistant kan inte importeras på Windows (``fcntl``), se
-``tests/conftest.py``. Importerna ligger därför inne i testfunktionerna och
-hela filen är märkt ``requires_ha`` — annars kraschar redan insamlingen.
-Sanningskällan är CI på ubuntu-latest.
+Home Assistant cannot be imported on Windows (``fcntl``), see
+``tests/conftest.py``. The imports therefore live inside the test functions and
+the whole file is marked ``requires_ha`` — otherwise collection itself crashes.
+The source of truth is CI on ubuntu-latest.
 """
 
 from unittest.mock import patch
@@ -99,8 +99,8 @@ async def test_bad_verification_code_reports_error(hass) -> None:
 
 
 async def test_device_id_is_persisted_after_verification(hass) -> None:
-    # Kärnan i 1013-fixen: samma klient-ID måste återanvändas vid varje
-    # inloggning, annars kräver Ecovacs ny verifiering.
+    # The core of the 1013 fix: the same client ID must be reused on every
+    # login, otherwise Ecovacs demands a new verification.
     from deebot_client.exceptions import DeviceVerificationRequiredError
     from homeassistant.const import CONF_DEVICE_ID
     from homeassistant.data_entry_flow import FlowResultType

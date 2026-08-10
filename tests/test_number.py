@@ -1,4 +1,4 @@
-"""Nummerentiteter: volym och klippriktning."""
+"""Number entities: volume and cut direction."""
 
 from tests import requires_ha
 
@@ -12,11 +12,11 @@ def test_expected_number_keys() -> None:
 
 
 def test_cut_direction_is_a_line_orientation() -> None:
-    """0-180 grader, inte 0-359.
+    """0-180 degrees, not 0-359.
 
-    Klippriktningen är en linjeorientering, inte en kompassbäring: 180 grader
-    täcker alla möjliga ränder, eftersom 190 och 10 ger samma mönster.
-    Verifierat mot HA 2026.7.4.
+    The cut direction is a line orientation, not a compass bearing: 180 degrees
+    covers every possible stripe pattern, since 190 and 10 give the same result.
+    Verified against HA 2026.7.4.
     """
     from custom_components.ecovacs_mower.number import ENTITY_DESCRIPTIONS
 
@@ -40,7 +40,7 @@ def test_every_description_has_a_translation() -> None:
 
 
 def test_every_number_has_an_icon() -> None:
-    """En number utan egen ikon får HA:s generiska slider — lätt att missa."""
+    """A number without its own icon gets HA's generic slider — easy to miss."""
     import json
     from pathlib import Path
 
@@ -55,11 +55,11 @@ def test_every_number_has_an_icon() -> None:
 
 
 def test_no_stale_number_translations_or_icons() -> None:
-    """Varje nyckel i strings.json/icons.json ska höra till en riktig number.
+    """Every key in strings.json/icons.json must belong to a real number.
 
-    Motsatsen till testerna ovan: de kollar beskrivning → sträng/ikon, inte
-    tvärtom. Utan detta skulle en kvarglömd nyckel för en borttagen number
-    gå obemärkt förbi.
+    The converse of the tests above: they check description -> string/icon, not
+    the other way around. Without this, a leftover key for a removed number would
+    go unnoticed.
     """
     import json
     from pathlib import Path

@@ -1,4 +1,4 @@
-"""Sensoruppsättningen ska spegla vad en GOAT faktiskt har."""
+"""The sensor set must mirror what a GOAT actually has."""
 
 from tests import requires_ha
 
@@ -6,7 +6,7 @@ pytestmark = requires_ha
 
 
 def test_no_station_sensor() -> None:
-    """station_state beskriver en dammsugarstations tömningspåse."""
+    """station_state describes a vacuum station's dust bag."""
     from custom_components.ecovacs_mower.sensor import ENTITY_DESCRIPTIONS
 
     assert not any(d.key == "station_state" for d in ENTITY_DESCRIPTIONS)
@@ -21,15 +21,16 @@ def test_no_legacy_classes() -> None:
 
 
 def test_expected_sensor_keys() -> None:
-    """Låser uppsättningen. Ändras den ska det vara ett beslut, inte ett olycksfall.
+    """Locks the set. If it changes, that must be a decision, not an accident.
 
-    ``error`` lever inte i ``ENTITY_DESCRIPTIONS``: precis som i core har
-    ``EcovacsErrorSensor`` sin ``entity_description`` som klassattribut och
-    byggs separat i ``async_setup_entry``, inte via ``get_supported_entities``.
-    Att lägga in den i ``ENTITY_DESCRIPTIONS`` hade fått get_supported_entities
-    att bygga en andra, generisk ``EcovacsSensor`` med samma unique_id
-    (``{did}_error``) som den riktiga ``EcovacsErrorSensor`` — en krock i
-    entity-registret. Testet slår därför ihop de två källorna till en mängd.
+    ``error`` does not live in ``ENTITY_DESCRIPTIONS``: just as in core,
+    ``EcovacsErrorSensor`` has its ``entity_description`` as a class attribute and
+    is built separately in ``async_setup_entry``, not via
+    ``get_supported_entities``. Putting it in ``ENTITY_DESCRIPTIONS`` would have
+    made get_supported_entities build a second, generic ``EcovacsSensor`` with the
+    same unique_id (``{did}_error``) as the real ``EcovacsErrorSensor`` — a
+    collision in the entity registry. The test therefore merges the two sources
+    into one set.
     """
     from homeassistant.const import ATTR_BATTERY_LEVEL
 
@@ -67,10 +68,10 @@ def test_four_lifespan_sensors() -> None:
 
 
 def test_every_description_has_a_translation() -> None:
-    """En saknad nyckel ger råa strängar i gränssnittet.
+    """A missing key yields raw strings in the UI.
 
-    Inkluderar även ``EcovacsErrorSensor``, som har sin egen
-    ``entity_description`` utanför ``ENTITY_DESCRIPTIONS`` (se
+    Also includes ``EcovacsErrorSensor``, which has its own
+    ``entity_description`` outside ``ENTITY_DESCRIPTIONS`` (see
     ``test_expected_sensor_keys``).
     """
     import json
@@ -97,12 +98,12 @@ def test_every_description_has_a_translation() -> None:
 
 
 def test_every_sensor_has_an_icon() -> None:
-    """En sensor utan egen ikon får HA:s generiska ikon — lätt att missa.
+    """A sensor without its own icon gets HA's generic icon — easy to miss.
 
-    Sensor var den första plattformen och skapade ``icons.json``; mönstret
-    med ett ikontest per plattform uppfanns en task senare och har aldrig
-    eftermonterats här förrän nu. Inkluderar ``EcovacsErrorSensor`` av samma
-    skäl som ``test_every_description_has_a_translation``.
+    Sensor was the first platform and created ``icons.json``; the pattern of one
+    icon test per platform was invented a task later and had never been
+    retrofitted here until now. Includes ``EcovacsErrorSensor`` for the same
+    reason as ``test_every_description_has_a_translation``.
     """
     import json
     from pathlib import Path
@@ -128,11 +129,11 @@ def test_every_sensor_has_an_icon() -> None:
 
 
 def test_no_stale_sensor_translations_or_icons() -> None:
-    """Varje nyckel i strings.json/icons.json ska höra till en riktig sensor.
+    """Every key in strings.json/icons.json must belong to a real sensor.
 
-    Motsatsen till testerna ovan: de kollar beskrivning → sträng/ikon, inte
-    tvärtom. Utan detta skulle en kvarglömd nyckel för en borttagen sensor
-    gå obemärkt förbi.
+    The converse of the tests above: they check description → string/icon, not the
+    other way around. Without this, a leftover key for a removed sensor would go
+    unnoticed.
     """
     import json
     from pathlib import Path

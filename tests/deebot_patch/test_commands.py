@@ -1,4 +1,4 @@
-"""Tester för mower-anpassade kommandon."""
+"""Tests for the mower-adapted commands."""
 
 from deebot_client.commands.json.clean import Clean, CleanV2
 from deebot_client.models import CleanAction
@@ -7,7 +7,7 @@ from custom_components.ecovacs_mower.deebot_patch.commands import CleanMower
 
 
 def test_publishes_to_clean_topic_not_clean_v2() -> None:
-    # Kärnan i buggen: GOAT lyssnar på "clean", inte "clean_V2".
+    # The core of the bug: GOAT listens on "clean", not "clean_V2".
     assert CleanMower.NAME == "clean"
     assert CleanV2.NAME == "clean_V2"
 
@@ -22,8 +22,8 @@ def test_start_uses_v2_content_shape() -> None:
 
 
 def test_pause_uses_v2_content_shape() -> None:
-    # Till skillnad från CleanV2, som skickar tom typ vid paus, echoar vi
-    # "auto" — det är vad appen gör mot en gräsklippare.
+    # Unlike CleanV2, which sends an empty type on pause, we echo "auto" — that
+    # is what the app does against a lawn mower.
     command = CleanMower(CleanAction.PAUSE)
     assert command._args == {"act": "pause", "content": {"type": "auto"}}
 

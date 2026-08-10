@@ -1,25 +1,25 @@
-"""Delad testuppsättning.
+"""Shared test setup.
 
-Home Assistant kan inte importeras på Windows: ``homeassistant/runner.py``
-gör ett oskyddat ``import fcntl``, som är POSIX-only. Sanningskällan för
-testresultat är därför CI på ubuntu-latest, där hela sviten körs.
+Home Assistant cannot be imported on Windows: ``homeassistant/runner.py`` does an
+unguarded ``import fcntl``, which is POSIX-only. The source of truth for test
+results is therefore CI on ubuntu-latest, where the whole suite runs.
 
-Vakten nedan gör att protokoll-lagrets tester — ``tests/deebot_patch/``, som
-bara rör ``deebot_client`` — ändå går att köra lokalt på Windows. Utan den
-kraschar insamlingen av *alla* tester på plugin-importen.
+The guard below is what makes the protocol layer's tests — ``tests/deebot_patch/``,
+which only touch ``deebot_client`` — runnable locally on Windows anyway. Without
+it, collection of *all* tests crashes on the plugin import.
 """
 
 import sys
 
 import pytest
 
-# Vakten hindrar bara den explicita laddningen. Pluginet registrerar sig även
-# som pytest11-entry point och autoladdas av pytest oberoende av den här filen.
-# Lokalt på Windows krävs därför också flaggan:
+# The guard only prevents the explicit load. The plugin also registers itself as a
+# pytest11 entry point and is auto-loaded by pytest regardless of this file.
+# Locally on Windows the flag is therefore required as well:
 #
 #     python -m pytest tests/deebot_patch/ -p no:homeassistant -v
 #
-# Flaggan hör inte hemma i pytest.ini — CI behöver pluginet laddat.
+# The flag does not belong in pytest.ini — CI needs the plugin loaded.
 _HA_AVAILABLE = sys.platform != "win32"
 
 if _HA_AVAILABLE:
@@ -27,5 +27,5 @@ if _HA_AVAILABLE:
 
     @pytest.fixture(autouse=True)
     def auto_enable_custom_integrations(enable_custom_integrations):
-        """Låt HA ladda custom_components under test."""
+        """Let HA load custom_components under test."""
         return

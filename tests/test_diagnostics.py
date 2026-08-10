@@ -1,10 +1,10 @@
-"""REDACT måste maskera allt uppströms kärna maskerar.
+"""REDACT must mask everything upstream core masks.
 
-Modulen under test importerar Home Assistant (via ``diagnostics.py``, som i
-sin tur importerar paketets ``__init__``), som inte går att importera på
-Windows (``fcntl``). Importerna ligger därför inne i testfunktionerna och
-hela filen är märkt ``requires_ha`` — annars kraschar redan insamlingen,
-innan någon skip-markör hinner gälla. Sanningskällan är CI på ubuntu-latest.
+The module under test imports Home Assistant (via ``diagnostics.py``, which in
+turn imports the package's ``__init__``), which cannot be imported on Windows
+(``fcntl``). The imports therefore live inside the test functions and the whole
+file is marked ``requires_ha`` — otherwise collection itself crashes before any
+skip marker gets a chance to apply. The source of truth is CI on ubuntu-latest.
 """
 
 from . import requires_ha
@@ -13,14 +13,13 @@ pytestmark = requires_ha
 
 
 def test_redact_covers_everything_core_redacts() -> None:
-    """Kontraktet, inte en engångsobservation.
+    """The contract, not a one-off observation.
 
-    homeassistant/components/ecovacs/diagnostics.py maskerar
-    CONF_USERNAME, CONF_PASSWORD, "title", CONF_OVERRIDE_MQTT_URL,
-    CONF_OVERRIDE_REST_URL (config) samt "did", CONF_NAME, "homeId"
-    (enhet). "title" behövs inte här — vi dumpar entry.data, inte
-    entry.as_dict() — men resten ska finnas, annars läcker en
-    diagnostikrapport uppgifter en användare delar offentligt.
+    homeassistant/components/ecovacs/diagnostics.py masks CONF_USERNAME,
+    CONF_PASSWORD, "title", CONF_OVERRIDE_MQTT_URL, CONF_OVERRIDE_REST_URL
+    (config) plus "did", CONF_NAME, "homeId" (device). "title" is not needed here
+    — we dump entry.data, not entry.as_dict() — but the rest must be present,
+    otherwise a diagnostics report leaks data a user shares publicly.
     """
     from homeassistant.const import CONF_NAME, CONF_PASSWORD, CONF_USERNAME
 
@@ -43,17 +42,17 @@ def test_redact_covers_everything_core_redacts() -> None:
 
 
 def test_redact_covers_the_fork_specific_leaks() -> None:
-    """Tre nycklar uppströms aldrig behövde maskera.
+    """Three keys upstream never had to mask.
 
-    * ``CONF_DEVICE_ID``: kärnan persisterar aldrig klientens enhets-ID —
-      den genererar ett nytt vid varje start, vilket *är* 1013-buggen.
-      Vi sparar det i ``entry.data``, så det når dumpen. Self-hosted är
-      värdet ``HA-{slugify(location_name)}`` (hemnamnet, PII); i molnläge
-      är det den verifierade klientidentiteten, som ihop med ett läckt
-      konto hoppar över e-postverifieringen.
-    * ``nick``/``resource``: står i ``ApiDeviceInfo`` och följer med rakt
-      in i dumpen, eftersom ``device.device_info`` *är* den råa api-dicten.
-      ``resource`` är andra halvan av MQTT-topicen.
+    * ``CONF_DEVICE_ID``: core never persists the client's device ID — it
+      generates a new one on every start, which *is* the 1013 bug. We store it in
+      ``entry.data``, so it reaches the dump. Self-hosted, the value is
+      ``HA-{slugify(location_name)}`` (the home name, PII); in cloud mode it is
+      the verified client identity, which combined with a leaked account skips
+      email verification.
+    * ``nick``/``resource``: present in ``ApiDeviceInfo`` and carried straight
+      into the dump, since ``device.device_info`` *is* the raw api dict.
+      ``resource`` is the other half of the MQTT topic.
     """
     from homeassistant.const import CONF_DEVICE_ID
 
@@ -63,19 +62,19 @@ def test_redact_covers_the_fork_specific_leaks() -> None:
 
 
 def test_device_info_keys_are_covered_or_deliberately_public() -> None:
-    """Varje nyckel i ApiDeviceInfo ska vara ett medvetet beslut.
+    """Every key in ApiDeviceInfo must be a deliberate decision.
 
-    ``device.device_info`` returnerar api-dicten oavkortat. Lägger
-    uppströms till en nyckel ska den här raden bli röd, så att någon
-    faktiskt tar ställning i stället för att låta den läcka ut i en
-    diagnostikrapport som klistras in i ett GitHub-ärende.
+    ``device.device_info`` returns the api dict unabridged. If upstream adds a
+    key, this line must go red, so that somebody actually takes a position
+    instead of letting it leak out in a diagnostics report pasted into a GitHub
+    issue.
     """
     from deebot_client.models import ApiDeviceInfo
 
     from custom_components.ecovacs_mower.diagnostics import REDACT
 
-    # Medvetet omaskerade: modellklass och tillverkare är inte identifierande
-    # och är precis det man behöver för att felsöka ett ärende.
+    # Deliberately unmasked: the model class and manufacturer are not identifying
+    # and are exactly what you need to debug an issue.
     public = {"class", "company", "deviceName"}
 
     assert set(ApiDeviceInfo.__annotations__) <= REDACT | public

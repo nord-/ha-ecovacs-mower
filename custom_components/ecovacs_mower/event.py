@@ -1,14 +1,14 @@
 """Ecovacs event module.
 
-Forkad från Home Assistant core (``homeassistant/components/ecovacs/event.py``).
-Filen behövde ingen ändring för legacy-enheter: cores ``async_setup_entry``
-itererar redan bara över ``controller.devices``, utan någon referens till de
-XMPP-anslutna enheterna som denna fork saknar. Enda ändringen är att
-``EcovacsConfigEntry`` heter ``EcovacsMowerConfigEntry`` här.
+Forked from Home Assistant core (``homeassistant/components/ecovacs/event.py``).
+The file needed no change for legacy devices: core's ``async_setup_entry`` already
+only iterates over ``controller.devices``, without any reference to the
+XMPP-connected devices this fork does not have. The only change is that
+``EcovacsConfigEntry`` is called ``EcovacsMowerConfigEntry`` here.
 
-``get_name_key`` fanns inte i forkens ``util.py`` — den plockades bort i
-``c9be9a8`` tillsammans med select-plattformen, som var dess enda användare.
-Den är återställd i util.py för den här entiteten.
+``get_name_key`` was not in the fork's ``util.py`` — it was dropped in ``c9be9a8``
+along with the select platform, its only user. It has been restored in util.py for
+this entity.
 """
 
 from typing import override

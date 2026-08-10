@@ -1,9 +1,9 @@
 """Ecovacs sensor module.
 
-Forkad från Home Assistant core (``homeassistant/components/ecovacs/sensor.py``).
-Allt som rör dammsugarstationer (tömningspåse, mopptorkning) och den äldre
-XMPP-anslutna klassen (``EcovacsLegacy*``) är borttaget: den här integrationen
-stöder bara GOAT-gräsklippare över MQTT, som saknar station helt.
+Forked from Home Assistant core (``homeassistant/components/ecovacs/sensor.py``).
+Everything related to vacuum stations (dust bag, mop drying) and the legacy
+XMPP-connected class (``EcovacsLegacy*``) has been removed: this integration only
+supports GOAT lawn mowers over MQTT, which have no station at all.
 """
 
 from collections.abc import Callable
@@ -97,12 +97,12 @@ ENTITY_DESCRIPTIONS: tuple[EcovacsSensorEntityDescription, ...] = (
         key="total_stats_area",
         translation_key="total_stats_area",
         device_class=SensorDeviceClass.AREA,
-        # m² är rätt, trots att stats_area ovan får cm² via
-        # get_area_native_unit_of_measurement. De två fälten använder faktiskt
-        # olika enheter på tråden: enheten rapporterar ytan per pass i cm² och
-        # totalytan i m². Verifierat mot hårdvara och mot Ecovacs-appen — se
-        # issue #3. Asymmetrin ser ut som ett slarvfel men är korrekt; ändra
-        # inte till get_area_native_unit_of_measurement.
+        # m² is correct, even though stats_area above gets cm² via
+        # get_area_native_unit_of_measurement. The two fields really do use
+        # different units on the wire: the device reports the per-run area in cm²
+        # and the total area in m². Verified against the hardware and against the
+        # Ecovacs app — see issue #3. The asymmetry looks like a slip but is
+        # correct; do not change it to get_area_native_unit_of_measurement.
         native_unit_of_measurement=UnitOfArea.SQUARE_METERS,
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
