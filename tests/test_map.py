@@ -78,3 +78,23 @@ def test_is_empty() -> None:
     assert mower_map.is_empty
     mower_map.update_map_info(BOUNDARY, None, None)
     assert not mower_map.is_empty
+
+
+def test_is_empty_false_for_nogo_only() -> None:
+    # A store restored from a session where only onSpecialContour arrived —
+    # no boundary/zones/lanes yet — must not render as the empty placeholder.
+    mower_map = MowerMap()
+    mower_map.update_nogo([[(0, 0)]])
+    assert not mower_map.is_empty
+
+
+def test_is_empty_false_for_obstacles_only() -> None:
+    mower_map = MowerMap()
+    mower_map.update_obstacles([[(0, 0)]])
+    assert not mower_map.is_empty
+
+
+def test_is_empty_false_for_corridors_only() -> None:
+    mower_map = MowerMap()
+    mower_map.update_map_info(None, None, [[(0, 0)]])
+    assert not mower_map.is_empty

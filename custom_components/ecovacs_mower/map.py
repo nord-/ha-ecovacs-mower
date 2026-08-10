@@ -37,7 +37,14 @@ class MowerMap:
     @property
     def is_empty(self) -> bool:
         """True when there is no geometry worth rendering."""
-        return self.boundary is None and not self.zones and not self.lanes
+        return (
+            self.boundary is None
+            and not self.zones
+            and not self.lanes
+            and not self.nogo_zones
+            and not self.obstacles
+            and not self.corridors
+        )
 
     def update_map_info(
         self,
