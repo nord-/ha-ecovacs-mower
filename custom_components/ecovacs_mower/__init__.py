@@ -5,8 +5,10 @@ from __future__ import annotations
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 
-from .controller import EcovacsController
+from .const import DOMAIN
+from .controller import EcovacsController, async_remove_map_store
 
 PLATFORMS = [
     Platform.BUTTON,
@@ -38,3 +40,21 @@ async def async_unload_entry(
 ) -> bool:
     """Unload the config entry."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(
+    hass: HomeAssistant, entry: EcovacsMowerConfigEntry
+) -> None:
+    """Delete the entry's persisted map stores.
+
+    Runs after unload but before the device registry is cleared for this
+    entry, so the devices (and the ``did`` in each one's identifiers) are
+    still there to enumerate.
+    """
+    device_registry = dr.async_get(hass)
+    for device in dr.async_entries_for_config_entry(
+        device_registry, entry.entry_id
+    ):
+        for domain, did in device.identifiers:
+            if domain == DOMAIN:
+                await async_remove_map_store(hass, did)

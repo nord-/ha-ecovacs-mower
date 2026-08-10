@@ -427,3 +427,24 @@ async def test_setup_map_survives_corrupt_store() -> None:
         await controller._setup_map(device)  # must not raise
 
     assert controller.maps["did-1"].is_empty
+
+
+async def test_async_remove_map_store_deletes_the_right_key() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from custom_components.ecovacs_mower.controller import (
+        MAP_STORAGE_VERSION,
+        async_remove_map_store,
+    )
+
+    hass = MagicMock()
+    with patch(
+        "custom_components.ecovacs_mower.controller.Store"
+    ) as store_cls:
+        store_cls.return_value.async_remove = AsyncMock()
+        await async_remove_map_store(hass, "did-1")
+
+    store_cls.assert_called_once_with(
+        hass, MAP_STORAGE_VERSION, "ecovacs_mower.map_did-1"
+    )
+    store_cls.return_value.async_remove.assert_awaited_once()

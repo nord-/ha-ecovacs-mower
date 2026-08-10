@@ -70,6 +70,21 @@ MAP_STORAGE_VERSION = 1
 MAP_SAVE_DELAY = 30  # seconds; Store.async_delay_save flushes at HA stop
 
 
+def _map_store(hass: HomeAssistant, did: str) -> Store[dict[str, Any]]:
+    """Return the per-device map Store, keyed the same way everywhere."""
+    return Store(hass, MAP_STORAGE_VERSION, f"{DOMAIN}.map_{did}")
+
+
+async def async_remove_map_store(hass: HomeAssistant, did: str) -> None:
+    """Delete a device's persisted map store.
+
+    Called from ``async_remove_entry`` when the config entry is deleted, so
+    an unloaded device's ``.storage/ecovacs_mower.map_<did>`` file does not
+    outlive the entry.
+    """
+    await _map_store(hass, did).async_remove()
+
+
 class EcovacsController:
     """Ecovacs controller."""
 
@@ -214,9 +229,7 @@ class EcovacsController:
         messages of a session.
         """
         did = device.device_info["did"]
-        store: Store[dict[str, Any]] = Store(
-            self._hass, MAP_STORAGE_VERSION, f"{DOMAIN}.map_{did}"
-        )
+        store = _map_store(self._hass, did)
         mower_map = MowerMap()
         if (data := await store.async_load()) is not None:
             try:
