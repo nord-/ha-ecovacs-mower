@@ -1,5 +1,22 @@
 {
   "entity": {
+    "binary_sensor": {
+      "animal_protect": {
+        "default": "mdi:paw"
+      },
+      "emergency_stop": {
+        "default": "mdi:alert-octagon"
+      },
+      "locked": {
+        "default": "mdi:lock"
+      },
+      "rain_delay": {
+        "default": "mdi:timer-sand"
+      },
+      "rain_protect": {
+        "default": "mdi:weather-rainy"
+      }
+    },
     "button": {
       "play_sound": {
         "default": "mdi:map-marker-radius"
@@ -39,6 +56,15 @@
       }
     },
     "sensor": {
+      "activity": {
+        "default": "mdi:robot-mower-outline",
+        "state": {
+          "docked_rain_delay": "mdi:weather-rainy",
+          "error": "mdi:alert-circle",
+          "paused_rain": "mdi:weather-rainy",
+          "returning_rain": "mdi:weather-pouring"
+        }
+      },
       "error": {
         "default": "mdi:alert-circle"
       },

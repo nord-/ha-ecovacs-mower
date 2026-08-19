@@ -11,6 +11,7 @@ from .const import DOMAIN
 from .controller import EcovacsController, async_remove_map_store
 
 PLATFORMS = [
+    Platform.BINARY_SENSOR,
     Platform.BUTTON,
     Platform.EVENT,
     Platform.IMAGE,

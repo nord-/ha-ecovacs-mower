@@ -4,10 +4,17 @@ Forked from Home Assistant core (``homeassistant/components/ecovacs/sensor.py``)
 Everything related to vacuum stations (dust bag, mop drying) and the legacy
 XMPP-connected class (``EcovacsLegacy*``) has been removed: this integration only
 supports GOAT lawn mowers over MQTT, which have no station at all.
+
+``EcovacsActivitySensor`` at the bottom is the one addition core has no
+counterpart for. It exists because HA's ``LawnMowerActivity`` enum cannot say
+*why* the mower stopped — see the comment above ``_STATE_TO_ACTIVITY``. The
+protection flags from ``onProtectState`` are deliberately *not* what it reads;
+``deebot_patch.messages`` explains why.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
 from typing import Any, override
 
 from deebot_client.capabilities import CapabilityEvent, CapabilityLifeSpan, DeviceType
@@ -19,9 +26,11 @@ from deebot_client.events import (
     LifeSpan,
     LifeSpanEvent,
     NetworkInfoEvent,
+    StateEvent,
     StatsEvent,
     TotalStatsEvent,
 )
+from deebot_client.models import State
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -43,12 +52,15 @@ from homeassistant.helpers.typing import StateType
 
 from . import EcovacsMowerConfigEntry
 from .const import SUPPORTED_LIFESPANS
+from .deebot_patch.messages import MowerTriggerEvent
 from .entity import (
     EcovacsCapabilityEntityDescription,
     EcovacsDescriptionEntity,
     EcovacsEntity,
 )
 from .util import get_supported_entities
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -179,6 +191,50 @@ LIFESPAN_ENTITY_DESCRIPTIONS = tuple(
 )
 
 
+# The lawn_mower entity can only ever report HA's five LawnMowerActivity
+# members, so "paused because it started raining" is indistinguishable there
+# from "paused by hand", and a run cut short by rain ends up looking exactly
+# like one that finished. This sensor is the same state with the reason folded
+# in. IDLE is PAUSED here for the same reason as in lawn_mower.py: it means
+# "standing still", not "standing in the dock".
+_STATE_TO_ACTIVITY = {
+    State.IDLE: "paused",
+    State.CLEANING: "mowing",
+    State.RETURNING: "returning",
+    State.DOCKED: "docked",
+    State.ERROR: "error",
+    State.PAUSED: "paused",
+}
+
+# Only the states where rain changes the meaning. Mowing is deliberately not
+# here: the mower keeps cutting for a few seconds after the sensor gets wet, and
+# a "mowing (rain)" that exists for three seconds is noise. ERROR is not here
+# either — an error is the more important fact.
+_RAIN_ACTIVITY = {
+    "paused": "paused_rain",
+    "returning": "returning_rain",
+    "docked": "docked_rain_delay",
+}
+
+# Derived, never hand-written: HA rejects a value the enum sensor did not
+# declare, so the options and the states _activity() can return must be the
+# same set by construction. Sorted only to keep the order stable.
+ACTIVITY_OPTIONS = sorted({*_STATE_TO_ACTIVITY.values(), *_RAIN_ACTIVITY.values()})
+
+# The device's own word for it, in onScheduleTaskInfo and onChargeInfo. This is
+# the whole reason the rain handling reads the trigger and not the protection
+# flags: the flags need interpreting, "trigger": "rain" does not.
+RAIN_TRIGGER = "rain"
+
+
+def _activity(state: State, *, interrupted_by_rain: bool) -> str:
+    """Combine the mower's state with the reason it stopped."""
+    activity = _STATE_TO_ACTIVITY[state]
+    if interrupted_by_rain:
+        return _RAIN_ACTIVITY.get(activity, activity)
+    return activity
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: EcovacsMowerConfigEntry,
@@ -200,6 +256,11 @@ async def async_setup_entry(
         EcovacsErrorSensor(device, capability)
         for device in controller.devices
         if (capability := device.capabilities.error)
+    )
+    entities.extend(
+        EcovacsActivitySensor(device)
+        for device in controller.devices
+        if device.capabilities.device_type is DeviceType.MOWER
     )
 
     async_add_entities(entities)
@@ -298,3 +359,68 @@ class EcovacsErrorSensor(
             self.async_write_ha_state()
 
         self._subscribe(self._capability.event, on_event)
+
+
+class EcovacsActivitySensor(
+    EcovacsEntity[CapabilityEvent[StateEvent]],
+    SensorEntity,
+):
+    """The mower's state with the reason it is being held back folded in."""
+
+    entity_description: SensorEntityDescription = SensorEntityDescription(
+        key="activity",
+        translation_key="activity",
+        device_class=SensorDeviceClass.ENUM,
+        options=ACTIVITY_OPTIONS,
+    )
+
+    def __init__(self, device: Device) -> None:
+        """Initialize entity."""
+        super().__init__(device, device.capabilities.state)
+        # Two events feed one state, so both have to be remembered: whichever
+        # arrives second must be able to recombine with the first. Until a
+        # StateEvent has been seen there is nothing to report and the entity
+        # stays unknown; a trigger on its own is not an activity.
+        self._state: State | None = None
+        self._interrupted_by_rain = False
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listeners now that hass is ready."""
+        await super().async_added_to_hass()
+
+        self._subscribe(self._capability.event, self._on_state)
+        self._subscribe(MowerTriggerEvent, self._on_trigger)
+
+    async def _on_state(self, event: StateEvent) -> None:
+        if event.state not in _STATE_TO_ACTIVITY:
+            # Same handling as in lawn_mower.py: keep the last known value
+            # rather than reporting a state that is not one of our options,
+            # which HA would reject for an enum sensor.
+            _LOGGER.warning("Unhandled state from device: %s", event.state)
+            return
+        if event.state is State.CLEANING:
+            # Cutting grass again is the one thing that unambiguously ends a
+            # rain stop, and the only signal that does: the delay expiring is
+            # not announced, and the mower reports no trigger when it resumes.
+            self._interrupted_by_rain = False
+        self._state = event.state
+        self._write_state()
+
+    async def _on_trigger(self, event: MowerTriggerEvent) -> None:
+        # Only rain sets the flag; nothing else clears it. The device sends
+        # "workComplete" when it reaches the dock even when rain is what sent it
+        # there — 56 seconds after the "rain" trigger in the captured log — so
+        # letting any later trigger overwrite the reason would throw it away at
+        # exactly the moment the user wants to read it.
+        if event.trigger == RAIN_TRIGGER:
+            self._interrupted_by_rain = True
+            self._write_state()
+
+    def _write_state(self) -> None:
+        if self._state is None:
+            return
+        self._attr_native_value = _activity(
+            self._state, interrupted_by_rain=self._interrupted_by_rain
+        )
+        self.async_write_ha_state()

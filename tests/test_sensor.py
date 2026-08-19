@@ -36,11 +36,13 @@ def test_expected_sensor_keys() -> None:
 
     from custom_components.ecovacs_mower.sensor import (
         ENTITY_DESCRIPTIONS,
+        EcovacsActivitySensor,
         EcovacsErrorSensor,
     )
 
     keys = {d.key for d in ENTITY_DESCRIPTIONS} | {
-        EcovacsErrorSensor.entity_description.key
+        EcovacsErrorSensor.entity_description.key,
+        EcovacsActivitySensor.entity_description.key,
     }
     assert keys == {
         "stats_area",
@@ -53,6 +55,7 @@ def test_expected_sensor_keys() -> None:
         "network_rssi",
         "network_ssid",
         "error",
+        "activity",
     }
 
 
@@ -80,6 +83,7 @@ def test_every_description_has_a_translation() -> None:
     from custom_components.ecovacs_mower.sensor import (
         ENTITY_DESCRIPTIONS,
         LIFESPAN_ENTITY_DESCRIPTIONS,
+        EcovacsActivitySensor,
         EcovacsErrorSensor,
     )
 
@@ -91,6 +95,7 @@ def test_every_description_has_a_translation() -> None:
         *ENTITY_DESCRIPTIONS,
         *LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsErrorSensor.entity_description,
+        EcovacsActivitySensor.entity_description,
     )
     for description in descriptions:
         if description.translation_key:
@@ -111,6 +116,7 @@ def test_every_sensor_has_an_icon() -> None:
     from custom_components.ecovacs_mower.sensor import (
         ENTITY_DESCRIPTIONS,
         LIFESPAN_ENTITY_DESCRIPTIONS,
+        EcovacsActivitySensor,
         EcovacsErrorSensor,
     )
 
@@ -122,6 +128,7 @@ def test_every_sensor_has_an_icon() -> None:
         *ENTITY_DESCRIPTIONS,
         *LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsErrorSensor.entity_description,
+        EcovacsActivitySensor.entity_description,
     )
     for description in descriptions:
         if description.translation_key:
@@ -141,6 +148,7 @@ def test_no_stale_sensor_translations_or_icons() -> None:
     from custom_components.ecovacs_mower.sensor import (
         ENTITY_DESCRIPTIONS,
         LIFESPAN_ENTITY_DESCRIPTIONS,
+        EcovacsActivitySensor,
         EcovacsErrorSensor,
     )
 
@@ -152,8 +160,218 @@ def test_no_stale_sensor_translations_or_icons() -> None:
         *ENTITY_DESCRIPTIONS,
         *LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsErrorSensor.entity_description,
+        EcovacsActivitySensor.entity_description,
     )
     keys = {d.translation_key for d in descriptions if d.translation_key}
 
     assert set(strings["entity"]["sensor"]) <= keys
     assert set(icons["entity"]["sensor"]) <= keys
+
+
+def test_every_state_is_an_activity() -> None:
+    """An unmapped state logs a warning and freezes the sensor on its old value.
+
+    The same guarantee ``test_every_state_is_mapped`` gives for the lawn_mower
+    entity: if deebot-client gains a State, this must be a decision.
+    """
+    from deebot_client.models import State
+
+    from custom_components.ecovacs_mower.sensor import _STATE_TO_ACTIVITY
+
+    assert set(_STATE_TO_ACTIVITY) == set(State)
+
+
+def test_activity_options_are_exactly_the_reachable_states() -> None:
+    """HA rejects a value an enum sensor did not declare in ``options``."""
+    from custom_components.ecovacs_mower.sensor import (
+        ACTIVITY_OPTIONS,
+        _RAIN_ACTIVITY,
+        _STATE_TO_ACTIVITY,
+    )
+
+    assert set(ACTIVITY_OPTIONS) == {
+        *_STATE_TO_ACTIVITY.values(),
+        *_RAIN_ACTIVITY.values(),
+    }
+    assert set(ACTIVITY_OPTIONS) == {
+        "mowing",
+        "paused",
+        "paused_rain",
+        "returning",
+        "returning_rain",
+        "docked",
+        "docked_rain_delay",
+        "error",
+    }
+
+
+def test_every_activity_option_is_translated() -> None:
+    """An untranslated option shows the raw key in the UI, both ways round."""
+    import json
+    from pathlib import Path
+
+    from custom_components.ecovacs_mower.sensor import ACTIVITY_OPTIONS
+
+    root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
+    strings = json.loads((root / "strings.json").read_text(encoding="utf-8"))
+    states = strings["entity"]["sensor"]["activity"]["state"]
+
+    assert set(states) == set(ACTIVITY_OPTIONS)
+
+
+def test_activity_icon_states_are_real_options() -> None:
+    """An icon for a state that cannot happen is dead weight."""
+    import json
+    from pathlib import Path
+
+    from custom_components.ecovacs_mower.sensor import ACTIVITY_OPTIONS
+
+    root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
+    icons = json.loads((root / "icons.json").read_text(encoding="utf-8"))
+
+    assert set(icons["entity"]["sensor"]["activity"]["state"]) <= set(ACTIVITY_OPTIONS)
+
+
+def test_activity_is_an_enum_sensor() -> None:
+    """Without the ENUM device class HA treats the value as a plain string.
+
+    The options would then not be validated and the translated state names in
+    strings.json would never be used.
+    """
+    from homeassistant.components.sensor import SensorDeviceClass
+
+    from custom_components.ecovacs_mower.sensor import (
+        ACTIVITY_OPTIONS,
+        EcovacsActivitySensor,
+    )
+
+    description = EcovacsActivitySensor.entity_description
+    assert description.device_class is SensorDeviceClass.ENUM
+    assert description.options == ACTIVITY_OPTIONS
+
+
+def test_rain_turns_the_state_into_its_rain_variant() -> None:
+    """Rain is only folded in where it changes the meaning."""
+    from deebot_client.models import State
+
+    from custom_components.ecovacs_mower.sensor import ACTIVITY_OPTIONS, _activity
+
+    assert _activity(State.DOCKED, interrupted_by_rain=False) == "docked"
+    assert _activity(State.DOCKED, interrupted_by_rain=True) == "docked_rain_delay"
+    assert _activity(State.RETURNING, interrupted_by_rain=True) == "returning_rain"
+    assert _activity(State.PAUSED, interrupted_by_rain=True) == "paused_rain"
+    assert _activity(State.IDLE, interrupted_by_rain=True) == "paused_rain"
+
+    # Mowing and error keep their state: see the comment on _RAIN_ACTIVITY.
+    assert _activity(State.CLEANING, interrupted_by_rain=True) == "mowing"
+    assert _activity(State.ERROR, interrupted_by_rain=True) == "error"
+
+    # Every combination must land inside the declared options.
+    for state in State:
+        for rain in (False, True):
+            assert _activity(state, interrupted_by_rain=rain) in ACTIVITY_OPTIONS
+
+
+def _bare_activity_sensor():
+    """An EcovacsActivitySensor with no device and no hass behind it.
+
+    ``__new__`` skips ``__init__`` (which needs a real Device), and
+    ``async_write_ha_state`` is stubbed because there is no hass to write to —
+    the same trick test_lawn_mower.py uses for supported_features. What is under
+    test is the bookkeeping in the two callbacks, which touches neither.
+    """
+    from custom_components.ecovacs_mower.sensor import EcovacsActivitySensor
+
+    sensor = EcovacsActivitySensor.__new__(EcovacsActivitySensor)
+    sensor._state = None
+    sensor._interrupted_by_rain = False
+    sensor.async_write_ha_state = lambda: None
+    return sensor
+
+
+async def test_rain_reason_survives_the_real_interruption_sequence() -> None:
+    """The captured sequence, event by event, must end on docked_rain_delay.
+
+    This is the whole feature: the device reports "workComplete" when it reaches
+    the dock even though rain is what sent it there, so a naive "last trigger
+    wins" would show a plain "docked" — indistinguishable from a finished run,
+    which is the problem this sensor exists to solve.
+    """
+    from deebot_client.events import StateEvent
+    from deebot_client.models import State
+
+    from custom_components.ecovacs_mower.deebot_patch.messages import MowerTriggerEvent
+
+    sensor = _bare_activity_sensor()
+
+    await sensor._on_state(StateEvent(State.CLEANING))
+    assert sensor._attr_native_value == "mowing"
+
+    await sensor._on_trigger(MowerTriggerEvent("rain"))
+    await sensor._on_state(StateEvent(State.PAUSED))
+    assert sensor._attr_native_value == "paused_rain"
+
+    await sensor._on_state(StateEvent(State.RETURNING))
+    assert sensor._attr_native_value == "returning_rain"
+
+    await sensor._on_state(StateEvent(State.DOCKED))
+    assert sensor._attr_native_value == "docked_rain_delay"
+
+    # 56 seconds later, from the log. The reason must not be thrown away.
+    await sensor._on_trigger(MowerTriggerEvent("workComplete"))
+    assert sensor._attr_native_value == "docked_rain_delay"
+
+
+async def test_mowing_again_clears_the_rain_reason() -> None:
+    """Cutting grass is the only signal that the rain stop is over."""
+    from deebot_client.events import StateEvent
+    from deebot_client.models import State
+
+    from custom_components.ecovacs_mower.deebot_patch.messages import MowerTriggerEvent
+
+    sensor = _bare_activity_sensor()
+    await sensor._on_trigger(MowerTriggerEvent("rain"))
+    await sensor._on_state(StateEvent(State.DOCKED))
+    assert sensor._attr_native_value == "docked_rain_delay"
+
+    await sensor._on_state(StateEvent(State.CLEANING))
+    assert sensor._attr_native_value == "mowing"
+
+    # A hand-pressed pause after the rain is over is just "paused".
+    await sensor._on_state(StateEvent(State.PAUSED))
+    assert sensor._attr_native_value == "paused"
+
+
+async def test_a_trigger_alone_does_not_produce_a_state() -> None:
+    """Without a StateEvent there is nothing to qualify, so no value yet.
+
+    The reason is still remembered: a trigger can arrive before the state it
+    belongs to, and must survive until then.
+    """
+    from deebot_client.events import StateEvent
+    from deebot_client.models import State
+
+    from custom_components.ecovacs_mower.deebot_patch.messages import MowerTriggerEvent
+
+    sensor = _bare_activity_sensor()
+    await sensor._on_trigger(MowerTriggerEvent("rain"))
+    assert sensor._attr_native_value is None
+
+    await sensor._on_state(StateEvent(State.RETURNING))
+    assert sensor._attr_native_value == "returning_rain"
+
+
+async def test_unmappable_state_keeps_the_previous_value() -> None:
+    """A state outside the options would be rejected by HA outright."""
+    from unittest.mock import Mock
+
+    from deebot_client.events import StateEvent
+    from deebot_client.models import State
+
+    sensor = _bare_activity_sensor()
+    await sensor._on_state(StateEvent(State.CLEANING))
+
+    unknown = Mock()
+    unknown.state = "somethingNew"
+    await sensor._on_state(unknown)
+    assert sensor._attr_native_value == "mowing"

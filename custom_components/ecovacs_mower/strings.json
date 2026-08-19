@@ -49,6 +49,13 @@
     }
   },
   "entity": {
+    "binary_sensor": {
+      "rain_protect": { "name": "Rain protection" },
+      "rain_delay": { "name": "Rain delay" },
+      "emergency_stop": { "name": "Emergency stop" },
+      "locked": { "name": "Locked" },
+      "animal_protect": { "name": "Animal protection" }
+    },
     "button": {
       "play_sound": { "name": "Locate mower" },
       "reset_lifespan_blade": { "name": "Reset blades" },
@@ -78,6 +85,19 @@
       "cut_direction": { "name": "Cutting direction" }
     },
     "sensor": {
+      "activity": {
+        "name": "Activity",
+        "state": {
+          "mowing": "Mowing",
+          "paused": "Paused",
+          "paused_rain": "Paused (rain)",
+          "returning": "Returning",
+          "returning_rain": "Returning (rain)",
+          "docked": "Docked",
+          "docked_rain_delay": "Docked (rain delay)",
+          "error": "Error"
+        }
+      },
       "stats_area": { "name": "Mowed area" },
       "stats_time": { "name": "Mowing time" },
       "total_stats_area": { "name": "Total mowed area" },
