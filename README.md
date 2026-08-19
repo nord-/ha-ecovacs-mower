@@ -134,12 +134,13 @@ Enter it and setup continues.
 
 ## What you get
 
-Thirty-one entities on the mower's device page, across seven platforms:
+Thirty-seven entities on the mower's device page, across eight platforms:
 
 | Platform | Count | What |
 |---|---|---|
 | `lawn_mower` | 1 | Real state (`mowing`, `paused`, `returning`, `docked`, `error`) that updates within seconds, plus working `start_mowing`, `pause`, and `dock` |
-| `sensor` | 14 | Battery, error code (disabled by default — see below), mowed area, mowing time, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name |
+| `sensor` | 15 | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowed area, mowing time, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name |
+| `binary_sensor` | 5 | Rain protection, rain delay, emergency stop, locked, animal protection — the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
 | `switch` | 7 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
 | `number` | 2 | Notification volume, cutting direction |
 | `button` | 5 | Reset each of the four consumable lifespans, plus "Locate mower" (plays a sound on the device) |
@@ -150,9 +151,56 @@ Not included yet: **RTK diagnostics** (position and satellite data) and
 zone control. RTK is planned for the next release; the other has no
 committed date.
 
+### When a run stops because of rain
+
+A scheduled run cut short by rain is the case where the mower's own state is
+not enough. The `lawn_mower` entity can only report what Home Assistant's
+`LawnMowerActivity` allows — `mowing`, `paused`, `returning`, `docked`,
+`error` — so it goes `mowing → paused → returning → docked` in about a
+minute and then looks exactly like a run that finished normally.
+
+The device does say why, in a `trigger` field on the state messages:
+
+```
+onScheduleTaskInfo   trigger:"rain"  motionState:"pause"
+onChargeInfo         trigger:"rain"  state:"goCharging"
+onChargeInfo         trigger:"workComplete"  state:"idle"     <- 56 s later
+```
+
+`sensor.<device>_activity` is built on that field. It reports the same state as
+the `lawn_mower` entity with the reason folded in: `paused_rain`,
+`returning_rain` and `docked_rain_delay` alongside the plain `mowing`,
+`paused`, `returning`, `docked` and `error`. Put that on a dashboard if you
+want to see *why* it is parked.
+
+Note the third line above: the mower reports `workComplete` when it reaches the
+dock even though rain is what sent it there. The rain reason is therefore held
+until the mower actually cuts grass again — otherwise it would be discarded at
+the exact moment you want to read it.
+
+The five `binary_sensor` entities are the raw flags from `onProtectState`, one
+per flag, with no interpretation on top. In particular `rain_protect`
+(`isRainProtect`) is **not** presented as a live rain reading: in the one
+payload captured so far it is `1`, but the settings message in the same log has
+`RainDetect: 1` and `isAnimProtect: 0` likewise matches `ProtectAnimal.enable:
+0` — so "this protection is switched on" fits the data as well as "it is
+raining right now". A sample from a dry period settles it:
+
+```
+grep onProtectState home-assistant.log | tail -1
+```
+
+If `isRainProtect` is `0` while the mower is out mowing, the flag is a live
+state and the entity can be renamed and given the `moisture` device class. Until
+then the rain-aware states come from `trigger`, which needs no interpretation.
+
+All five flags stay `unknown` after a restart until the mower next reports a
+change: there is no command wired up to ask for the current protection state,
+the device only pushes it when a flag flips.
+
 ### Entities disabled by default
 
-**17 of the 31 entities** ship with `entity_registry_enabled_default=False`,
+**17 of the 37 entities** ship with `entity_registry_enabled_default=False`,
 all inherited unchanged from upstream Home Assistant core's `ecovacs`
 integration — they're advanced settings or diagnostics, off by default
 there too. They appear in the mower's entity list right after setup, but
@@ -164,7 +212,7 @@ a bug: if one of these looks blank or "unavailable," this is why.
 |---|---|---|
 | `switch` | 7 of 7 | all of them: advanced mode, TrueDetect, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
 | `number` | 2 of 2 | both: volume, cutting direction |
-| `sensor` | 4 of 14 | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code** |
+| `sensor` | 4 of 15 | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code** |
 | `button` | 4 of 5 | the four consumable-lifespan resets (blade, lens brush, trimmer brush, weed rope) — "Locate mower" is enabled by default |
 
 **If you're planning anything on the error sensor** — an alarm, a
