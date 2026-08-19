@@ -19,9 +19,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EcovacsMowerConfigEntry
+from .deebot_patch.messages import MowerProtectStateEvent
 from .entity import EcovacsEntity
 
 _LOGGER = logging.getLogger(__name__)
+
+ATTR_RAINING = "raining"
 
 # IDLE means "standing still", not "standing in the dock" — hence PAUSED.
 # Docking is reported separately via onChargeInfo with state "idle", which
@@ -80,7 +83,18 @@ class EcovacsMower(EcovacsEntity[Capabilities], LawnMowerEntity):
             self._attr_activity = activity
             self.async_write_ha_state()
 
+        # The activity itself cannot say "docked because of rain" —
+        # LawnMowerActivity is HA's enum, and the frontend, the conditions and
+        # the triggers all key off its five members. The reason therefore rides
+        # along as an attribute, which is where someone looking at the mower
+        # entity will find it. sensor.activity has the same information as a
+        # state; see sensor.EcovacsActivitySensor.
+        async def on_protect_state(event: MowerProtectStateEvent) -> None:
+            self._attr_extra_state_attributes = {ATTR_RAINING: event.raining}
+            self.async_write_ha_state()
+
         self._subscribe(self._capability.state.event, on_status)
+        self._subscribe(MowerProtectStateEvent, on_protect_state)
 
     async def _clean_command(self, action: CleanAction) -> None:
         await self._device.execute_command(

@@ -72,3 +72,44 @@ def test_supported_features() -> None:
         | LawnMowerEntityFeature.PAUSE
         | LawnMowerEntityFeature.START_MOWING
     )
+
+
+async def test_rain_shows_up_as_an_attribute_on_the_mower() -> None:
+    """LawnMowerActivity has no rain member, so the reason rides as an attribute.
+
+    The subscription is set up inside ``async_added_to_hass``, so the callback is
+    reached through the fake event bus the entity subscribes to rather than by
+    calling a named method.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerProtectStateEvent,
+    )
+    from custom_components.ecovacs_mower.lawn_mower import ATTR_RAINING, EcovacsMower
+
+    callbacks = {}
+
+    def subscribe(event_type, callback):
+        callbacks[event_type] = callback
+        return lambda: None
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1"}
+    device.events.subscribe = subscribe
+
+    mower = EcovacsMower(device)
+    with (
+        patch.object(EcovacsMower, "async_on_remove"),
+        patch.object(EcovacsMower, "async_write_ha_state"),
+        patch(
+            "homeassistant.helpers.entity.Entity.async_added_to_hass",
+            new_callable=AsyncMock,
+        ),
+    ):
+        await mower.async_added_to_hass()
+        await callbacks[MowerProtectStateEvent](
+            MowerProtectStateEvent(raining=True, rain_delay=False)
+        )
+
+    assert mower.extra_state_attributes == {ATTR_RAINING: True}

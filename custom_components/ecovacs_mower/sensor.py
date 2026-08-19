@@ -4,13 +4,24 @@ Forked from Home Assistant core (``homeassistant/components/ecovacs/sensor.py``)
 Everything related to vacuum stations (dust bag, mop drying) and the legacy
 XMPP-connected class (``EcovacsLegacy*``) has been removed: this integration only
 supports GOAT lawn mowers over MQTT, which have no station at all.
+
+``EcovacsActivitySensor`` is not from core. It is the lawn_mower entity's state
+with the rain flag folded in, because ``LawnMowerActivity`` is a closed enum
+owned by Home Assistant — "returning" cannot become "returning, because of
+rain" there without breaking the frontend's translations and every
+``lawn_mower.is_returning`` condition.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, override
 
-from deebot_client.capabilities import CapabilityEvent, CapabilityLifeSpan, DeviceType
+from deebot_client.capabilities import (
+    Capabilities,
+    CapabilityEvent,
+    CapabilityLifeSpan,
+    DeviceType,
+)
 from deebot_client.device import Device
 from deebot_client.events import (
     BatteryEvent,
@@ -19,9 +30,11 @@ from deebot_client.events import (
     LifeSpan,
     LifeSpanEvent,
     NetworkInfoEvent,
+    StateEvent,
     StatsEvent,
     TotalStatsEvent,
 )
+from deebot_client.models import State
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -43,6 +56,7 @@ from homeassistant.helpers.typing import StateType
 
 from . import EcovacsMowerConfigEntry
 from .const import SUPPORTED_LIFESPANS
+from .deebot_patch.messages import MowerProtectStateEvent
 from .entity import (
     EcovacsCapabilityEntityDescription,
     EcovacsDescriptionEntity,
@@ -158,6 +172,46 @@ ENTITY_DESCRIPTIONS: tuple[EcovacsSensorEntityDescription, ...] = (
 )
 
 
+# The same reading of the states as lawn_mower._STATE_TO_MOWER_STATE, kept as a
+# separate map on purpose: this one is a set of translation keys this integration
+# owns, the other is HA's LawnMowerActivity enum. Tying them together would mean
+# a new activity here needs HA to add an enum member.
+_STATE_TO_ACTIVITY = {
+    State.IDLE: "paused",
+    State.CLEANING: "mowing",
+    State.RETURNING: "returning",
+    State.DOCKED: "docked",
+    State.ERROR: "error",
+    State.PAUSED: "paused",
+}
+
+# Only the three activities a rained-off run actually passes through get a rain
+# wording. "mowing" is not among them (the mower does not mow in the rain) and
+# neither is "error": a fault is worth reporting over the weather.
+_RAIN_ACTIVITY = {
+    "paused": "paused_rain",
+    "returning": "returning_rain",
+    "docked": "docked_rain_delay",
+}
+
+# A set, not a list: IDLE and PAUSED both map to "paused", and
+# SensorDeviceClass.ENUM rejects a duplicated option. Sorted so the order the
+# frontend shows does not depend on dict iteration order.
+ACTIVITY_OPTIONS = sorted({*_STATE_TO_ACTIVITY.values(), *_RAIN_ACTIVITY.values()})
+
+
+def activity_key(state: State | None, *, raining: bool) -> str | None:
+    """Return the translation key for a state, rain folded in."""
+    if state is None:
+        return None
+    activity = _STATE_TO_ACTIVITY.get(state)
+    if activity is None:
+        return None
+    if raining:
+        return _RAIN_ACTIVITY.get(activity, activity)
+    return activity
+
+
 @dataclass(kw_only=True, frozen=True)
 class EcovacsLifespanSensorEntityDescription(SensorEntityDescription):
     """Ecovacs lifespan sensor entity description."""
@@ -200,6 +254,11 @@ async def async_setup_entry(
         EcovacsErrorSensor(device, capability)
         for device in controller.devices
         if (capability := device.capabilities.error)
+    )
+    entities.extend(
+        EcovacsActivitySensor(device)
+        for device in controller.devices
+        if device.capabilities.device_type is DeviceType.MOWER
     )
 
     async_add_entities(entities)
@@ -298,3 +357,51 @@ class EcovacsErrorSensor(
             self.async_write_ha_state()
 
         self._subscribe(self._capability.event, on_event)
+
+
+class EcovacsActivitySensor(
+    EcovacsEntity[Capabilities],
+    SensorEntity,
+):
+    """What the mower is doing, and whether rain is the reason.
+
+    A rained-off scheduled run is indistinguishable from a completed one in the
+    lawn_mower entity: both end up "docked". This sensor is the same state with
+    the rain flag applied, so "docked because it is raining" reads differently
+    from "docked because the lawn is done".
+    """
+
+    entity_description: SensorEntityDescription = SensorEntityDescription(
+        key="activity",
+        translation_key="activity",
+        device_class=SensorDeviceClass.ENUM,
+        options=ACTIVITY_OPTIONS,
+    )
+
+    def __init__(self, device: Device) -> None:
+        """Initialize the activity sensor."""
+        super().__init__(device, device.capabilities)
+        self._state: State | None = None
+        self._raining = False
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listeners now that hass is ready."""
+        await super().async_added_to_hass()
+
+        self._subscribe(self._capability.state.event, self._on_state)
+        self._subscribe(MowerProtectStateEvent, self._on_protect_state)
+
+    async def _on_state(self, event: StateEvent) -> None:
+        self._state = event.state
+        self._update()
+
+    async def _on_protect_state(self, event: MowerProtectStateEvent) -> None:
+        self._raining = event.raining
+        self._update()
+
+    def _update(self) -> None:
+        # Both inputs arrive as separate events, so the value is recomputed from
+        # the pair rather than derived from whichever event came last.
+        self._attr_native_value = activity_key(self._state, raining=self._raining)
+        self.async_write_ha_state()

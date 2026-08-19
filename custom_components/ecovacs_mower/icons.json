@@ -1,5 +1,10 @@
 {
   "entity": {
+    "binary_sensor": {
+      "rain": {
+        "default": "mdi:weather-rainy"
+      }
+    },
     "button": {
       "play_sound": {
         "default": "mdi:map-marker-radius"
@@ -39,6 +44,14 @@
       }
     },
     "sensor": {
+      "activity": {
+        "default": "mdi:robot-mower-outline",
+        "state": {
+          "docked_rain_delay": "mdi:weather-rainy",
+          "paused_rain": "mdi:weather-rainy",
+          "returning_rain": "mdi:weather-rainy"
+        }
+      },
       "error": {
         "default": "mdi:alert-circle"
       },
