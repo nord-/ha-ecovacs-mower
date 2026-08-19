@@ -22,6 +22,7 @@ a new email code.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -64,9 +65,19 @@ class AccountAuthenticator(Authenticator):
         self,
         *args: Any,
         account_credentials: dict[str, str] | None = None,
+        on_account_credentials: Callable[[dict[str, str]], None] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize, optionally seeded with a persisted account pair."""
+        """Initialize, optionally seeded with a persisted account pair.
+
+        ``on_account_credentials`` is called with the new pair whenever one is
+        captured that differs from what is already stored — a first capture
+        during a password login, or a replacement minted by the password
+        fallback below when a stored pair goes stale. It is not called for a
+        token based login re-affirming the same pair, so a caller wiring it to
+        ``async_update_entry`` does not rewrite the entry on every routine
+        token refresh.
+        """
         # Local import: the package imports this module, so this cannot be a
         # top level one. By the time an authenticator is built the package is
         # fully initialized.
@@ -74,6 +85,7 @@ class AccountAuthenticator(Authenticator):
 
         super().__init__(*args, **kwargs)
         self.account_credentials = account_credentials
+        self._on_account_credentials = on_account_credentials
 
         if missing := missing_wrapped_members():
             _fail(
@@ -92,22 +104,26 @@ class AccountAuthenticator(Authenticator):
                 access_token = response.get("accessToken")
                 user_id = response.get("uid")
                 if access_token and user_id:
-                    self.account_credentials = {
+                    pair = {
                         "access_token": str(access_token),
                         "user_id": str(user_id),
                     }
+                    if pair != self.account_credentials:
+                        self.account_credentials = pair
+                        if self._on_account_credentials is not None:
+                            self._on_account_credentials(pair)
             return credentials
 
         async def login() -> Credentials:
             """Log in with the account pair, falling back to the password."""
-            if (account := self.account_credentials) is not None:
+            account = self.account_credentials
+            user_id = account.get("user_id") if account else None
+            access_token = account.get("access_token") if account else None
+            if user_id and access_token:
                 _LOGGER.debug("Performing token based login")
                 try:
                     return await capturing_complete_login(
-                        {
-                            "uid": account["user_id"],
-                            "accessToken": account["access_token"],
-                        },
+                        {"uid": user_id, "accessToken": access_token},
                         "Invalid token based login response",
                     )
                 except AuthenticationError:

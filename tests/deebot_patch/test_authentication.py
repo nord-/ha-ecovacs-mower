@@ -2,8 +2,8 @@
 
 The api calls a login goes through are stubbed on the instance rather than served
 by a fake http server: what these tests are about is *which* of them a login
-touches, and the private names they are stubbed under are themselves part of the
-contract with deebot-client (see ``test_contract.py``).
+touches, and ``test_contract.py`` pins that the private names they are stubbed
+under still exist on ``_AuthClient``.
 """
 
 from __future__ import annotations
@@ -136,4 +136,58 @@ async def test_connection_error_is_not_retried_as_a_password_login() -> None:
         await authenticator.authenticate()
 
     mocks["login_api"].assert_not_called()
+    await authenticator.teardown()
+
+
+async def test_malformed_stored_pair_falls_back_to_the_password() -> None:
+    # A hand-edited entry or a divergent writer only guarantees the key name
+    # (CONF_CREDENTIALS), not the value shape. A missing sub-key must not raise
+    # KeyError — that would skip the fallback below and surface as an
+    # unhandled traceback instead of the password login that would have worked.
+    authenticator = _authenticator({"user_id": "uid-only"})
+    mocks = _stub_api(authenticator)
+
+    await authenticator.authenticate()
+
+    mocks["login_api"].assert_awaited_once()
+    await authenticator.teardown()
+
+
+async def test_replacement_pair_reaches_the_callback() -> None:
+    # The password fallback can mint a pair that differs from the stale one
+    # supplied at construction. on_account_credentials is how a caller (the
+    # controller, wired to async_update_entry) learns about the replacement.
+    captured: list[dict[str, str]] = []
+    authenticator = AccountAuthenticator(
+        create_rest_config(Mock(), device_id="deviceid", alpha_2_country="SE"),
+        "someone@example.com",
+        "passwordhash",
+        account_credentials=ACCOUNT,
+        on_account_credentials=captured.append,
+    )
+    mocks = _stub_api(authenticator)
+    mocks["auth_api"].side_effect = [AuthenticationError("expired"), "authcode"]
+
+    await authenticator.authenticate()
+
+    assert captured == [CAPTURED]
+    await authenticator.teardown()
+
+
+async def test_token_based_login_does_not_retrigger_the_callback() -> None:
+    # A routine token based re-login re-affirms the same pair; a caller wiring
+    # the callback to async_update_entry must not rewrite the entry every time.
+    captured: list[dict[str, str]] = []
+    authenticator = AccountAuthenticator(
+        create_rest_config(Mock(), device_id="deviceid", alpha_2_country="SE"),
+        "someone@example.com",
+        "passwordhash",
+        account_credentials=ACCOUNT,
+        on_account_credentials=captured.append,
+    )
+    _stub_api(authenticator)
+
+    await authenticator.authenticate()
+
+    assert captured == []
     await authenticator.teardown()

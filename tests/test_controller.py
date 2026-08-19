@@ -12,6 +12,8 @@ import inspect
 from pathlib import Path
 import textwrap
 
+import pytest
+
 from . import requires_ha
 
 pytestmark = requires_ha
@@ -23,7 +25,12 @@ FORBIDDEN_MODULES = ("deebot_client.hardware", "deebot_client.messages")
 # modules cannot go in FORBIDDEN_MODULES: deebot_client.authentication is
 # imported all over for Authenticator and create_rest_config, it is the private
 # _AuthClient inside it that is off limits.
-FORBIDDEN_NAMES = ("_AuthClient",)
+#
+# "_auth_client" (lowercase, single underscore) is included too: it is
+# Authenticator's own attribute holding the _AuthClient instance, and the more
+# likely real-world leak — reaching it through any Authenticator does not
+# require spelling the class name at all.
+FORBIDDEN_NAMES = ("_AuthClient", "_auth_client")
 
 
 def test_controller_does_not_import_sucks() -> None:
@@ -60,6 +67,78 @@ def test_controller_exposes_devices() -> None:
     assert isinstance(
         inspect.getattr_static(controller.EcovacsController, "devices"), property
     )
+
+
+async def test_broken_auth_contract_raises_config_entry_error(hass) -> None:
+    """A PatchContractError from the authenticator built in __init__ must not
+    leak as a raw exception — async_setup_entry only gets the friendly retry
+    dialog if it sees ConfigEntryError, and __init__ runs before initialize()'s
+    own try/except is ever entered.
+    """
+    from unittest.mock import patch
+
+    from homeassistant.const import (
+        CONF_COUNTRY,
+        CONF_DEVICE_ID,
+        CONF_PASSWORD,
+        CONF_USERNAME,
+    )
+    from homeassistant.exceptions import ConfigEntryError
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    with (
+        patch(
+            "custom_components.ecovacs_mower.deebot_patch.authentication."
+            "missing_wrapped_members",
+            return_value=("login",),
+        ),
+        pytest.raises(ConfigEntryError),
+    ):
+        EcovacsController(
+            hass,
+            {
+                CONF_DEVICE_ID: "STABLE-ID",
+                CONF_COUNTRY: "SE",
+                CONF_USERNAME: "user@example.com",
+                CONF_PASSWORD: "hunter2",
+            },
+        )
+
+
+async def test_account_credentials_callback_reaches_the_authenticator(hass) -> None:
+    """on_account_credentials_changed must reach the authenticator unchanged.
+
+    It is how a replacement pair minted by the password fallback (see
+    deebot_patch/authentication.py) gets from there to async_update_entry,
+    wired in async_setup_entry — nothing in between should drop it.
+    """
+    from homeassistant.const import (
+        CONF_COUNTRY,
+        CONF_DEVICE_ID,
+        CONF_PASSWORD,
+        CONF_USERNAME,
+    )
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    def callback(_account: dict[str, str]) -> None:
+        pass
+
+    controller = EcovacsController(
+        hass,
+        {
+            CONF_DEVICE_ID: "STABLE-ID",
+            CONF_COUNTRY: "SE",
+            CONF_USERNAME: "user@example.com",
+            CONF_PASSWORD: "hunter2",
+        },
+        on_account_credentials_changed=callback,
+    )
+    try:
+        assert controller._authenticator._on_account_credentials is callback
+    finally:
+        await controller.teardown()
 
 
 def _call_order(func: object) -> list[str]:

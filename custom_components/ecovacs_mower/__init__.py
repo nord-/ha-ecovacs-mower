@@ -7,7 +7,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
-from .const import DOMAIN
+from .const import CONF_CREDENTIALS, DOMAIN
 from .controller import EcovacsController, async_remove_map_store
 
 PLATFORMS = [
@@ -28,7 +28,22 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: EcovacsMowerConfigEntry
 ) -> bool:
     """Set up the integration from a config entry."""
-    controller = EcovacsController(hass, entry.data)
+
+    def _persist_account_credentials(account: dict[str, str]) -> None:
+        """Write a replacement account pair back into the entry.
+
+        Wired to the controller's authenticator, whose password fallback can
+        mint a fresh pair when the stored one has gone stale; without this the
+        replacement is only ever held in memory, and the next reload pays a
+        doomed token login before falling back to the password again.
+        """
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_CREDENTIALS: account}
+        )
+
+    controller = EcovacsController(
+        hass, entry.data, on_account_credentials_changed=_persist_account_credentials
+    )
     entry.async_on_unload(controller.teardown)
     await controller.initialize()
     entry.runtime_data = controller

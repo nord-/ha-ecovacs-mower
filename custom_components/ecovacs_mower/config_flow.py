@@ -42,7 +42,7 @@ from .const import (
     DOMAIN,
     InstanceMode,
 )
-from .deebot_patch import AccountAuthenticator
+from .deebot_patch import AccountAuthenticator, PatchContractError
 from .util import get_client_device_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -172,10 +172,13 @@ class EcovacsMowerConfigFlow(ConfigFlow, domain=DOMAIN):
         self._input = user_input
         self_hosted = CONF_OVERRIDE_REST_URL in user_input
         self._device_id = get_client_device_id(self.hass, self_hosted, user_input)
-        # Not seeded with a stored account pair: this step exists to check the
-        # credentials the user just typed, and a token based login would sail
-        # past a wrong password. The pair captured here is what the controller
-        # gets seeded with instead.
+        # Seeded only with a pair carried forward in user_input — reauth's
+        # entry_data, or a pair this same flow captured earlier and a caller
+        # re-submitted after CONF_DEVICE_ID-style carrying (see
+        # async_step_device_verification). Never with credentials for a
+        # username the user is newly typing here: there is nothing to seed
+        # with in that case, so a wrong password still surfaces as invalid_auth
+        # rather than a token based login sailing past it.
         self._authenticator = AccountAuthenticator(
             create_rest_config(
                 aiohttp_client.async_get_clientsession(self.hass),
@@ -185,6 +188,7 @@ class EcovacsMowerConfigFlow(ConfigFlow, domain=DOMAIN):
             ),
             user_input[CONF_USERNAME],
             md5(user_input[CONF_PASSWORD]),
+            account_credentials=user_input.get(CONF_CREDENTIALS),
         )
         return self._authenticator
 
@@ -321,7 +325,13 @@ class EcovacsMowerConfigFlow(ConfigFlow, domain=DOMAIN):
             self._async_abort_entries_match({CONF_USERNAME: user_input[CONF_USERNAME]})
             if CONF_DEVICE_ID in self._input and CONF_DEVICE_ID not in user_input:
                 user_input[CONF_DEVICE_ID] = self._input[CONF_DEVICE_ID]
-            authenticator = await self._async_set_input(user_input)
+            if CONF_CREDENTIALS in self._input and CONF_CREDENTIALS not in user_input:
+                user_input[CONF_CREDENTIALS] = self._input[CONF_CREDENTIALS]
+            try:
+                authenticator = await self._async_set_input(user_input)
+            except PatchContractError:
+                _LOGGER.exception("Unexpected exception building the authenticator")
+                return self._show_auth_form(user_input, {"base": "unknown"})
             try:
                 errors = await _validate_input(
                     self.hass,
@@ -360,6 +370,15 @@ class EcovacsMowerConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 # Keep the verified device ID, so a retry needs no new code
                 self._input[CONF_DEVICE_ID] = self._device_id
+                # Keep the captured account pair too: if _validate_mqtt below
+                # fails and the user is sent back to the auth form, a resubmit
+                # must reuse it (see async_step_auth's CONF_CREDENTIALS carry
+                # and _async_set_input's seeding). Losing it here would rebuild
+                # an unseeded authenticator on retry, whose password login can
+                # answer 1013 and demand a code again for exactly the account
+                # this just verified — see #21.
+                if account := authenticator.account_credentials:
+                    self._input[CONF_CREDENTIALS] = account
                 errors = await _validate_mqtt(
                     self.hass,
                     self._input,
@@ -427,7 +446,11 @@ class EcovacsMowerConfigFlow(ConfigFlow, domain=DOMAIN):
         """Confirm credentials and verify a new device ID if required."""
         errors: dict[str, str] = {}
         if user_input:
-            authenticator = await self._async_set_input(self._input | user_input)
+            try:
+                authenticator = await self._async_set_input(self._input | user_input)
+            except PatchContractError:
+                _LOGGER.exception("Unexpected exception building the authenticator")
+                return self._show_reauth_form(user_input, {"base": "unknown"})
             try:
                 errors = await _validate_input(
                     self.hass,

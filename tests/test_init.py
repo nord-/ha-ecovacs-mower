@@ -41,3 +41,32 @@ async def test_async_remove_entry_removes_stores_for_every_mower_device() -> Non
         await async_remove_entry(hass, entry)
 
     remove_store.assert_awaited_once_with(hass, "did-1")
+
+
+async def test_account_credentials_change_persists_to_the_entry() -> None:
+    # The other half of the fallback fix in deebot_patch/authentication.py: a
+    # replacement pair minted there only reaches the entry through the
+    # callback wired up here. Without this wiring the replacement lives only
+    # in memory and the next reload pays a doomed token login first.
+    from custom_components.ecovacs_mower import async_setup_entry
+    from custom_components.ecovacs_mower.const import CONF_CREDENTIALS
+
+    hass = MagicMock()
+    hass.config_entries.async_forward_entry_setups = AsyncMock()
+    entry = MagicMock()
+    entry.data = {"existing": "value"}
+
+    with patch(
+        "custom_components.ecovacs_mower.EcovacsController"
+    ) as controller_cls:
+        controller_cls.return_value.initialize = AsyncMock()
+        await async_setup_entry(hass, entry)
+
+    _, kwargs = controller_cls.call_args
+    on_changed = kwargs["on_account_credentials_changed"]
+    account = {"access_token": "tok", "user_id": "uid"}
+    on_changed(account)
+
+    hass.config_entries.async_update_entry.assert_called_once_with(
+        entry, data={"existing": "value", CONF_CREDENTIALS: account}
+    )

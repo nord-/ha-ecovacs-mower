@@ -164,3 +164,73 @@ async def test_account_credentials_are_persisted_after_verification(hass) -> Non
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_CREDENTIALS] == account
+
+
+async def test_account_credentials_survive_a_failed_mqtt_retry(hass) -> None:
+    # The gap this closes: a captured pair that only lived in self._input would
+    # be lost the moment _validate_mqtt fails after verification and the user
+    # is sent back to the auth form. A resubmit would then rebuild an unseeded
+    # authenticator, whose password login can answer 1013 and demand a new
+    # code for the very account that just verified (issue #21).
+    from deebot_client.exceptions import DeviceVerificationRequiredError
+    from homeassistant.data_entry_flow import FlowResultType
+
+    from custom_components.ecovacs_mower.const import (
+        CONF_CREDENTIALS,
+        CONF_VERIFICATION_CODE,
+    )
+
+    account = {"access_token": "token-abc", "user_id": "uid-1"}
+
+    with (
+        patch(_AUTHENTICATOR, autospec=True) as authenticator,
+        patch(
+            _VALIDATE_MQTT,
+            side_effect=[{"base": "cannot_connect"}, {}],
+        ),
+    ):
+        authenticator.return_value.account_credentials = account
+        # Raises only once: the point of this test is that the retry's
+        # authenticate() succeeds because the carried pair got seeded into it,
+        # not that it goes through device verification a second time.
+        authenticator.return_value.authenticate.side_effect = [
+            DeviceVerificationRequiredError,
+            None,
+        ]
+        result = await _start(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], AUTH
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_VERIFICATION_CODE: "123456"}
+        )
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "auth"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], AUTH
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_CREDENTIALS] == account
+    assert authenticator.call_args.kwargs["account_credentials"] == account
+
+
+async def test_broken_auth_contract_shows_unknown_error(hass) -> None:
+    # __init__ raising PatchContractError is not wrapped by initialize()'s
+    # try/except — that lives on the controller, not the config flow — so
+    # _async_set_input's caller has to convert it itself instead of letting an
+    # unhandled traceback crash the flow.
+    from homeassistant.data_entry_flow import FlowResultType
+
+    from custom_components.ecovacs_mower.deebot_patch import PatchContractError
+
+    with patch(_AUTHENTICATOR, side_effect=PatchContractError("boom")):
+        result = await _start(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], AUTH
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "auth"
+    assert result["errors"] == {"base": "unknown"}

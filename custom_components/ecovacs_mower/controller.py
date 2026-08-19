@@ -6,7 +6,7 @@ library has been removed: this integration only supports MQTT.
 """
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from functools import partial
 import logging
 import ssl
@@ -90,7 +90,13 @@ async def async_remove_map_store(hass: HomeAssistant, did: str) -> None:
 class EcovacsController:
     """Ecovacs controller."""
 
-    def __init__(self, hass: HomeAssistant, config: Mapping[str, Any]) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        config: Mapping[str, Any],
+        on_account_credentials_changed: Callable[[dict[str, str]], None]
+        | None = None,
+    ) -> None:
         """Initialize controller."""
         self._hass = hass
         self._devices: list[Device] = []
@@ -105,22 +111,26 @@ class EcovacsController:
         # answers 1013 and would send the entry straight back into
         # reauthentication. See deebot_patch/authentication.py.
         #
-        # ponytail: read only. The pair is written by the config flow, and the
-        # token based login reuses it unchanged, so nothing here needs to write
-        # it back. Should the access token ever start rotating, subscribe to the
-        # authenticator and persist it with async_update_entry, as
-        # home-assistant/core#178558 does.
-        self._authenticator = AccountAuthenticator(
-            create_rest_config(
-                aiohttp_client.async_get_clientsession(self._hass),
-                device_id=self._device_id,
-                alpha_2_country=country,
-                override_rest_url=rest_url,
-            ),
-            config[CONF_USERNAME],
-            md5(config[CONF_PASSWORD]),
-            account_credentials=config.get(CONF_CREDENTIALS),
-        )
+        # The password fallback there can mint a *replacement* pair when the
+        # stored one has gone stale; on_account_credentials_changed is how that
+        # replacement reaches the config entry (async_setup_entry wires it to
+        # async_update_entry), so a later reload does not pay a doomed token
+        # login before falling back to the password again.
+        try:
+            self._authenticator = AccountAuthenticator(
+                create_rest_config(
+                    aiohttp_client.async_get_clientsession(self._hass),
+                    device_id=self._device_id,
+                    alpha_2_country=country,
+                    override_rest_url=rest_url,
+                ),
+                config[CONF_USERNAME],
+                md5(config[CONF_PASSWORD]),
+                account_credentials=config.get(CONF_CREDENTIALS),
+                on_account_credentials=on_account_credentials_changed,
+            )
+        except PatchContractError as ex:
+            raise ConfigEntryError(str(ex)) from ex
         self._api_client = ApiClient(self._authenticator)
 
         mqtt_url = config.get(CONF_OVERRIDE_MQTT_URL)

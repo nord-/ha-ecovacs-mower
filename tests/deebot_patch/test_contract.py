@@ -58,9 +58,28 @@ def test_complete_login_takes_the_raw_account_pair() -> None:
         "response",
         "error",
     ]
-    source = inspect.getsource(complete_login)
+    # Quotes normalized: a quote-style refactor with no semantic change must
+    # not fail this, only a rename or removal of the keys themselves should.
+    source = inspect.getsource(complete_login).replace("'", '"')
     assert '"uid"' in source
     assert '"accessToken"' in source
+
+
+def test_auth_client_has_the_login_helpers_the_tests_stub() -> None:
+    # test_authentication.py replaces these private calls with mocks to steer a
+    # login without a fake HTTP server. If a deebot-client bump renames one, the
+    # assignment becomes an inert shadow attribute and the real method runs
+    # against a Mock session instead of failing here first.
+    from deebot_client.authentication import _AuthClient
+
+    for name in (
+        "_AuthClient__call_login_api",
+        "_AuthClient__call_auth_api",
+        "_AuthClient__call_login_by_it_token",
+        "_AuthClient__encrypt_account",
+        "_AuthClient__call_private_api",
+    ):
+        assert hasattr(_AuthClient, name)
 
 
 def test_capabilities_has_the_fields_we_patch() -> None:
