@@ -413,7 +413,7 @@ class EcovacsActivitySensor(
         # there — 56 seconds after the "rain" trigger in the captured log — so
         # letting any later trigger overwrite the reason would throw it away at
         # exactly the moment the user wants to read it.
-        if event.trigger == RAIN_TRIGGER:
+        if event.trigger == RAIN_TRIGGER and not self._interrupted_by_rain:
             self._interrupted_by_rain = True
             self._write_state()
 

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import fields
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
+from deebot_client.event_bus import EventBus
 from deebot_client.events import StateEvent
 from deebot_client.models import State
 
@@ -127,8 +130,7 @@ def _notified_triggers(message, data: dict[str, Any]) -> list[str]:
 @pytest.mark.parametrize("trigger", ["rain", "workComplete", "app", "continue"])
 def test_trigger_is_republished_verbatim(message, trigger: str) -> None:
     # The patch layer must not interpret the value: "rain" is the only one the
-    # sensor cares about today, but the boring ones have to come through too or
-    # the event bus suppresses the next "rain" as a duplicate.
+    # sensor cares about today, but a future consumer may care about another.
     data = {"cid": "122", "trigger": trigger, "state": "goCharging"}
     assert _notified_triggers(message, data) == [trigger]
 
@@ -160,6 +162,27 @@ def test_rain_trigger_survives_the_real_interruption_sequence() -> None:
     assert _notified_triggers(
         OnChargeInfo, {"cid": "122", "trigger": "workComplete", "state": "idle"}
     ) == ["workComplete"]
+
+
+async def test_repeated_rain_triggers_are_not_deduped_on_a_real_bus() -> None:
+    # A resume that follows a rain stop (onCleanInfo, owned by the library)
+    # publishes no trigger, so the event bus's "last_event" for
+    # MowerTriggerEvent can still be "rain" when a *second*, genuine rain stop
+    # happens. `Mock()` in the other tests can't catch that — only a real
+    # `EventBus`, which suppresses a notification equal to the previous one of
+    # the same type, exercises the bug this event's `_seq` field closes.
+    bus = EventBus(AsyncMock(), Mock(get_refresh_commands=lambda _event: []))
+    received: list[str] = []
+
+    async def on_trigger(event: MowerTriggerEvent) -> None:
+        received.append(event.trigger)
+
+    bus.subscribe(MowerTriggerEvent, on_trigger)
+    bus.notify(MowerTriggerEvent("rain"))
+    bus.notify(MowerTriggerEvent("rain"))
+    await asyncio.sleep(0)
+
+    assert received == ["rain", "rain"]
 
 
 # The payload as the device actually sends it, captured while a scheduled run
@@ -215,6 +238,18 @@ def test_on_protect_state_maps_every_flag() -> None:
             animal_protect=True,
         )
     ]
+
+
+@pytest.mark.parametrize(("key", "field_name"), OnProtectState._FLAGS.items())
+def test_on_protect_state_maps_each_wire_key_to_its_own_field(
+    key: str, field_name: str
+) -> None:
+    # test_on_protect_state_maps_every_flag sets all five flags at once, which
+    # can't catch two of them swapped (e.g. isEStop and isLocked mixed up) —
+    # only a one-hot payload per flag can.
+    payload = {**dict.fromkeys(_PROTECT_PAYLOAD, 0), key: 1}
+    (event,) = _notified(OnProtectState, payload, MowerProtectStateEvent)
+    assert {f.name for f in fields(event) if getattr(event, f.name)} == {field_name}
 
 
 @pytest.mark.parametrize("missing", list(OnProtectState._FLAGS))

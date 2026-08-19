@@ -50,11 +50,11 @@
   },
   "entity": {
     "binary_sensor": {
-      "rain_protect": { "name": "Rain protection" },
-      "rain_delay": { "name": "Rain delay" },
+      "animal_protect": { "name": "Animal protection" },
       "emergency_stop": { "name": "Emergency stop" },
       "locked": { "name": "Locked" },
-      "animal_protect": { "name": "Animal protection" }
+      "rain_delay": { "name": "Rain delay" },
+      "rain_protect": { "name": "Rain protection" }
     },
     "button": {
       "play_sound": { "name": "Locate mower" },

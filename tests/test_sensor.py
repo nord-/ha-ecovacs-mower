@@ -181,6 +181,17 @@ def test_every_state_is_an_activity() -> None:
     assert set(_STATE_TO_ACTIVITY) == set(State)
 
 
+def test_activity_agrees_with_the_lawn_mower_entity_for_non_rain_states() -> None:
+    """Two tables encode the same state judgements; nothing else keeps them in sync."""
+    from custom_components.ecovacs_mower.lawn_mower import _STATE_TO_MOWER_STATE
+    from custom_components.ecovacs_mower.sensor import _STATE_TO_ACTIVITY
+
+    assert _STATE_TO_ACTIVITY == {
+        state: mower_state.value
+        for state, mower_state in _STATE_TO_MOWER_STATE.items()
+    }
+
+
 def test_activity_options_are_exactly_the_reachable_states() -> None:
     """HA rejects a value an enum sensor did not declare in ``options``."""
     from custom_components.ecovacs_mower.sensor import (

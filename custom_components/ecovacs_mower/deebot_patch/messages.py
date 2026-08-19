@@ -31,7 +31,9 @@ reason — they are exposed raw, and the state's rain handling is built on
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import itertools
+import logging
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from deebot_client.events import StateEvent
@@ -42,6 +44,8 @@ from deebot_client.models import State
 if TYPE_CHECKING:
     from deebot_client.event_bus import EventBus
 
+_LOGGER = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class MowerTriggerEvent(Event):
@@ -50,21 +54,27 @@ class MowerTriggerEvent(Event):
     The raw string, uninterpreted: this layer decodes the wire format and
     nothing else. Observed values are ``rain``, ``workComplete``, ``app`` and
     ``continue``; ``alert`` appears in the library's own parsing.
+
+    ``_seq`` makes every instance compare unequal to the last. The event bus
+    drops a notification equal to the previous one of the same type, and a
+    resume that follows a rain stop (``onCleanInfo``, owned by the library)
+    never republishes a trigger — so without this, two rain stops in a row
+    with no other trigger in between would have the second one silently
+    dropped, which is exactly the ambiguity this event exists to remove.
     """
 
     trigger: str
+    _seq: int = field(default_factory=itertools.count().__next__, repr=False)
 
 
 def notify_trigger(event_bus: EventBus, data: dict[str, Any]) -> None:
     """Publish the payload's trigger, if it has one.
 
     Called for every message that carries the field, whatever its state says,
-    including states this layer cannot map. Publishing the uninteresting
-    triggers matters as much as publishing ``rain``: the event bus suppresses an
-    event equal to the previous one, so without the ``workComplete`` in between,
-    the rain of the *next* interrupted run would be swallowed as a duplicate.
+    including states this layer cannot map — a future consumer may care about
+    a trigger this layer does not.
     """
-    if trigger := data.get("trigger"):
+    if isinstance(trigger := data.get("trigger"), str) and trigger:
         event_bus.notify(MowerTriggerEvent(trigger))
 
 
@@ -213,6 +223,10 @@ class OnProtectState(MessageBodyDataDict):
         arrives.
         """
         if not cls._FLAGS.keys() <= data.keys():
+            _LOGGER.warning(
+                "onProtectState missing expected flags: %s",
+                cls._FLAGS.keys() - data.keys(),
+            )
             return HandlingResult.analyse()
 
         event_bus.notify(

@@ -194,9 +194,14 @@ If `isRainProtect` is `0` while the mower is out mowing, the flag is a live
 state and the entity can be renamed and given the `moisture` device class. Until
 then the rain-aware states come from `trigger`, which needs no interpretation.
 
-All five flags stay `unknown` after a restart until the mower next reports a
-change: there is no command wired up to ask for the current protection state,
-the device only pushes it when a flag flips.
+All five `binary_sensor` flags stay `unknown` after a restart until the mower
+next reports a change: there is no command wired up to ask for the current
+protection state, the device only pushes it when a flag flips.
+
+`sensor.activity` is different: `GetCleanInfo` is a refresh command, so it
+gets a state within seconds of a restart. The rain reason itself is not
+restored, though — a restart during an active rain delay reads as plain
+`docked` until the mower's next scheduled run.
 
 ### Entities disabled by default
 
