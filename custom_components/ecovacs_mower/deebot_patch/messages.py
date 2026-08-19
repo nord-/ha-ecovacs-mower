@@ -1,21 +1,32 @@
 """Message handlers deebot-client lacks for lawn mowers.
 
 Corresponds to DeebotUniverse/client.py PR #1647. GOAT reports its state via
-three unsolicited MQTT messages, but the library only handles one of them:
+four unsolicited MQTT messages, but the library only handles one of them:
 
     onCleanInfo         manual start/pause      handled by the library
     onScheduleTaskInfo  scheduled run           falls through as unknown
     onChargeInfo        returning / finished    falls through as unknown
+    onProtectState      rain protection         falls through as unknown
 
-Without the latter two the entity never leaves "docked" during a scheduled run,
-and never returns to "returning"/"docked" once the work is finished.
+Without onScheduleTaskInfo and onChargeInfo the entity never leaves "docked"
+during a scheduled run, and never returns to "returning"/"docked" once the work
+is finished.
+
+onProtectState is not a state message at all — it is why the mower did what it
+did. When rain interrupts a scheduled run the state messages only say
+paused -> returning -> docked, exactly like a run that finished normally; the
+rain shows up as ``trigger: "rain"`` (which says who asked, not what the device
+is doing) and as ``isRainProtect: 1`` here. This is the only flag that persists
+while the mower waits in the dock, so it is the one worth an entity.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from deebot_client.events import StateEvent
+from deebot_client.events.base import Event
 from deebot_client.message import HandlingResult, MessageBodyDataDict
 from deebot_client.models import State
 
@@ -107,3 +118,55 @@ class OnScheduleTaskInfo(MessageBodyDataDict):
     ) -> HandlingResult:
         """Handle message->body->data."""
         return handle_clean_info(event_bus, data)
+
+
+@dataclass(frozen=True)
+class MowerProtectStateEvent(Event):
+    """Rain protection, as reported by onProtectState.
+
+    ``raining`` is the mower's own rain sensor: it stays true for as long as the
+    device considers mowing rained off, which is what makes it usable as a
+    state. ``rain_delay`` is the firmware's post-rain wait; observed as 0 while
+    it was actually raining, so it is carried separately rather than folded into
+    ``raining``.
+
+    The payload also has isAnimProtect, isEStop, isLocked, isPinCode and
+    isPrepareDataSuccess. They are deliberately not decoded: no entity would
+    consume them yet, and a field nobody reads is a field nobody notices is
+    wrong.
+    """
+
+    raining: bool
+    rain_delay: bool
+
+
+def handle_protect_state(event_bus: EventBus, data: dict[str, Any]) -> HandlingResult:
+    """Parse a protect-state payload and notify the rain flags.
+
+    Shared with ``GetProtectState``, which answers with the same body.
+    """
+    if "isRainProtect" not in data:
+        # Not the payload this handler is for. Better analysed (and logged) than
+        # silently reported as "not raining".
+        return HandlingResult.analyse()
+
+    event_bus.notify(
+        MowerProtectStateEvent(
+            raining=bool(data["isRainProtect"]),
+            rain_delay=bool(data.get("isRainDelay", 0)),
+        )
+    )
+    return HandlingResult.success()
+
+
+class OnProtectState(MessageBodyDataDict):
+    """Rain protection state."""
+
+    NAME = "onProtectState"
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data."""
+        return handle_protect_state(event_bus, data)

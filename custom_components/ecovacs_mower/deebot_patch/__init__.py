@@ -17,14 +17,15 @@ from deebot_client.events import StateEvent
 from deebot_client.hardware import _DEVICES
 from deebot_client.messages.json import MESSAGES
 
-from .commands import CleanMower
+from .commands import CleanMower, GetProtectState
 from .hardware import SUPPORTED_CLASSES, patch_device_info
 from .map_messages import OnArI, OnMapTrack, OnMI, OnSpecialContour
-from .messages import OnChargeInfo, OnScheduleTaskInfo
+from .messages import OnChargeInfo, OnProtectState, OnScheduleTaskInfo
 
 __all__ = [
     "SUPPORTED_CLASSES",
     "CleanMower",
+    "GetProtectState",
     "PatchContractError",
     "apply",
     "patch_device_info",
@@ -60,6 +61,7 @@ def apply() -> None:
     for message in (
         OnChargeInfo,
         OnScheduleTaskInfo,
+        OnProtectState,
         OnArI,
         OnMapTrack,
         OnMI,

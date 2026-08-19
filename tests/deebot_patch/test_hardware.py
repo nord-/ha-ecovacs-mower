@@ -133,18 +133,20 @@ async def test_unsupported_class_is_not_patched() -> None:
     assert "npwtuz" not in cache
 
 
-async def test_apply_registers_both_handlers() -> None:
+async def test_apply_registers_the_state_handlers() -> None:
     from deebot_client.messages.json import MESSAGES
 
     from custom_components.ecovacs_mower.deebot_patch import apply
     from custom_components.ecovacs_mower.deebot_patch.messages import (
         OnChargeInfo,
+        OnProtectState,
         OnScheduleTaskInfo,
     )
 
     apply()
     assert MESSAGES["onChargeInfo"] is OnChargeInfo
     assert MESSAGES["onScheduleTaskInfo"] is OnScheduleTaskInfo
+    assert MESSAGES["onProtectState"] is OnProtectState
 
 
 async def test_apply_is_idempotent() -> None:
@@ -153,6 +155,7 @@ async def test_apply_is_idempotent() -> None:
     from custom_components.ecovacs_mower.deebot_patch import apply
     from custom_components.ecovacs_mower.deebot_patch.messages import (
         OnChargeInfo,
+        OnProtectState,
         OnScheduleTaskInfo,
     )
 
@@ -163,6 +166,7 @@ async def test_apply_is_idempotent() -> None:
     # post-check having raised — it would not stand on its own.
     assert MESSAGES["onChargeInfo"] is OnChargeInfo
     assert MESSAGES["onScheduleTaskInfo"] is OnScheduleTaskInfo
+    assert MESSAGES["onProtectState"] is OnProtectState
 
 
 async def test_get_message_finds_the_registered_handlers() -> None:
