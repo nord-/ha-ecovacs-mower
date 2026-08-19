@@ -10,7 +10,10 @@ from deebot_client.events import StateEvent
 from deebot_client.models import State
 
 from custom_components.ecovacs_mower.deebot_patch.messages import (
+    MowerProtectStateEvent,
+    MowerTriggerEvent,
     OnChargeInfo,
+    OnProtectState,
     OnScheduleTaskInfo,
 )
 
@@ -29,15 +32,26 @@ def _wrap(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _notified_states(message, data: dict[str, Any]) -> list[State]:
-    """Run the handler and return the states that were notified."""
+def _notified[EventT](
+    message, data: dict[str, Any], event_type: type[EventT]
+) -> list[EventT]:
+    """Run the handler and return the events of that type it notified.
+
+    Filtering by type is not cosmetic: ``Message.handle`` also notifies a
+    ``FirmwareEvent`` parsed from the payload header, for every message.
+    """
     event_bus = Mock()
     message.handle(event_bus, _wrap(data))
     return [
-        call.args[0].state
+        call.args[0]
         for call in event_bus.notify.call_args_list
-        if isinstance(call.args[0], StateEvent)
+        if isinstance(call.args[0], event_type)
     ]
+
+
+def _notified_states(message, data: dict[str, Any]) -> list[State]:
+    """Run the handler and return the states that were notified."""
+    return [event.state for event in _notified(message, data, StateEvent)]
 
 
 @pytest.mark.parametrize(
@@ -105,7 +119,115 @@ def test_on_schedule_task_info_ignores_other_states(state: str) -> None:
     assert _notified_states(OnScheduleTaskInfo, data) == []
 
 
+def _notified_triggers(message, data: dict[str, Any]) -> list[str]:
+    return [event.trigger for event in _notified(message, data, MowerTriggerEvent)]
+
+
+@pytest.mark.parametrize("message", [OnChargeInfo, OnScheduleTaskInfo])
+@pytest.mark.parametrize("trigger", ["rain", "workComplete", "app", "continue"])
+def test_trigger_is_republished_verbatim(message, trigger: str) -> None:
+    # The patch layer must not interpret the value: "rain" is the only one the
+    # sensor cares about today, but the boring ones have to come through too or
+    # the event bus suppresses the next "rain" as a duplicate.
+    data = {"cid": "122", "trigger": trigger, "state": "goCharging"}
+    assert _notified_triggers(message, data) == [trigger]
+
+
+@pytest.mark.parametrize("message", [OnChargeInfo, OnScheduleTaskInfo])
+def test_trigger_is_republished_for_unmappable_states(message) -> None:
+    # Why the mower stopped is worth having even when this layer cannot tell
+    # what it is doing — the two are parsed independently.
+    data = {"cid": "122", "trigger": "rain", "state": "unknownState"}
+    assert _notified_triggers(message, data) == ["rain"]
+
+
+@pytest.mark.parametrize("message", [OnChargeInfo, OnScheduleTaskInfo])
+def test_no_trigger_event_without_a_trigger(message) -> None:
+    assert _notified_triggers(message, {"state": "goCharging"}) == []
+
+
+def test_rain_trigger_survives_the_real_interruption_sequence() -> None:
+    # The exact order from the captured log: the schedule pauses, the mower
+    # heads home, and a minute later the dock reports "workComplete" — the
+    # device's own summary, which says nothing about rain.
+    assert _notified_triggers(
+        OnScheduleTaskInfo,
+        {"trigger": "rain", "state": "clean", "cleanState": {"motionState": "pause"}},
+    ) == ["rain"]
+    assert _notified_triggers(
+        OnChargeInfo, {"cid": "122", "trigger": "rain", "state": "goCharging"}
+    ) == ["rain"]
+    assert _notified_triggers(
+        OnChargeInfo, {"cid": "122", "trigger": "workComplete", "state": "idle"}
+    ) == ["workComplete"]
+
+
+# The payload as the device actually sends it, captured while a scheduled run
+# was cut short by rain. isPinCode and isPrepareDataSuccess are part of it and
+# must be ignored, not choke the parsing.
+_PROTECT_PAYLOAD = {
+    "isAnimProtect": 0,
+    "isRainProtect": 1,
+    "isRainDelay": 0,
+    "isEStop": 0,
+    "isLocked": 0,
+    "isPinCode": 0,
+    "isPrepareDataSuccess": 1,
+}
+
+
+def test_on_protect_state() -> None:
+    assert _notified(OnProtectState, _PROTECT_PAYLOAD, MowerProtectStateEvent) == [
+        MowerProtectStateEvent(
+            rain_protect=True,
+            rain_delay=False,
+            emergency_stop=False,
+            locked=False,
+            animal_protect=False,
+        )
+    ]
+
+
+def test_on_protect_state_flags_are_booleans() -> None:
+    # The wire format is 0/1. An int would compare unequal to the previous
+    # event's bool on the event bus and notify subscribers for nothing.
+    (event,) = _notified(OnProtectState, _PROTECT_PAYLOAD, MowerProtectStateEvent)
+    assert all(
+        isinstance(value, bool)
+        for value in (
+            event.rain_protect,
+            event.rain_delay,
+            event.emergency_stop,
+            event.locked,
+            event.animal_protect,
+        )
+    )
+
+
+def test_on_protect_state_maps_every_flag() -> None:
+    payload = dict.fromkeys(_PROTECT_PAYLOAD, 1)
+    assert _notified(OnProtectState, payload, MowerProtectStateEvent) == [
+        MowerProtectStateEvent(
+            rain_protect=True,
+            rain_delay=True,
+            emergency_stop=True,
+            locked=True,
+            animal_protect=True,
+        )
+    ]
+
+
+@pytest.mark.parametrize("missing", list(OnProtectState._FLAGS))
+def test_on_protect_state_drops_partial_payloads(missing: str) -> None:
+    # Defaulting a missing flag to False would report "not raining" or "no
+    # emergency stop" from a message that never said so. Keeping the previous
+    # value is the safer failure.
+    payload = {k: v for k, v in _PROTECT_PAYLOAD.items() if k != missing}
+    assert _notified(OnProtectState, payload, MowerProtectStateEvent) == []
+
+
 def test_message_names() -> None:
     # The names are the keys in the library's registry and must match exactly.
     assert OnChargeInfo.NAME == "onChargeInfo"
+    assert OnProtectState.NAME == "onProtectState"
     assert OnScheduleTaskInfo.NAME == "onScheduleTaskInfo"

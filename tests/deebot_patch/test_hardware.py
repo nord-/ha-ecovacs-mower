@@ -139,11 +139,13 @@ async def test_apply_registers_both_handlers() -> None:
     from custom_components.ecovacs_mower.deebot_patch import apply
     from custom_components.ecovacs_mower.deebot_patch.messages import (
         OnChargeInfo,
+        OnProtectState,
         OnScheduleTaskInfo,
     )
 
     apply()
     assert MESSAGES["onChargeInfo"] is OnChargeInfo
+    assert MESSAGES["onProtectState"] is OnProtectState
     assert MESSAGES["onScheduleTaskInfo"] is OnScheduleTaskInfo
 
 
@@ -153,6 +155,7 @@ async def test_apply_is_idempotent() -> None:
     from custom_components.ecovacs_mower.deebot_patch import apply
     from custom_components.ecovacs_mower.deebot_patch.messages import (
         OnChargeInfo,
+        OnProtectState,
         OnScheduleTaskInfo,
     )
 
@@ -162,6 +165,7 @@ async def test_apply_is_idempotent() -> None:
     # Without these assertions the test would rest entirely on apply()'s own
     # post-check having raised — it would not stand on its own.
     assert MESSAGES["onChargeInfo"] is OnChargeInfo
+    assert MESSAGES["onProtectState"] is OnProtectState
     assert MESSAGES["onScheduleTaskInfo"] is OnScheduleTaskInfo
 
 

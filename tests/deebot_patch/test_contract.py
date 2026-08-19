@@ -49,15 +49,20 @@ def test_clean_info_v2_subclasses_clean_info() -> None:
 
 
 async def test_refresh_commands_empty_for_unknown_events() -> None:
-    # map_messages notifies custom event types on the library's EventBus.
-    # The bus looks up refresh commands per event type from capabilities;
-    # for unregistered types this must degrade to "no commands", not raise.
+    # map_messages and messages notify custom event types on the library's
+    # EventBus. The bus looks up refresh commands per event type from
+    # capabilities; for unregistered types this must degrade to "no commands",
+    # not raise. It is also why those entities cannot be refreshed on demand.
     from deebot_client.hardware import get_static_device_info
 
     from custom_components.ecovacs_mower.deebot_patch.map_messages import (
         MowerMapInfoEvent,
     )
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerProtectStateEvent,
+    )
 
     static = await get_static_device_info("2i0fns")
     assert static is not None
-    assert static.capabilities.get_refresh_commands(MowerMapInfoEvent) == []
+    for event in (MowerMapInfoEvent, MowerProtectStateEvent):
+        assert static.capabilities.get_refresh_commands(event) == []
