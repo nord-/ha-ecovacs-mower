@@ -9,7 +9,7 @@ from homeassistant.const import CONF_DEVICE_ID, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 
 from . import EcovacsMowerConfigEntry
-from .const import CONF_OVERRIDE_MQTT_URL, CONF_OVERRIDE_REST_URL
+from .const import CONF_CREDENTIALS, CONF_OVERRIDE_MQTT_URL, CONF_OVERRIDE_REST_URL
 
 # CONF_OVERRIDE_MQTT_URL/CONF_OVERRIDE_REST_URL are redacted so that
 # self-hosted installations do not leak their internal broker or REST address in
@@ -27,6 +27,10 @@ from .const import CONF_OVERRIDE_MQTT_URL, CONF_OVERRIDE_REST_URL
 #   with a leaked account it skips email verification entirely — exactly the
 #   protection the whole fix is built on.
 #
+# CONF_CREDENTIALS holds the Ecovacs account access token, which mints portal
+# credentials on its own — a password equivalent, and the one secret in the entry
+# that is enough to control the mower without knowing anything else.
+#
 # "homeId" is redacted even though it is not in the ApiDeviceInfo TypedDict:
 # api_client.py feeds raw API JSON straight into it, so keys outside the
 # TypedDict shape do not disappear — they still come along in
@@ -40,6 +44,7 @@ from .const import CONF_OVERRIDE_MQTT_URL, CONF_OVERRIDE_REST_URL
 REDACT = {
     CONF_USERNAME,
     CONF_PASSWORD,
+    CONF_CREDENTIALS,
     CONF_DEVICE_ID,
     CONF_OVERRIDE_MQTT_URL,
     CONF_OVERRIDE_REST_URL,

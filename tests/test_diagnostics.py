@@ -58,7 +58,11 @@ def test_redact_covers_the_fork_specific_leaks() -> None:
 
     from custom_components.ecovacs_mower.diagnostics import REDACT
 
-    assert {CONF_DEVICE_ID, "nick", "resource"} <= REDACT
+    from custom_components.ecovacs_mower.const import CONF_CREDENTIALS
+
+    # CONF_CREDENTIALS is the account access token, which mints portal
+    # credentials on its own: leaking it is leaking the account.
+    assert {CONF_DEVICE_ID, CONF_CREDENTIALS, "nick", "resource"} <= REDACT
 
 
 def test_device_info_keys_are_covered_or_deliberately_public() -> None:

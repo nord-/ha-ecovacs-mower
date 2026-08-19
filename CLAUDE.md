@@ -36,11 +36,12 @@ Releases are cut by `.github/workflows/release.yml`, which runs after the test s
 
 ### The patch layer is the only connection to deebot-client's internals
 
-`deebot_patch/` is the boundary: **no other module may touch private parts of `deebot_client`** (`_DEVICES`, `MESSAGES`). If the library is swapped for a vendored client, only that folder needs rewriting.
+`deebot_patch/` is the boundary: **no other module may touch private parts of `deebot_client`** (`_DEVICES`, `MESSAGES`, `_AuthClient`). If the library is swapped for a vendored client, only that folder needs rewriting.
 
 - `commands.py` — `CleanMower`, inherits from `Clean` (topic `clean`) with a V2 payload. Replaces `CleanV2`, which publishes on `clean_V2`, which GOAT firmware ignores.
 - `hardware.py` — `patch_device_info()` seeds the `_DEVICES` cache with corrected `Capabilities` (`CleanMower` + `GetCleanInfo` instead of `GetCleanInfoV2`). Uses the library's own caching mechanism instead of monkeypatching. `SUPPORTED_CLASSES` lists verified device classes (`2i0fns` = O1200 LiDAR Pro, `9bts2s` = O800 RTK).
 - `messages.py` — `OnChargeInfo` and `OnScheduleTaskInfo`, the two unsolicited messages the library lacks a handler for.
+- `authentication.py` — `AccountAuthenticator`, which renews the session from the `uid`/`accessToken` pair a login or a device verification returns instead of re-posting the password. Backport of the still-open DeebotUniverse/client.py#1743. It wraps two name-mangled privates of `_AuthClient` on the instance; the pair is persisted in `entry.data[CONF_CREDENTIALS]` by the config flow and read back by the controller. Without it, Ecovacs' `1013` answer to the password login sends the entry into an endless reauth loop (issue #21).
 - `__init__.py` — `apply()` (registers the messages, idempotent) and `verify_capabilities()`.
 
 ### The order in `EcovacsController.initialize()` is a hard invariant

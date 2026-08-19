@@ -28,6 +28,41 @@ def test_messages_registry_is_shared_by_reference() -> None:
     assert ALL_MESSAGES[DataType.JSON] is MESSAGES
 
 
+def test_auth_client_has_the_login_internals_we_wrap() -> None:
+    # AccountAuthenticator replaces both on the instance to get a login that
+    # does not touch the password endpoint. Its own constructor raises
+    # PatchContractError when they are gone, so this only makes CI the first
+    # place that says so.
+    from deebot_client.authentication import _AuthClient
+
+    from custom_components.ecovacs_mower.deebot_patch.authentication import (
+        missing_wrapped_members,
+    )
+
+    assert missing_wrapped_members() == ()
+    assert hasattr(_AuthClient, "_AuthClient__complete_login")
+
+
+def test_complete_login_takes_the_raw_account_pair() -> None:
+    # The token based login feeds __complete_login a synthetic
+    # {"uid", "accessToken"} dict instead of reimplementing its tail. That only
+    # works while those are the keys it reads and while it takes the response as
+    # its first argument.
+    import inspect
+
+    from deebot_client.authentication import _AuthClient
+
+    complete_login = _AuthClient._AuthClient__complete_login
+    assert list(inspect.signature(complete_login).parameters) == [
+        "self",
+        "response",
+        "error",
+    ]
+    source = inspect.getsource(complete_login)
+    assert '"uid"' in source
+    assert '"accessToken"' in source
+
+
 def test_capabilities_has_the_fields_we_patch() -> None:
     names = {f.name for f in fields(Capabilities)}
     assert {"clean", "state", "device_type"} <= names

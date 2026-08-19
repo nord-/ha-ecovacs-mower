@@ -12,7 +12,7 @@ start/pause do nothing, this is likely why:
 
 Home Assistant's built-in `ecovacs` integration talks to Deebot vacuums and
 GOAT mowers through the same library, `deebot-client`. For GOAT mowers,
-three independent bugs in that path add up to a mower that can't be
+four independent bugs in that path add up to a mower that can't be
 controlled and barely reports its own state:
 
 | Defect | Effect |
@@ -20,14 +20,15 @@ controlled and barely reports its own state:
 | Control commands are sent to the MQTT topic `iot/p2p/clean_V2` | GOAT firmware listens on `iot/p2p/clean` and ignores `clean_V2` entirely. `start_mowing` and `pause` do nothing. |
 | State refresh uses the command `getCleanInfo_V2` | GOAT mowers never answer it. Polled state refreshes silently fail. |
 | The unsolicited messages `onChargeInfo` and `onScheduleTaskInfo` have no handler | They're dropped as unknown messages. In practice this means the mower's state in Home Assistant only updates once a day, when it happens to reconnect and get polled. |
+| Every login goes through the password endpoint, which answers `1013` for some accounts even after the device was verified | The config entry loops on "Device verification required": the emailed code is accepted, the reload logs in with the password, is refused, and another code is requested. The integration never finishes setting up. |
 
 Net effect on the upstream integration: state lags by close to a day, and
 the controls that are supposed to fix that don't work either.
 
-This integration patches all three at the protocol layer (correct command,
-correct refresh call, handlers for both missing messages) and exposes a
-`lawn_mower` entity that reflects real state within seconds and responds to
-start / pause / dock.
+This integration patches all four at the protocol layer (correct command,
+correct refresh call, handlers for both missing messages, and a session renewal
+that does not touch the password endpoint) and exposes a `lawn_mower` entity
+that reflects real state within seconds and responds to start / pause / dock.
 
 ## Why a separate integration, instead of a fix upstream
 
@@ -50,6 +51,8 @@ Relevant links, so you can check the state of things yourself:
 - [DeebotUniverse/client.py#1587](https://github.com/DeebotUniverse/client.py/pull/1587) — RTK support
 - [home-assistant/core#168621](https://github.com/home-assistant/core/issues/168621) — the user-facing symptom report this integration exists to fix
 - [home-assistant/core#169723](https://github.com/home-assistant/core/issues/169723) — mowers exposed with vacuum terminology
+- [DeebotUniverse/client.py#1743](https://github.com/DeebotUniverse/client.py/pull/1743) — password-free session renewal, the fix for the verification loop (open)
+- [home-assistant/core#178558](https://github.com/home-assistant/core/pull/178558) — the core side of that fix, blocked on the library release (open)
 
 This integration does not depend on any of those merging. If they do,
 the corresponding patch in this repo becomes dead code and gets deleted.
@@ -131,6 +134,19 @@ During setup you may see error code `1013` ("Please update to the latest
 version to continue") — this is that verification requirement, not a bug.
 The config flow will prompt for a code emailed to your Ecovacs account.
 Enter it and setup continues.
+
+**You should only ever need one code.** For some accounts Ecovacs keeps
+answering `1013` to the password login even after the device has been verified,
+which in the built-in integration produces an endless loop: the code is
+accepted, the entry reloads, the password login is refused again and another
+code is requested ([home-assistant/core#177870][loop]). This integration stores
+the account token the verification returns and renews its session with that
+instead of the password, so a reload does not need a new code. If you are
+already stuck in that loop on an older version of this integration, updating is
+enough: Home Assistant will ask you to reauthenticate once, that one code gets
+stored, and the entry stops asking. There is no need to delete and re-add it.
+
+[loop]: https://github.com/home-assistant/core/issues/177870
 
 ## What you get
 

@@ -13,7 +13,7 @@ import ssl
 from typing import Any
 
 from deebot_client.api_client import ApiClient
-from deebot_client.authentication import Authenticator, create_rest_config
+from deebot_client.authentication import create_rest_config
 from deebot_client.capabilities import DeviceType
 from deebot_client.const import UNDEFINED, UndefinedType
 from deebot_client.device import Device
@@ -44,6 +44,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util.ssl import get_default_no_verify_context
 
 from .const import (
+    CONF_CREDENTIALS,
     CONF_OVERRIDE_MQTT_URL,
     CONF_OVERRIDE_REST_URL,
     CONF_VERIFY_MQTT_CERTIFICATE,
@@ -51,6 +52,7 @@ from .const import (
     ISSUE_TRACKER_URL,
 )
 from .deebot_patch import (
+    AccountAuthenticator,
     PatchContractError,
     apply as apply_deebot_patch,
     verify_capabilities,
@@ -98,7 +100,17 @@ class EcovacsController:
         self._device_id = config[CONF_DEVICE_ID]
         country = config[CONF_COUNTRY]
 
-        self._authenticator = Authenticator(
+        # Seeded with the account pair the config flow captured, so setup
+        # renews the portal credentials without the password endpoint that
+        # answers 1013 and would send the entry straight back into
+        # reauthentication. See deebot_patch/authentication.py.
+        #
+        # ponytail: read only. The pair is written by the config flow, and the
+        # token based login reuses it unchanged, so nothing here needs to write
+        # it back. Should the access token ever start rotating, subscribe to the
+        # authenticator and persist it with async_update_entry, as
+        # home-assistant/core#178558 does.
+        self._authenticator = AccountAuthenticator(
             create_rest_config(
                 aiohttp_client.async_get_clientsession(self._hass),
                 device_id=self._device_id,
@@ -107,6 +119,7 @@ class EcovacsController:
             ),
             config[CONF_USERNAME],
             md5(config[CONF_PASSWORD]),
+            account_credentials=config.get(CONF_CREDENTIALS),
         )
         self._api_client = ApiClient(self._authenticator)
 

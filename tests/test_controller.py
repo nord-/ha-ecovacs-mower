@@ -19,6 +19,12 @@ pytestmark = requires_ha
 # Registries in deebot-client that only deebot_patch/ may touch.
 FORBIDDEN_MODULES = ("deebot_client.hardware", "deebot_client.messages")
 
+# Private classes of deebot-client that only deebot_patch/ may touch. Their
+# modules cannot go in FORBIDDEN_MODULES: deebot_client.authentication is
+# imported all over for Authenticator and create_rest_config, it is the private
+# _AuthClient inside it that is off limits.
+FORBIDDEN_NAMES = ("_AuthClient",)
+
 
 def test_controller_does_not_import_sucks() -> None:
     from custom_components.ecovacs_mower import controller
@@ -322,8 +328,9 @@ def test_only_deebot_patch_touches_upstream_internals() -> None:
 
     The whole point of deebot_patch/ is that a vendored client should be able to
     replace it without any entity file changing. If an import of deebot-client's
-    hardware or messages registry leaks out into the other files that guarantee
-    is gone, and nobody notices until upstream refactors.
+    hardware or messages registry, or of a private class of it, leaks out into the
+    other files that guarantee is gone, and nobody notices until upstream
+    refactors.
     """
     from custom_components.ecovacs_mower import controller
 
@@ -335,9 +342,16 @@ def test_only_deebot_patch_touches_upstream_internals() -> None:
             continue
         for name in _forbidden_imports(path):
             offenders.append(f"{path.relative_to(package)}: {name}")
+        # Plain substring search, unlike the imports above: a private class can
+        # be reached by too many spellings for the AST to be worth it here, and
+        # the name is distinctive enough not to false-alarm.
+        source = path.read_text(encoding="utf-8")
+        for name in FORBIDDEN_NAMES:
+            if name in source:
+                offenders.append(f"{path.relative_to(package)}: {name}")
 
     assert not offenders, (
-        "Only deebot_patch/ may touch deebot-client's internal registries. "
+        "Only deebot_patch/ may touch deebot-client's internals. "
         f"Leaks: {offenders}"
     )
 

@@ -10,6 +10,9 @@ DOMAIN = "ecovacs_mower"
 # read the manifest.
 ISSUE_TRACKER_URL = "https://github.com/nord-/ha-ecovacs-mower/issues"
 
+# Same key name as the pending core fix (home-assistant/core#178558), so an
+# entry written by either one is readable by the other.
+CONF_CREDENTIALS = "credentials"
 CONF_OVERRIDE_REST_URL = "override_rest_url"
 CONF_OVERRIDE_MQTT_URL = "override_mqtt_url"
 CONF_VERIFICATION_CODE = "verification_code"

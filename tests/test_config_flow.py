@@ -12,7 +12,9 @@ from . import requires_ha
 
 pytestmark = requires_ha
 
-_AUTHENTICATOR = "custom_components.ecovacs_mower.config_flow.Authenticator"
+_AUTHENTICATOR = (
+    "custom_components.ecovacs_mower.config_flow.AccountAuthenticator"
+)
 _VALIDATE_MQTT = "custom_components.ecovacs_mower.config_flow._validate_mqtt"
 
 AUTH = {
@@ -40,9 +42,10 @@ async def test_happy_path_creates_entry(hass) -> None:
     from homeassistant.data_entry_flow import FlowResultType
 
     with (
-        patch(_AUTHENTICATOR, autospec=True),
+        patch(_AUTHENTICATOR, autospec=True) as authenticator,
         patch(_VALIDATE_MQTT, return_value={}),
     ):
+        authenticator.return_value.account_credentials = None
         result = await _start(hass)
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], AUTH
@@ -58,6 +61,7 @@ async def test_verification_required_shows_code_step(hass) -> None:
     from homeassistant.data_entry_flow import FlowResultType
 
     with patch(_AUTHENTICATOR, autospec=True) as authenticator:
+        authenticator.return_value.account_credentials = None
         authenticator.return_value.authenticate.side_effect = (
             DeviceVerificationRequiredError
         )
@@ -80,6 +84,7 @@ async def test_bad_verification_code_reports_error(hass) -> None:
     from custom_components.ecovacs_mower.const import CONF_VERIFICATION_CODE
 
     with patch(_AUTHENTICATOR, autospec=True) as authenticator:
+        authenticator.return_value.account_credentials = None
         authenticator.return_value.authenticate.side_effect = (
             DeviceVerificationRequiredError
         )
@@ -111,6 +116,7 @@ async def test_device_id_is_persisted_after_verification(hass) -> None:
         patch(_AUTHENTICATOR, autospec=True) as authenticator,
         patch(_VALIDATE_MQTT, return_value={}),
     ):
+        authenticator.return_value.account_credentials = None
         authenticator.return_value.authenticate.side_effect = (
             DeviceVerificationRequiredError
         )
@@ -124,3 +130,37 @@ async def test_device_id_is_persisted_after_verification(hass) -> None:
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_DEVICE_ID]
+
+
+async def test_account_credentials_are_persisted_after_verification(hass) -> None:
+    # The other half of the 1013 fix: without the account pair in the entry, the
+    # reload right after a successful verification logs in with the password,
+    # gets 1013 back and asks for another code (issue #21).
+    from deebot_client.exceptions import DeviceVerificationRequiredError
+    from homeassistant.data_entry_flow import FlowResultType
+
+    from custom_components.ecovacs_mower.const import (
+        CONF_CREDENTIALS,
+        CONF_VERIFICATION_CODE,
+    )
+
+    account = {"access_token": "token-abc", "user_id": "uid-1"}
+
+    with (
+        patch(_AUTHENTICATOR, autospec=True) as authenticator,
+        patch(_VALIDATE_MQTT, return_value={}),
+    ):
+        authenticator.return_value.account_credentials = account
+        authenticator.return_value.authenticate.side_effect = (
+            DeviceVerificationRequiredError
+        )
+        result = await _start(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], AUTH
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_VERIFICATION_CODE: "123456"}
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_CREDENTIALS] == account

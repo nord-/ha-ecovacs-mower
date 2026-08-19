@@ -17,6 +17,7 @@ from deebot_client.events import StateEvent
 from deebot_client.hardware import _DEVICES
 from deebot_client.messages.json import MESSAGES
 
+from .authentication import AccountAuthenticator
 from .commands import CleanMower
 from .hardware import SUPPORTED_CLASSES, patch_device_info
 from .map_messages import OnArI, OnMapTrack, OnMI, OnSpecialContour
@@ -24,6 +25,7 @@ from .messages import OnChargeInfo, OnProtectState, OnScheduleTaskInfo
 
 __all__ = [
     "SUPPORTED_CLASSES",
+    "AccountAuthenticator",
     "CleanMower",
     "PatchContractError",
     "apply",
