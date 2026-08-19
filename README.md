@@ -134,12 +134,13 @@ Enter it and setup continues.
 
 ## What you get
 
-Thirty-one entities on the mower's device page, across seven platforms:
+Thirty-three entities on the mower's device page, across eight platforms:
 
 | Platform | Count | What |
 |---|---|---|
-| `lawn_mower` | 1 | Real state (`mowing`, `paused`, `returning`, `docked`, `error`) that updates within seconds, plus working `start_mowing`, `pause`, and `dock` |
-| `sensor` | 14 | Battery, error code (disabled by default — see below), mowed area, mowing time, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name |
+| `lawn_mower` | 1 | Real state (`mowing`, `paused`, `returning`, `docked`, `error`) that updates within seconds, plus working `start_mowing`, `pause`, and `dock`. Carries a `raining` attribute — see below |
+| `sensor` | 15 | Activity (the state with rain folded in — see below), battery, error code (disabled by default — see below), mowed area, mowing time, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name |
+| `binary_sensor` | 1 | Rain: whether the mower's own sensor currently considers mowing rained off. Carries a `rain_delay` attribute — the firmware's post-rain wait |
 | `switch` | 7 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
 | `number` | 2 | Notification volume, cutting direction |
 | `button` | 5 | Reset each of the four consumable lifespans, plus "Locate mower" (plays a sound on the device) |
@@ -150,9 +151,34 @@ Not included yet: **RTK diagnostics** (position and satellite data) and
 zone control. RTK is planned for the next release; the other has no
 committed date.
 
+### Rain: why a run that was rained off looks finished
+
+When rain interrupts a scheduled run, the GOAT pauses, drives home and docks —
+the same three states as a run that finished the lawn. The reason is not in any
+of them. It arrives as `trigger: "rain"` on the state messages (which says who
+asked for the action, not what the mower is doing) and as `isRainProtect: 1` in
+`onProtectState`, the only flag that stays true while the mower waits it out.
+
+`binary_sensor.<device>_rain` is that flag. Because `LawnMowerActivity` is a
+closed enum owned by Home Assistant — the frontend's translations and every
+`lawn_mower.is_returning` condition key off its five members — the mower entity
+itself cannot say "returning, because of rain". Two places carry the reason
+instead:
+
+* `sensor.<device>_activity` — the same activity as a state you can trigger on,
+  with rain folded in: `mowing`, `paused`, `paused_rain`, `returning`,
+  `returning_rain`, `docked`, `docked_rain_delay`, `error`. This is where
+  "Returning (rain)" and "Docked (rain delay)" show up.
+* the `raining` attribute on the `lawn_mower` entity, for anyone reading the
+  mower entity directly.
+
+`isRainDelay`, the firmware's post-rain wait, rides as the `rain_delay`
+attribute on the rain flag. It was 0 while it was actually raining, so it is
+reported separately rather than folded into the flag.
+
 ### Entities disabled by default
 
-**17 of the 31 entities** ship with `entity_registry_enabled_default=False`,
+**17 of the 33 entities** ship with `entity_registry_enabled_default=False`,
 all inherited unchanged from upstream Home Assistant core's `ecovacs`
 integration — they're advanced settings or diagnostics, off by default
 there too. They appear in the mower's entity list right after setup, but
@@ -164,7 +190,7 @@ a bug: if one of these looks blank or "unavailable," this is why.
 |---|---|---|
 | `switch` | 7 of 7 | all of them: advanced mode, TrueDetect, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
 | `number` | 2 of 2 | both: volume, cutting direction |
-| `sensor` | 4 of 14 | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code** |
+| `sensor` | 4 of 15 | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code** |
 | `button` | 4 of 5 | the four consumable-lifespan resets (blade, lens brush, trimmer brush, weed rope) — "Locate mower" is enabled by default |
 
 **If you're planning anything on the error sensor** — an alarm, a
@@ -184,6 +210,13 @@ the user who reported that model.
 
 The `sensor`, `switch`, `number`, `button`, and `event` platforms listed above
 were added in 0.2.0. The `image` entity (the mower's map) was added in 0.3.0.
+The rain flag, the activity sensor and the `raining` attribute were added in
+0.4.0, decoded from a live capture of a scheduled run that rain interrupted.
+One part of that is unconfirmed: the rain sensor asks the mower for its current
+flags with `getProtectState` so the flag is not blank after a restart, and that
+command name is inferred from Ecovacs' `on<X>`/`get<X>` convention rather than
+observed. If the firmware does not know it, the flag stays unknown until the
+mower next reports a change — nothing else is affected.
 The test suite, hassfest and HACS validation all pass in CI. The HACS job
 skips the `brands` check, which requires an icon in the Home Assistant brands
 repository — a requirement for listing in the HACS default store that does
