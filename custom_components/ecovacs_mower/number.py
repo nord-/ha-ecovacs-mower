@@ -115,4 +115,4 @@ class EcovacsNumberEntity[EventT: Event](
     @override
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
-        await self._device.execute_command(self._capability.set(int(value)))
+        await self._execute_command(self._capability.set(int(value)))

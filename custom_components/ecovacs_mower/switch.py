@@ -128,9 +128,9 @@ class EcovacsSwitchEntity(
     @override
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the entity on."""
-        await self._device.execute_command(self._capability.set(True))
+        await self._execute_command(self._capability.set(True))
 
     @override
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
-        await self._device.execute_command(self._capability.set(False))
+        await self._execute_command(self._capability.set(False))

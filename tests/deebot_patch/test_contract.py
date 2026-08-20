@@ -92,6 +92,15 @@ def test_capabilities_is_frozen() -> None:
     assert Capabilities.__dataclass_params__.frozen
 
 
+def test_a_command_the_device_did_not_answer_yields_an_empty_response() -> None:
+    # EcovacsEntity._execute_command treats a falsy execute_command() return as
+    # "not confirmed" and logs it. That only holds while raw_response defaults to
+    # an empty dict on the failure paths.
+    from deebot_client.command import DeviceCommandResult
+
+    assert DeviceCommandResult(device_reached=False).raw_response == {}
+
+
 def test_clean_info_v2_subclasses_clean_info() -> None:
     # This is why verify_capabilities compares exact types instead of using
     # isinstance: a GetCleanInfoV2 instance is a GetCleanInfo, so isinstance()

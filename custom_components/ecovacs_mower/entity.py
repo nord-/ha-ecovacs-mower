@@ -7,9 +7,11 @@ client library have been removed: this integration only supports MQTT.
 
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+import logging
 from typing import Any, override
 
 from deebot_client.capabilities import Capabilities
+from deebot_client.command import Command
 from deebot_client.device import Device
 from deebot_client.events import AvailabilityEvent
 from deebot_client.events.base import Event
@@ -19,6 +21,8 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity, EntityDescription
 
 from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class EcovacsEntity[CapabilityEntityT](Entity):
@@ -80,6 +84,31 @@ class EcovacsEntity[CapabilityEntityT](Entity):
                 self.async_write_ha_state()
 
             self._subscribe(AvailabilityEvent, on_available)
+
+    async def _execute_command(self, command: Command) -> None:
+        """Send *command* to the device, and log it here when it is not confirmed.
+
+        ``Device.execute_command`` returns the raw response, which is an empty
+        dict on every failure path: no answer from the mower (``errno`` 500),
+        device offline (4200), a REST timeout, an unhandled response. The library
+        logs the reason under ``deebot_client``, and those lines are invisible in
+        the integration page's "Show logs" — that filter is the literal string
+        ``ecovacs_mower`` (issue #26). Logging the fact here puts at least one
+        line under a logger name that carries the domain, pointing at the log
+        that has the detail.
+
+        Not confirmed is not the same as not executed: the library documents
+        ``device_reached`` as "responded in time", not "did what it was told", so
+        this warns and never raises — a mower that starts mowing but answers too
+        late must not surface as a failed service call.
+        """
+        if not await self._device.execute_command(command):
+            _LOGGER.warning(
+                "The mower did not confirm command %s. The reason is logged by "
+                "deebot_client; enable debug logging for this integration to see "
+                "the exchange",
+                command.NAME,
+            )
 
     def _subscribe[EventT: Event](
         self,

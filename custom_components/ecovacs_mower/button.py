@@ -115,7 +115,7 @@ class EcovacsButtonEntity(
     @override
     async def async_press(self) -> None:
         """Press the button."""
-        await self._device.execute_command(self._capability.execute())
+        await self._execute_command(self._capability.execute())
 
 
 class EcovacsResetLifespanButtonEntity(
@@ -129,6 +129,6 @@ class EcovacsResetLifespanButtonEntity(
     @override
     async def async_press(self) -> None:
         """Press the button."""
-        await self._device.execute_command(
+        await self._execute_command(
             self._capability.reset(self.entity_description.component)
         )

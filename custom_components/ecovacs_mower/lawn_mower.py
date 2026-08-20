@@ -83,7 +83,7 @@ class EcovacsMower(EcovacsEntity[Capabilities], LawnMowerEntity):
         self._subscribe(self._capability.state.event, on_status)
 
     async def _clean_command(self, action: CleanAction) -> None:
-        await self._device.execute_command(
+        await self._execute_command(
             self._capability.clean.action.command(action)
         )
 
@@ -100,4 +100,4 @@ class EcovacsMower(EcovacsEntity[Capabilities], LawnMowerEntity):
     @override
     async def async_dock(self) -> None:
         """Send the mower back to the dock."""
-        await self._device.execute_command(self._capability.charge.execute())
+        await self._execute_command(self._capability.charge.execute())

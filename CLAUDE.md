@@ -58,7 +58,7 @@ Failing fast is intentional: if `deebot-client` doesn't look like the patch laye
 
 `lawn_mower` filters on `device_type is DeviceType.MOWER`. The others (`sensor`, `switch`, `number`, `button`, `event`) are built declaratively: an `ENTITY_DESCRIPTIONS` tuple of `EcovacsCapabilityEntityDescription` subclasses with `capability_fn`, fed through `util.get_supported_entities()`. New entities are added as an entry in that tuple — not as a new class.
 
-`entity.py` has the base classes (`EcovacsEntity`, `EcovacsDescriptionEntity`); subscribing to events happens via `_subscribe()` in `async_added_to_hass`.
+`entity.py` has the base classes (`EcovacsEntity`, `EcovacsDescriptionEntity`); subscribing to events happens via `_subscribe()` in `async_added_to_hass`. Commands go out through `_execute_command()`, never `self._device.execute_command()` directly — the wrapper is what logs an unconfirmed command under this integration's own logger instead of leaving it to `deebot_client` (issue #26).
 
 ## Conventions
 

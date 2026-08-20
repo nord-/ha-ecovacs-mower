@@ -256,6 +256,10 @@ the log is full of relevant lines ([#26](https://github.com/nord-/ha-ecovacs-mow
 The filter comes from the Home Assistant frontend, which builds it from the
 integration's domain; it cannot be changed from here.
 
+The integration does log its own warning when the mower does not confirm a
+command it was sent, so a failed start or pause shows up under the domain
+filter — but the reason for it is in `deebot_client`'s lines, not ours.
+
 To get a usable log:
 
 1. Turn on **Enable debug logging** on the integration page. That covers both
