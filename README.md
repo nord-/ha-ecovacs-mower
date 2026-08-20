@@ -76,6 +76,7 @@ Verified on two devices:
 | --- | --- | --- |
 | **Ecovacs GOAT O1200 LiDAR Pro** | `2i0fns` | the author's own hardware |
 | **Ecovacs GOAT O800 RTK** | `9bts2s` | a user, firmware 1.13.8 ([#8](https://github.com/nord-/ha-ecovacs-mower/issues/8)) |
+| **Ecovacs GOAT O800 RTK** | `2px96q` | a user ([#24](https://github.com/nord-/ha-ecovacs-mower/issues/24)) |
 
 Other GOAT models (A1600 RTK and the rest of the GOAT line) share the same
 three upstream defects described above, and would very likely work with the
@@ -243,6 +244,40 @@ and reports nothing until you enable it by hand, same as the other 16
 above. This is the one entity in this list someone is likely to go
 looking for by name, so it's worth repeating here rather than only in the
 table.
+
+## Collecting logs
+
+The **Show logs** button on the integration page filters Home Assistant's log
+for the literal string `ecovacs_mower`, and nothing else. Almost everything
+worth reading — command timeouts, the MQTT traffic, the raw map messages — is
+logged by `deebot_client`, and those lines do not contain that string. So the
+panel reports "No issues found for the search term 'ecovacs_mower'" even when
+the log is full of relevant lines ([#26](https://github.com/nord-/ha-ecovacs-mower/issues/26)).
+The filter comes from the Home Assistant frontend, which builds it from the
+integration's domain; it cannot be changed from here.
+
+To get a usable log:
+
+1. Turn on **Enable debug logging** on the integration page. That covers both
+   `custom_components.ecovacs_mower` and `deebot_client` — Home Assistant
+   derives the set from the `loggers` key in `manifest.json`. The equivalent
+   in `configuration.yaml`, if you prefer it to survive restarts:
+
+   ```yaml
+   logger:
+     logs:
+       custom_components.ecovacs_mower: debug
+       deebot_client: debug
+   ```
+
+2. Reproduce the problem.
+3. Go to **Settings → System → Logs**, clear the search box or search for
+   `deebot`, and use **Download full log**. The search only looks at the lines
+   already loaded in the browser, so downloading beats scrolling.
+
+For anything about the map, `deebot_client` at debug level is the only thing
+that shows whether the mower sends `onMI`/`onArI`/`onMapTrack`/
+`onSpecialContour` at all — that is the log to attach to a map issue.
 
 ## Current status
 
