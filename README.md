@@ -70,7 +70,7 @@ the corresponding patch in this repo becomes dead code and gets deleted.
 
 ## Hardware support
 
-Verified on two devices:
+Verified hardware:
 
 | Model | Device class | Verified by |
 | --- | --- | --- |
@@ -263,9 +263,10 @@ filter — but the reason for it is in `deebot_client`'s lines, not ours.
 To get a usable log:
 
 1. Turn on **Enable debug logging** on the integration page. That covers both
-   `custom_components.ecovacs_mower` and `deebot_client` — Home Assistant
-   derives the set from the `loggers` key in `manifest.json`. The equivalent
-   in `configuration.yaml`, if you prefer it to survive restarts:
+   `custom_components.ecovacs_mower`, which Home Assistant always adds for the
+   integration itself, and `deebot_client`, which it adds because
+   `manifest.json` lists it under `loggers`. The equivalent in
+   `configuration.yaml`, if you prefer it to survive restarts:
 
    ```yaml
    logger:

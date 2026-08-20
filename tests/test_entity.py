@@ -43,8 +43,11 @@ async def test_unconfirmed_command_is_logged_under_this_integration(
     with caplog.at_level(logging.WARNING):
         await _entity({})._execute_command(GetChargeState())
 
-    assert len(caplog.records) == 1
-    record = caplog.records[0]
+    # Filtered so an unrelated WARNING+ from hass or deebot_client during the
+    # call can't fail this for a reason that has nothing to do with the wrapper.
+    records = [r for r in caplog.records if r.name.startswith("custom_components.ecovacs_mower")]
+    assert len(records) == 1
+    record = records[0]
     assert "ecovacs_mower" in record.name
     assert GetChargeState.NAME in record.getMessage()
 

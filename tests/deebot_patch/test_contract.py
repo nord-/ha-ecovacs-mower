@@ -92,13 +92,38 @@ def test_capabilities_is_frozen() -> None:
     assert Capabilities.__dataclass_params__.frozen
 
 
-def test_a_command_the_device_did_not_answer_yields_an_empty_response() -> None:
+async def test_a_command_the_device_did_not_answer_yields_an_empty_response() -> None:
     # EcovacsEntity._execute_command treats a falsy execute_command() return as
-    # "not confirmed" and logs it. That only holds while raw_response defaults to
-    # an empty dict on the failure paths.
-    from deebot_client.command import DeviceCommandResult
+    # "not confirmed" and logs it. This pins the actual failure path it depends
+    # on — a REST timeout — rather than just DeviceCommandResult's default, so
+    # an upstream change to what a failure carries in raw_response is caught
+    # here first.
+    from unittest.mock import AsyncMock, MagicMock
 
-    assert DeviceCommandResult(device_reached=False).raw_response == {}
+    from deebot_client.command import Command
+    from deebot_client.const import DataType
+    from deebot_client.exceptions import ApiTimeoutError
+    from deebot_client.message import HandlingResult, HandlingState
+
+    class _Command(Command):
+        NAME = "test"
+        DATA_TYPE = DataType.JSON
+
+        def _get_payload(self) -> dict:
+            return {}
+
+        def _handle_response(self, event_bus: object, response: dict) -> HandlingResult:
+            return HandlingResult(HandlingState.SUCCESS)
+
+    authenticator = MagicMock()
+    authenticator.authenticate = AsyncMock(return_value=MagicMock(user_id="uid"))
+    authenticator.post_authenticated = AsyncMock(side_effect=ApiTimeoutError)
+    device_info = {"class": "test", "did": "did", "resource": "res"}
+
+    result = await _Command().execute(authenticator, device_info, MagicMock())
+
+    assert result.device_reached is False
+    assert result.raw_response == {}
 
 
 def test_clean_info_v2_subclasses_clean_info() -> None:
