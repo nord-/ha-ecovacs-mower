@@ -14,10 +14,13 @@ from custom_components.ecovacs_mower.deebot_patch.hardware import (
 
 O1200 = "2i0fns"
 O800 = "9bts2s"
+# Second class string for the same O800 RTK hardware; upstream's module is
+# byte-identical to 9bts2s.py.
+O800_ALT = "2px96q"
 
 
 def test_supported_classes_are_the_verified_ones() -> None:
-    assert set(SUPPORTED_CLASSES) == {O1200, O800}
+    assert set(SUPPORTED_CLASSES) == {O1200, O800, O800_ALT}
 
 
 @pytest.fixture(autouse=True)

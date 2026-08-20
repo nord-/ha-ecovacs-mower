@@ -24,7 +24,10 @@ _LOGGER = logging.getLogger(__name__)
 # Device classes this integration patches. Verified hardware:
 #   2i0fns — GOAT O1200 LiDAR Pro (owner-verified)
 #   9bts2s — GOAT O800 RTK (user-verified, issue #8)
-SUPPORTED_CLASSES = ("2i0fns", "9bts2s")
+#   2px96q — GOAT O800 RTK (user-verified, issue #24). A second class string
+#            for the same hardware: upstream's 2px96q.py is byte-identical to
+#            9bts2s.py.
+SUPPORTED_CLASSES = ("2i0fns", "9bts2s", "2px96q")
 
 
 async def patch_device_info(class_: str) -> None:
