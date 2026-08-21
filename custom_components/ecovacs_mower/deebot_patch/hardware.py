@@ -84,6 +84,11 @@ async def patch_device_info(class_: str) -> None:
     # subscribes, and the device only pushes onProtectState when a flag flips:
     # rain protection that is simply left switched on never gets reported, so
     # the entity reads "unknown" for good (issue #31).
+    #
+    # This has to stay below the replace() above and cannot move up: replace()
+    # re-runs __post_init__, which rebuilds the mapping from the fields, and an
+    # entry that no field describes would be dropped without a word. A future
+    # correction goes above this one for the same reason.
     object.__setattr__(
         patched,
         "_events",
