@@ -264,6 +264,13 @@ class OnPos(MessageBodyDataDict):
     whatever it is, those coordinates track the mower, which is the only
     question this handler has to answer.
 
+    A payload with nothing but flagged-out samples is handled, not unparsed:
+    ``chargePos`` carries ``invalid: 1`` on every sample from this hardware, so
+    a docked mower sends exactly that, and upstream's ``analyse()`` would log
+    "Could not handle onPos" for a message this handler understood perfectly.
+    ``OnMI`` makes the same distinction: success when there is nothing new to
+    publish, ``analyse()`` reserved for a payload that would not parse.
+
     The body is otherwise upstream's, in upstream's order, so it stays easy to
     diff against ``commands/json/pos.py`` the day the filter is fixed there and
     this can be deleted.
@@ -295,7 +302,10 @@ class OnPos(MessageBodyDataDict):
             )
 
         if not positions:
-            return HandlingResult.analyse()
+            # Upstream returns analyse() here. Nothing consumes the state but
+            # requested_commands, and this handler requests none, so the only
+            # difference is a misleading debug line on every docked sample.
+            return HandlingResult.success()
 
         event_bus.notify(PositionsEvent(positions=positions))
         return HandlingResult.success()

@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from deebot_client.event_bus import EventBus
 from deebot_client.events import Position, PositionsEvent, StateEvent
+from deebot_client.message import HandlingState
 from deebot_client.models import State
 from deebot_client.rs.map import PositionType
 
@@ -301,6 +302,19 @@ def test_on_pos_drops_a_sample_the_device_calls_invalid() -> None:
         "mid": "0",
     }
     assert _notified(OnPos, data, PositionsEvent) == []
+
+
+def test_on_pos_handles_a_payload_with_nothing_to_publish() -> None:
+    # A docked mower sends exactly this. Upstream answers analyse(), which
+    # logs "Could not handle onPos" for a message we parsed fine; the layer
+    # keeps analyse() for payloads that would not parse (see OnMI).
+    data = {
+        "deebotPos": {"x": 0, "y": 0, "a": 0, "invalid": 1},
+        "chargePos": _CHARGER_UNKNOWN,
+        "mid": "0",
+    }
+    result = OnPos._handle_body_data_dict(Mock(), data)
+    assert result.state is HandlingState.SUCCESS
 
 
 def test_on_pos_reports_a_valid_charger_position() -> None:
