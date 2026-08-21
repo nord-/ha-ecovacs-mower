@@ -77,6 +77,7 @@ Verified hardware:
 | **Ecovacs GOAT O1200 LiDAR Pro** | `2i0fns` | the author's own hardware |
 | **Ecovacs GOAT O800 RTK** | `9bts2s` | a user, firmware 1.13.8 ([#8](https://github.com/nord-/ha-ecovacs-mower/issues/8)) |
 | **Ecovacs GOAT O800 RTK** | `2px96q` | a user ([#24](https://github.com/nord-/ha-ecovacs-mower/issues/24)) |
+| **Ecovacs GOAT G1-800** | `77atlz` | reported, patch not yet confirmed — firmware 1.36.208 ([#30](https://github.com/nord-/ha-ecovacs-mower/issues/30)) |
 
 Other GOAT models (A1600 RTK and the rest of the GOAT line) share the same
 three upstream defects described above, and would very likely work with the
