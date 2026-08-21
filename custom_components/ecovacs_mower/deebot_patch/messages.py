@@ -20,6 +20,9 @@ short, ``"workComplete"`` when it finished, ``"app"`` when someone pressed a
 button. Without it, a run cut short by rain is indistinguishable from one that
 simply finished.
 
+``OnPos`` is different in kind from the rest of this module: ``onPos`` is not
+unhandled, it is handled wrongly. See the class for what and why.
+
 ``onProtectState`` is a fourth unhandled message. It carries the mower's
 protection flags. Whether ``isRainProtect`` means "it is raining" or only
 "rain protection is switched on" is **not** established: the one captured
@@ -36,10 +39,11 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from deebot_client.events import StateEvent
+from deebot_client.events import Position, PositionsEvent, StateEvent
 from deebot_client.events.base import Event
 from deebot_client.message import HandlingResult, MessageBodyDataDict
 from deebot_client.models import State
+from deebot_client.rs.map import PositionType
 
 if TYPE_CHECKING:
     from deebot_client.event_bus import EventBus
@@ -234,4 +238,64 @@ class OnProtectState(MessageBodyDataDict):
                 **{field: bool(data[key]) for key, field in cls._FLAGS.items()}
             )
         )
+        return HandlingResult.success()
+
+
+class OnPos(MessageBodyDataDict):
+    """The mower's position, and the dock's on hardware that reports one.
+
+    This one overrides the library instead of filling a gap. ``onPos`` has no
+    entry in ``MESSAGES``, so it falls back to ``GetPos``, whose handler reads
+    ``invalid`` as a boolean and keeps a sample only when it is exactly 0.
+
+    Firmware 1.13.10 flags roughly nine of ten samples ``invalid: 2`` during a
+    run — 102 of 115 in a six-minute capture — and those are not junk: they
+    interleave with the ``invalid: 0`` ones along the same smooth 2 Hz path,
+    5-15 cm apart at 0.16 m/s. Dropped, what is left is a tenth of the track
+    with minute-wide gaps, which renders as a mower standing still, and after a
+    restart as one parked in its dock. The capture the map was designed against
+    is firmware 1.11.31, where every sample was ``invalid: 0`` — which is why
+    the filter never showed until now.
+
+    Only bit 0 is read as "no position". ``invalid: 1`` is what ``chargePos``
+    carries on every sample from the verified hardware, and map.py's
+    dock-at-the-origin assumption rests on exactly that. What bit 1 means is
+    not established — dead reckoning between fixes is the obvious guess — but
+    whatever it is, those coordinates track the mower, which is the only
+    question this handler has to answer.
+
+    The body is otherwise upstream's, in upstream's order, so it stays easy to
+    diff against ``commands/json/pos.py`` the day the filter is fixed there and
+    this can be deleted.
+    """
+
+    NAME = "onPos"
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data."""
+        positions: list[Position] = []
+
+        for type_str in ("deebotPos", "chargePos"):
+            entries = data.get(type_str, [])
+            if isinstance(entries, dict):
+                entries = [entries]
+
+            positions.extend(
+                Position(
+                    type=PositionType.from_str(type_str),
+                    x=entry["x"],
+                    y=entry["y"],
+                    a=entry.get("a", 0),
+                )
+                for entry in entries
+                if not entry.get("invalid", 0) & 1
+            )
+
+        if not positions:
+            return HandlingResult.analyse()
+
+        event_bus.notify(PositionsEvent(positions=positions))
         return HandlingResult.success()

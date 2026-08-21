@@ -154,3 +154,35 @@ async def test_refresh_commands_empty_for_unknown_events() -> None:
     assert static is not None
     for event in (MowerMapInfoEvent, MowerProtectStateEvent):
         assert static.capabilities.get_refresh_commands(event) == []
+
+
+def test_upstream_get_pos_drops_every_sample_it_calls_invalid() -> None:
+    # The whole reason OnPos exists. GetPos reads "invalid" as a boolean, and
+    # firmware 1.13.10 flags roughly nine of ten position samples 2. When this
+    # goes red upstream has learned to read the flag and OnPos can go.
+    from unittest.mock import Mock
+
+    from deebot_client.commands.json.pos import GetPos
+
+    event_bus = Mock()
+    GetPos._handle_body_data_dict(
+        event_bus, {"deebotPos": {"x": 1, "y": 2, "a": 3, "invalid": 2}}
+    )
+    assert event_bus.notify.call_args_list == []
+
+
+async def test_an_exact_message_name_beats_the_legacy_fallback() -> None:
+    # OnPos only takes effect because get_message() resolves MESSAGES before it
+    # falls back to the getPos command. Every other handler in this layer names
+    # a message with no legacy counterpart, so onPos is the only one whose
+    # effect depends on that order.
+    from deebot_client.hardware import get_static_device_info
+    from deebot_client.messages import get_message
+
+    from custom_components.ecovacs_mower.deebot_patch import apply
+    from custom_components.ecovacs_mower.deebot_patch.messages import OnPos
+
+    static = await get_static_device_info("2i0fns")
+    assert static is not None
+    apply()
+    assert get_message("onPos", static) is OnPos

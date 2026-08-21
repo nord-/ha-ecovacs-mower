@@ -21,7 +21,7 @@ from .authentication import AccountAuthenticator
 from .commands import CleanMower
 from .hardware import SUPPORTED_CLASSES, patch_device_info
 from .map_messages import OnArI, OnMapTrack, OnMI, OnSpecialContour
-from .messages import OnChargeInfo, OnProtectState, OnScheduleTaskInfo
+from .messages import OnChargeInfo, OnPos, OnProtectState, OnScheduleTaskInfo
 
 __all__ = [
     "SUPPORTED_CLASSES",
@@ -61,6 +61,7 @@ def apply() -> None:
     # object, so a rebinding would not be visible in get_message().
     for message in (
         OnChargeInfo,
+        OnPos,
         OnProtectState,
         OnScheduleTaskInfo,
         OnArI,

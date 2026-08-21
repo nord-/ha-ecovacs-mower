@@ -292,7 +292,9 @@ do what they should. Its start command is also confirmed on an O800 RTK by
 the user who reported that model.
 
 The `sensor`, `switch`, `number`, `button`, and `event` platforms listed above
-were added in 0.2.0. The `image` entity (the mower's map) was added in 0.3.0.
+were added in 0.2.0. The `image` entity (the mower's map) was added in 0.3.0;
+0.5.2 fixed its position track, which firmware 1.13.10 broke by flagging most
+position samples `invalid: 2`.
 The test suite, hassfest and HACS validation all pass in CI. The HACS job
 skips the `brands` check, which requires an icon in the Home Assistant brands
 repository — a requirement for listing in the HACS default store that does

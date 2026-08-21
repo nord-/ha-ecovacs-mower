@@ -9,13 +9,15 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from deebot_client.event_bus import EventBus
-from deebot_client.events import StateEvent
+from deebot_client.events import Position, PositionsEvent, StateEvent
 from deebot_client.models import State
+from deebot_client.rs.map import PositionType
 
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     MowerProtectStateEvent,
     MowerTriggerEvent,
     OnChargeInfo,
+    OnPos,
     OnProtectState,
     OnScheduleTaskInfo,
 )
@@ -261,8 +263,75 @@ def test_on_protect_state_drops_partial_payloads(missing: str) -> None:
     assert _notified(OnProtectState, payload, MowerProtectStateEvent) == []
 
 
+_CHARGER_UNKNOWN = [{"x": 0, "y": 0, "a": 0, "t": 1, "invalid": 1}]
+
+
+def _positions(data: dict[str, Any]) -> list[Position]:
+    """Run OnPos and return every position it published."""
+    return [
+        position
+        for event in _notified(OnPos, data, PositionsEvent)
+        for position in event.positions
+    ]
+
+
+@pytest.mark.parametrize("invalid", [0, 2])
+def test_on_pos_keeps_localized_and_dead_reckoned_samples(invalid: int) -> None:
+    # The reason this handler exists. Firmware 1.13.10 flags roughly nine of
+    # ten samples "invalid": 2 during a run (102 of 115 in a six-minute
+    # capture), and they interpolate the same smooth 2 Hz path as the
+    # "invalid": 0 ones, 5-15 cm apart at 0.16 m/s. Upstream's GetPos keeps
+    # only 0, which decimates the track to 11% of its samples.
+    data = {
+        "deebotPos": {"x": -31025, "y": 3525, "a": -88, "invalid": invalid},
+        "chargePos": _CHARGER_UNKNOWN,
+        "mid": "0",
+    }
+    assert _positions(data) == [
+        Position(type=PositionType.DEEBOT, x=-31025, y=3525, a=-88)
+    ]
+
+
+def test_on_pos_drops_a_sample_the_device_calls_invalid() -> None:
+    # Bit 0 is the invalid flag: 1 means the device has no position to report,
+    # which is what chargePos carries on every sample from this hardware.
+    data = {
+        "deebotPos": {"x": 0, "y": 0, "a": 0, "invalid": 1},
+        "chargePos": _CHARGER_UNKNOWN,
+        "mid": "0",
+    }
+    assert _notified(OnPos, data, PositionsEvent) == []
+
+
+def test_on_pos_reports_a_valid_charger_position() -> None:
+    # Never observed on the verified hardware — chargePos is always flagged 1
+    # there, which is why map.py assumes the dock sits at the origin. Handled
+    # anyway, and in upstream's order: the mower first, the dock second.
+    data = {
+        "deebotPos": {"x": -808, "y": -62, "a": -4, "invalid": 2},
+        "chargePos": [{"x": 0, "y": 0, "a": 0, "t": 1, "invalid": 0}],
+        "mid": "0",
+    }
+    assert _positions(data) == [
+        Position(type=PositionType.DEEBOT, x=-808, y=-62, a=-4),
+        Position(type=PositionType.CHARGER, x=0, y=0, a=0),
+    ]
+
+
+def test_on_pos_accepts_a_single_charger_position_as_a_dict() -> None:
+    # chargePos arrives as a list on the verified hardware, but upstream reads
+    # either shape and a handler that replaces it must not be stricter.
+    data = {
+        "deebotPos": {"x": -808, "y": -62, "a": -4, "invalid": 0},
+        "chargePos": {"x": 10, "y": 20, "a": 0, "invalid": 0},
+        "mid": "0",
+    }
+    assert Position(type=PositionType.CHARGER, x=10, y=20, a=0) in _positions(data)
+
+
 def test_message_names() -> None:
     # The names are the keys in the library's registry and must match exactly.
     assert OnChargeInfo.NAME == "onChargeInfo"
+    assert OnPos.NAME == "onPos"
     assert OnProtectState.NAME == "onProtectState"
     assert OnScheduleTaskInfo.NAME == "onScheduleTaskInfo"

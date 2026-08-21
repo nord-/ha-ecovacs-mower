@@ -272,14 +272,23 @@ Compressed like the rest, but the decoded content is plain coordinates
 `[["1","<id>","1","<ts1,ts2>","x1,y1;x2,y2;…;"], …]` — coordinates in mm,
 trailing semicolon.
 
-### `onPos` — position stream (already handled upstream)
+### `onPos` — position stream (patched since 0.5.2)
 
 `{"deebotPos": {"x","y","a","invalid"}, "chargePos": [{…,"invalid":1}]}` at
 ~2 Hz while active. `x`/`y` mm, `a` heading in degrees. `deebotPos` starts
 at exactly `(0, 0)` when leaving the dock → **the map origin is the dock**.
-`chargePos` was invalid in every captured sample. Handled by deebot-client
-via the `getPos` legacy fallback (`_LEGACY_USE_GET_COMMAND`, not blocked by
-`has_map=False`), notifying `PositionsEvent` — no patch needed.
+`chargePos` was invalid in every captured sample. Reaches deebot-client via
+the `getPos` legacy fallback (`_LEGACY_USE_GET_COMMAND`, not blocked by
+`has_map=False`), notifying `PositionsEvent`.
+
+**Superseded 2026-08-21.** This capture is firmware 1.11.31, where every
+sample carried `invalid: 0`, and that hid a filter: upstream's `GetPos` keeps
+a sample only when `invalid == 0`. Firmware 1.13.10 flags roughly nine of ten
+samples `invalid: 2` while mowing — 102 of 115 in a six-minute capture, all
+of them on the same smooth path as the surviving ones. The track was rendered
+from a tenth of its points, and after a restart the marker sat in the dock for
+minutes at a time. `deebot_patch.messages.OnPos` now handles the message and
+reads only bit 0 as "no position".
 
 ### Reference tooling
 
