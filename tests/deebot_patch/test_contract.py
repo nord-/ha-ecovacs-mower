@@ -7,6 +7,7 @@ CI goes red than that the mower silently stops reporting.
 from dataclasses import fields
 
 from deebot_client.capabilities import Capabilities
+from deebot_client.events import StateEvent
 from deebot_client.hardware import _DEVICES
 from deebot_client.messages.json import MESSAGES
 
@@ -140,7 +141,12 @@ async def test_refresh_commands_empty_for_unknown_events() -> None:
     # map_messages and messages notify custom event types on the library's
     # EventBus. The bus looks up refresh commands per event type from
     # capabilities; for unregistered types this must degrade to "no commands",
-    # not raise. It is also why those entities cannot be refreshed on demand.
+    # not raise.
+    #
+    # It is also the reason patch_device_info has to add an entry for
+    # MowerProtectStateEvent by hand — an unpatched definition has none, so the
+    # bus asks nobody and the flags stay unknown (issue #31). MowerMapInfoEvent
+    # is still in that position: the map has no get command wired up.
     from deebot_client.hardware import get_static_device_info
 
     from custom_components.ecovacs_mower.deebot_patch.map_messages import (
@@ -154,6 +160,26 @@ async def test_refresh_commands_empty_for_unknown_events() -> None:
     assert static is not None
     for event in (MowerMapInfoEvent, MowerProtectStateEvent):
         assert static.capabilities.get_refresh_commands(event) == []
+
+
+def test_refresh_commands_are_read_from_the_events_mapping() -> None:
+    # patch_device_info adds the protection flags' get command straight into
+    # Capabilities._events, because there is no dataclass field to hang a
+    # CapabilityEvent on. If upstream renames the attribute or stops reading it
+    # in get_refresh_commands, our object.__setattr__ would quietly write to
+    # nothing and the flags would go back to "unknown" with no error anywhere.
+    assert "_events" in {field.name for field in fields(Capabilities)}
+
+    # Borrowing the method beats constructing a Capabilities: it is an ABC with
+    # a dozen required fields, and the only thing under test is which attribute
+    # the lookup reads.
+    class _Probe:
+        get_refresh_commands = Capabilities.get_refresh_commands
+
+    probe = _Probe()
+    marker = [object()]
+    probe._events = {StateEvent: marker}
+    assert probe.get_refresh_commands(StateEvent) is marker
 
 
 def test_upstream_get_pos_drops_every_sample_it_calls_invalid() -> None:

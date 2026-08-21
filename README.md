@@ -211,14 +211,15 @@ If `isRainProtect` is `0` while the mower is out mowing, the flag is a live
 state and the entity can be renamed and given the `moisture` device class. Until
 then the rain-aware states come from `trigger`, which needs no interpretation.
 
-All five `binary_sensor` flags stay `unknown` after a restart until the mower
-next reports a change: there is no command wired up to ask for the current
-protection state, the device only pushes it when a flag flips.
+All five `binary_sensor` flags are asked for with `getProtectState` when Home
+Assistant starts, and updated from the `onProtectState` push after that. The
+device only pushes when a flag flips, so before that command was wired up
+(issue #31) the flags stayed `unknown` for anyone whose protection settings
+simply stayed as they were.
 
-`sensor.activity` is different: `GetCleanInfo` is a refresh command, so it
-gets a state within seconds of a restart. The rain reason itself is not
-restored, though — a restart during an active rain delay reads as plain
-`docked` until the mower's next scheduled run.
+The rain *reason* on `sensor.activity` is not restored by a restart, though — it
+comes from `trigger`, which nothing can ask for, so a restart during an active
+rain delay reads as plain `docked` until the mower's next scheduled run.
 
 ### Entities disabled by default
 

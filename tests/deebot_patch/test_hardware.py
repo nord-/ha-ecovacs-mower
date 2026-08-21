@@ -3,14 +3,18 @@
 import pytest
 from deebot_client.commands.json.charge_state import GetChargeState
 from deebot_client.commands.json.clean import CleanV2, GetCleanInfo, GetCleanInfoV2
-from deebot_client.events import StateEvent
+from deebot_client.events import BatteryEvent, StateEvent
 from deebot_client.hardware import _DEVICES, get_static_device_info
 
-from custom_components.ecovacs_mower.deebot_patch.commands import CleanMower
+from custom_components.ecovacs_mower.deebot_patch.commands import (
+    CleanMower,
+    GetProtectState,
+)
 from custom_components.ecovacs_mower.deebot_patch.hardware import (
     SUPPORTED_CLASSES,
     patch_device_info,
 )
+from custom_components.ecovacs_mower.deebot_patch.messages import MowerProtectStateEvent
 
 O1200 = "2i0fns"
 O800 = "9bts2s"
@@ -79,6 +83,34 @@ async def test_patch_swaps_clean_info_v2_for_clean_info(class_: str) -> None:
     assert any(type(c) is GetCleanInfo for c in commands)
     assert not any(type(c) is GetCleanInfoV2 for c in commands)
     assert any(type(c) is GetChargeState for c in commands)
+
+
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_patch_wires_a_refresh_command_for_the_protection_flags(
+    class_: str,
+) -> None:
+    # Issue #31: without this the five binary sensors sit at "unknown" forever.
+    # The bus asks for a refresh when the first entity subscribes, finds no
+    # command for an event the library does not know, and the device only pushes
+    # onProtectState when a flag flips.
+    await patch_device_info(class_)
+    info = await get_static_device_info(class_)
+    commands = info.capabilities.get_refresh_commands(MowerProtectStateEvent)
+    assert [type(c) for c in commands] == [GetProtectState]
+
+
+async def test_patch_leaves_the_librarys_own_refresh_commands_alone() -> None:
+    # The protection entry is added to the mapping get_refresh_commands() reads,
+    # so the entries the library built must all still be there.
+    before = await get_static_device_info(O1200)
+    battery_before = before.capabilities.get_refresh_commands(BatteryEvent)
+    assert battery_before
+    _DEVICES.pop(O1200, None)
+
+    await patch_device_info(O1200)
+    after = await get_static_device_info(O1200)
+
+    assert after.capabilities.get_refresh_commands(BatteryEvent) == battery_before
 
 
 async def test_patch_preserves_untouched_capabilities() -> None:

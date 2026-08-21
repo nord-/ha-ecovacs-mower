@@ -10,12 +10,13 @@ enabled is unsettled, and ``deebot_patch.messages`` documents why. The
 rain-aware states on ``sensor.<device>_activity`` come from the ``trigger``
 field instead.
 
-Nothing refreshes these entities. ``MowerProtectStateEvent`` is not part of
-deebot-client's ``Capabilities``, so the event bus finds no refresh command for
-it and ``async_update`` is a no-op. A ``getProtectState`` command may well exist
-on the wire — it is simply not wired up here. The device sends the message
-whenever a flag changes, so an entity reads "unknown" from startup until the
-first change after it.
+These entities are refreshed by ``GetProtectState``, which
+``deebot_patch.hardware`` wires to ``MowerProtectStateEvent`` because the
+library's ``Capabilities`` has no field for the flags. The event bus asks for it
+when the first of these entities subscribes, so the flags have a value from
+startup instead of waiting for the device to push a change — which it only does
+when one flips, and rain protection that is simply left switched on never flips
+(issue #31).
 """
 
 from __future__ import annotations

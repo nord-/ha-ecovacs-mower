@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import logging
+from types import MappingProxyType
 
 from deebot_client.capabilities import CapabilityEvent
 from deebot_client.commands.json.charge_state import GetChargeState
@@ -17,7 +18,8 @@ from deebot_client.commands.json.clean import GetCleanInfo
 from deebot_client.events import StateEvent
 from deebot_client.hardware import _DEVICES, get_static_device_info
 
-from .commands import CleanMower
+from .commands import CleanMower, GetProtectState
+from .messages import MowerProtectStateEvent
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,12 +35,13 @@ SUPPORTED_CLASSES = ("2i0fns", "9bts2s", "2px96q")
 async def patch_device_info(class_: str) -> None:
     """Replace the cached device definition with one where the mow bugs are fixed.
 
-    Two corrections:
+    Three corrections:
 
     * ``clean.action.command``: ``CleanV2`` publishes on ``clean_V2``, which
       GOAT firmware ignores. Swapped for ``CleanMower`` on ``clean``.
     * ``state``: ``GetCleanInfoV2`` is not answered by GOAT. Swapped for
       ``GetCleanInfo``.
+    * ``MowerProtectStateEvent``: given the refresh command it had none of.
 
     The call is idempotent and does nothing for classes outside
     ``SUPPORTED_CLASSES``.
@@ -71,5 +74,23 @@ async def patch_device_info(class_: str) -> None:
         ),
         state=CapabilityEvent(StateEvent, [GetChargeState(), GetCleanInfo()]),
     )
+    # The protection flags are not a library capability, so there is no field
+    # to hang a CapabilityEvent on and nothing to hand dataclasses.replace.
+    # get_refresh_commands() reads one mapping, built once in __post_init__ from
+    # the dataclass fields, so the entry goes straight in there — the same
+    # object.__setattr__ on the same frozen instance that __post_init__ does.
+    #
+    # Without it the event bus finds no command when the first binary sensor
+    # subscribes, and the device only pushes onProtectState when a flag flips:
+    # rain protection that is simply left switched on never gets reported, so
+    # the entity reads "unknown" for good (issue #31).
+    object.__setattr__(
+        patched,
+        "_events",
+        MappingProxyType(
+            {**patched._events, MowerProtectStateEvent: [GetProtectState()]}
+        ),
+    )
+
     _DEVICES[class_] = replace(base, capabilities=patched)
     _LOGGER.debug("Patched capabilities for %s", class_)
