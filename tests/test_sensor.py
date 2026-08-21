@@ -386,3 +386,27 @@ async def test_unmappable_state_keeps_the_previous_value() -> None:
     unknown.state = "somethingNew"
     await sensor._on_state(unknown)
     assert sensor._attr_native_value == "mowing"
+
+
+def test_duration_sensors_are_displayed_in_a_unit_the_frontend_expands() -> None:
+    # The frontend only formats a duration sensor as a duration when its
+    # displayed unit is one of min/h/d (DURATION_UNITS in
+    # common/datetime/format_duration.ts). Suggest seconds and the state
+    # renders as a bare "14490 s" instead.
+    from homeassistant.components.sensor import SensorDeviceClass
+    from homeassistant.const import UnitOfTime
+
+    from custom_components.ecovacs_mower.sensor import ENTITY_DESCRIPTIONS
+
+    durations = [
+        d
+        for d in ENTITY_DESCRIPTIONS
+        if d.device_class is SensorDeviceClass.DURATION
+    ]
+    assert durations
+    for description in durations:
+        assert description.suggested_unit_of_measurement in (
+            UnitOfTime.MINUTES,
+            UnitOfTime.HOURS,
+            UnitOfTime.DAYS,
+        ), description.key

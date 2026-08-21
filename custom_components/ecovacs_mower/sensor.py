@@ -100,7 +100,13 @@ ENTITY_DESCRIPTIONS: tuple[EcovacsSensorEntityDescription, ...] = (
         translation_key="stats_time",
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.SECONDS,
-        suggested_unit_of_measurement=UnitOfTime.MINUTES,
+        # Hours, not minutes: the frontend's duration formatter switches on the
+        # displayed unit and expands exactly one step down — "min" gives
+        # "241m 30s" for a four-hour run, "h" gives "4h 1m". There is no
+        # three-part form to ask for. The cost is that a short run reads
+        # "0h 20m"; a mowing session is usually hours, so that is the better
+        # end to look silly at.
+        suggested_unit_of_measurement=UnitOfTime.HOURS,
     ),
     # TotalStats
     EcovacsSensorEntityDescription[TotalStatsEvent](
