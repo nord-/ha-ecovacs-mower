@@ -34,7 +34,11 @@ _LOGGER = logging.getLogger(__name__)
 #            byte-identical to 9bts2s.py, docstring included, so the O800 RTK's
 #            patch applies unchanged. Its firmware is on a different branch than
 #            the 1.13.x we have seen, which is where a surprise would come from.
-SUPPORTED_CLASSES = ("2i0fns", "9bts2s", "2px96q", "77atlz")
+#   e4gqia — GOAT A1600 LiDAR Pro (confirmed, PR #29, firmware 1.11.31).
+#            Upstream names this A3000 LiDAR Pro; its module is byte-identical
+#            to 9bts2s.py apart from the docstring, so the O800's patch
+#            applies unchanged.
+SUPPORTED_CLASSES = ("2i0fns", "9bts2s", "2px96q", "77atlz", "e4gqia")
 
 
 async def patch_device_info(class_: str) -> None:
