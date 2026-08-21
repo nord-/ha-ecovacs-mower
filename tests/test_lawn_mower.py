@@ -72,3 +72,29 @@ def test_supported_features() -> None:
         | LawnMowerEntityFeature.PAUSE
         | LawnMowerEntityFeature.START_MOWING
     )
+
+
+def test_the_mower_entity_is_polled() -> None:
+    # 2026-08-21: the mower finished a run, drove home and started charging
+    # without sending onChargeInfo, onChargeState, or even the bury-point task
+    # events it logs for itself — while onStats, onBattery, onPos and
+    # onMapTrack all kept arriving. The entity stayed "mowing" for two hours,
+    # and one homeassistant.update_entity corrected it in 200 ms. Push alone
+    # does not keep this entity honest.
+    #
+    # Asserted on an instance, not on the class: Home Assistant's cached
+    # properties turn ``_attr_should_poll`` into a property object, so reading
+    # it off the class compares a property to a bool and passes for the wrong
+    # reason.
+    from datetime import timedelta
+    from unittest.mock import MagicMock
+
+    from custom_components.ecovacs_mower.lawn_mower import SCAN_INTERVAL, EcovacsMower
+
+    device = MagicMock()
+    device.device_info = {"did": "did"}
+
+    assert EcovacsMower(device).should_poll is True
+    # Often enough that a dropped message is a nuisance rather than a wrong
+    # state all afternoon, rare enough to stay polite to Ecovacs' cloud.
+    assert timedelta(minutes=1) <= SCAN_INTERVAL <= timedelta(minutes=15)

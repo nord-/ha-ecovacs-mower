@@ -288,7 +288,9 @@ that shows whether the mower sends `onMI`/`onArI`/`onMapTrack`/
 
 The `lawn_mower` entity is confirmed working against a real O1200: state
 tracks the mower within seconds, and `start_mowing`, `pause`, and `dock` all
-do what they should. Its start command is also confirmed on an O800 RTK by
+do what they should. It is also the one entity here that polls, every five
+minutes: the mower does not always announce that it has finished and docked,
+and without a poll the entity keeps reporting the run it is no longer doing. Its start command is also confirmed on an O800 RTK by
 the user who reported that model.
 
 The `sensor`, `switch`, `number`, `button`, and `event` platforms listed above

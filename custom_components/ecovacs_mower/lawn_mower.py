@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 import logging
 from typing import override
 
@@ -22,6 +23,19 @@ from . import EcovacsMowerConfigEntry
 from .entity import EcovacsEntity
 
 _LOGGER = logging.getLogger(__name__)
+
+# The mower is not a reliable narrator of its own state. On 2026-08-21 it
+# finished a run, drove home and started charging without sending
+# onChargeInfo, onChargeState, or even the bury-point task events it logs for
+# itself — while onStats, onBattery, onPos and onMapTrack all kept arriving.
+# The entity stayed "mowing" for two hours; one homeassistant.update_entity
+# corrected it in 200 ms, over REST, so the answer was there the whole time
+# and nobody had asked for it.
+#
+# Five minutes: worst case the state is that stale, against two commands per
+# interval on Ecovacs' cloud API. Push still does the fast path — this only
+# catches what push drops.
+SCAN_INTERVAL = timedelta(minutes=5)
 
 # IDLE means "standing still", not "standing in the dock" — hence PAUSED.
 # Docking is reported separately via onChargeInfo with state "idle", which
@@ -54,6 +68,13 @@ async def async_setup_entry(
 
 class EcovacsMower(EcovacsEntity[Capabilities], LawnMowerEntity):
     """An Ecovacs GOAT lawn mower."""
+
+    # The base class does not poll, and every other platform here keeps it that
+    # way: their events either arrive or are genuinely unknown. This one is the
+    # exception because a wrong mower state drives automations. Its refresh
+    # publishes StateEvent on the bus, so the activity sensor is corrected by
+    # the same round trip rather than needing a poll of its own.
+    _attr_should_poll = True
 
     _attr_supported_features = (
         LawnMowerEntityFeature.DOCK
