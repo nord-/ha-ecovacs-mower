@@ -67,5 +67,5 @@ Failing fast is intentional: if `deebot-client` doesn't look like the patch laye
 - `strings.json` and `translations/en.json` must be **identical** — `test_translations.py` guards this, nothing syncs them automatically. Never create an `sv.json`; the HA frontend's language here is English.
 - Every translation key and `icons.json` key must belong to a real entity — the platform tests check both directions.
 - New hardware is supported by adding the device class to `SUPPORTED_CLASSES`. Unsupported MOWER classes log a warning with the class string; that's the string users are asked to report.
-- Version is bumped in `manifest.json`, and that bump is what publishes a release once it lands on `master` (see above). `deebot-client` is pinned there and in `requirements-test.txt` — keep them in sync.
+- Version is bumped in `manifest.json`, and that bump is what publishes a release once it lands on `master` (see above). The bump belongs in its own commit by the maintainer after the work has landed, never in a feature PR: `release.yml` tags whatever version it finds without checking that it is newer than the last tag, so two branches bumping in parallel publish releases out of order. `deebot-client` is pinned there and in `requirements-test.txt` — keep them in sync.
 - Conventional commits, no AI attribution.
