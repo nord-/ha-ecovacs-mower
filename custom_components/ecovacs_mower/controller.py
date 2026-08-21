@@ -166,7 +166,7 @@ class EcovacsController:
                 elif info.static.capabilities.device_type is DeviceType.MOWER:
                     # Warning: all 25 MOWER classes in deebot-client 18.5.1
                     # carry the same CleanV2/GetCleanInfoV2 bugs, but
-                    # SUPPORTED_CLASSES only covers the verified ones. Any other
+                    # SUPPORTED_CLASSES only covers the reported ones. Any other
                     # mower therefore gets an entity whose controls are dead and
                     # whose state lags — exactly the symptom this project exists
                     # to eliminate. That user should not have to read the debug

@@ -23,7 +23,9 @@ O800_ALT = "2px96q"
 G1_800 = "77atlz"
 
 
-def test_supported_classes_are_the_verified_ones() -> None:
+def test_supported_classes_are_the_ones_we_patch() -> None:
+    # Membership is "the patch layer covers this class", not "a human confirmed
+    # it on the hardware" — hardware.py's comment block records that per class.
     assert set(SUPPORTED_CLASSES) == {O1200, O800, O800_ALT, G1_800}
 
 

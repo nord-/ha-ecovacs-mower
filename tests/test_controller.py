@@ -202,7 +202,7 @@ def test_verification_reads_static_device_info() -> None:
 _OTHER_MOWER = "cr0e4u"
 # The T5PRO vacuum: a valid class, DeviceType.VACUUM, never becomes an entity.
 _VACUUM = "npwtuz"
-# The verified mower classes, spelled out rather than imported: importing
+# The patched mower classes, spelled out rather than imported: importing
 # deebot_patch at module level would pull in Home Assistant during collection,
 # which is exactly what this file's requires_ha marker exists to avoid.
 _SUPPORTED = ("2i0fns", "9bts2s", "2px96q", "77atlz")

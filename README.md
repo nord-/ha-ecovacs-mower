@@ -70,9 +70,11 @@ the corresponding patch in this repo becomes dead code and gets deleted.
 
 ## Hardware support
 
-Verified hardware:
+Device classes the integration patches. "Confirmed" means someone has run
+the mower on it and reported that controls, state and position work — not
+merely that the class string was seen:
 
-| Model | Device class | Verified by |
+| Model | Device class | Confirmed by |
 | --- | --- | --- |
 | **Ecovacs GOAT O1200 LiDAR Pro** | `2i0fns` | the author's own hardware |
 | **Ecovacs GOAT O800 RTK** | `9bts2s` | a user, firmware 1.13.8 ([#8](https://github.com/nord-/ha-ecovacs-mower/issues/8)) |
@@ -81,7 +83,7 @@ Verified hardware:
 
 Other GOAT models (A1600 RTK and the rest of the GOAT line) share the same
 three upstream defects described above, and would very likely work with the
-same fix. They are not verified, because nobody has reported back on one.
+same fix. They are not in the list above, because nobody has reported one.
 
 If you install this on an unsupported model, the integration will still
 load, but it will not patch that device's commands — meaning you'd be back
@@ -96,8 +98,10 @@ model at <issue tracker> so it can be added
 
 That device class string is exactly what to paste into a
 [new issue](https://github.com/nord-/ha-ecovacs-mower/issues). Adding a
-verified model to `SUPPORTED_CLASSES` is a small, low-risk change — this is
-one of the more useful ways to contribute without touching Python.
+reported model to `SUPPORTED_CLASSES` is a small, low-risk change — this is
+one of the more useful ways to contribute without touching Python. Saying
+afterwards whether it actually worked is what turns the row into a confirmed
+one.
 
 ## Installation
 
