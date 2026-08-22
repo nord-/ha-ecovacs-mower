@@ -87,8 +87,8 @@ async def patch_device_info(class_: str) -> None:
     #
     # Without it the event bus finds no command when the first binary sensor
     # subscribes, and the device only pushes onProtectState when a flag flips:
-    # rain protection that is simply left switched on never gets reported, so
-    # the entity reads "unknown" for good (issue #31).
+    # through a dry, uneventful spell nothing arrives at all, so the entities
+    # read "unknown" until the weather changes (issue #31).
     #
     # This has to stay below the replace() above and cannot move up: replace()
     # re-runs __post_init__, which rebuilds the mapping from the fields, and an

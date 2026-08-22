@@ -24,12 +24,11 @@ simply finished.
 unhandled, it is handled wrongly. See the class for what and why.
 
 ``onProtectState`` is a fourth unhandled message. It carries the mower's
-protection flags. Whether ``isRainProtect`` means "it is raining" or only
-"rain protection is switched on" is **not** established: the one captured
-sample has it at 1 while the settings message has ``RainDetect: 1``, which fits
-both readings. Nothing derives the mower's state from those flags for that
-reason — they are exposed raw, and the state's rain handling is built on
-``trigger`` instead, which needs no interpretation.
+protection flags. ``isRainProtect`` is the rain sensor's reading, not the
+rain-protection setting — see ``MowerProtectStateEvent`` for the two samples
+that establish it. Nothing derives the mower's *state* from those flags even
+so: they are exposed raw, and the state's rain handling is built on ``trigger``
+instead, which says why a run stopped and needs no interpretation.
 """
 
 from __future__ import annotations
@@ -182,13 +181,32 @@ class MowerProtectStateEvent(Event):
 
     The whole set arrives together and each value holds until the next message.
 
-    ``rain_protect`` keeps the wire field's own name on purpose. The single
-    captured sample has ``isRainProtect: 1`` two seconds before a rain-stopped
-    run, which reads like "it is raining" — but the settings message in the same
-    log has ``RainDetect: 1``, and ``isAnimProtect: 0`` likewise matches
-    ``ProtectAnimal.enable: 0``, so "this protection is switched on" fits the
-    data just as well. Calling the field ``raining`` would bake a guess into the
-    name; a sample from a dry period would settle it.
+    ``rain_protect`` keeps the wire field's own name on purpose: it is what the
+    payload calls the flag, and the field name should not editorialise. What
+    the flag *means* is settled, though. It is the rain sensor's reading, not
+    the rain-protection setting:
+
+        sample                                 setting        isRainProtect
+        two seconds before a rain-stopped run  RainDetect: 1  1
+        dry day, mower parked under cover      on in the app  0
+
+    The second sample is a ``getProtectState`` answer from firmware 1.13.10. A
+    flag that moves while the setting stands still is not the setting. That
+    same answer had ``isAnimProtect: 0`` with animal protection switched on,
+    which rules the setting reading out a second time and independently — it
+    was the match between ``isAnimProtect: 0`` and ``ProtectAnimal.enable: 0``
+    in the first sample that made the two readings look equally good.
+    ``binary_sensor.py`` gives ``rain_protect`` the ``moisture`` device class on
+    the strength of this.
+
+    ``rain_delay`` stays uninterpreted and carries no device class. The working
+    theory — **unconfirmed** — is that it covers the configured post-rain hold,
+    three hours on the verified hardware. It would explain why the device
+    reports the two separately at all: ``isRainProtect`` drops back to 0 as
+    soon as the sensor dries off in the dock, while the mower is still waiting
+    out its delay. Confirming it takes a rain event, where the flag should go
+    to 1 when the run breaks, outlast ``rain_protect``, and clear after the
+    configured delay rather than when the grass dries.
     """
 
     rain_protect: bool
@@ -221,8 +239,8 @@ class OnProtectState(MessageBodyDataDict):
         """Handle message->body->data.
 
         All five flags must be present. A partial payload is dropped instead of
-        defaulting the missing ones to False: claiming "no rain protection" or
-        "no emergency stop" from a message that never said so is worse than
+        defaulting the missing ones to False: claiming "the rain sensor is dry"
+        or "no emergency stop" from a message that never said so is worse than
         keeping the previous value, which is what the entities do when nothing
         arrives.
         """

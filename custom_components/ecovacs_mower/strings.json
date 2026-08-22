@@ -54,7 +54,7 @@
       "emergency_stop": { "name": "Emergency stop" },
       "locked": { "name": "Locked" },
       "rain_delay": { "name": "Rain delay" },
-      "rain_protect": { "name": "Rain protection" }
+      "rain_protect": { "name": "Rain sensor" }
     },
     "button": {
       "play_sound": { "name": "Locate mower" },

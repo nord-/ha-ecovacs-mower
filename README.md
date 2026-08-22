@@ -162,7 +162,7 @@ Thirty-seven entities on the mower's device page, across eight platforms:
 |---|---|---|
 | `lawn_mower` | 1 | Real state (`mowing`, `paused`, `returning`, `docked`, `error`) that updates within seconds, plus working `start_mowing`, `pause`, and `dock` |
 | `sensor` | 15 | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowed area, mowing time, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name |
-| `binary_sensor` | 5 | Rain protection, rain delay, emergency stop, locked, animal protection — the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
+| `binary_sensor` | 5 | Rain sensor, rain delay, emergency stop, locked, animal protection — the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
 | `switch` | 7 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
 | `number` | 2 | Notification volume, cutting direction |
 | `button` | 5 | Reset each of the four consumable lifespans, plus "Locate mower" (plays a sound on the device) |
@@ -201,20 +201,40 @@ until the mower actually cuts grass again — otherwise it would be discarded at
 the exact moment you want to read it.
 
 The five `binary_sensor` entities are the raw flags from `onProtectState`, one
-per flag, with no interpretation on top. In particular `rain_protect`
-(`isRainProtect`) is **not** presented as a live rain reading: in the one
-payload captured so far it is `1`, but the settings message in the same log has
-`RainDetect: 1` and `isAnimProtect: 0` likewise matches `ProtectAnimal.enable:
-0` — so "this protection is switched on" fits the data as well as "it is
-raining right now". A sample from a dry period settles it:
+per flag, with no interpretation on top.
+
+`rain_protect` (`isRainProtect`) is the exception: it is presented as a live
+rain reading, named **Rain sensor** and given the `moisture` device class, so it
+reads Wet/Dry. Two samples settle what one could not, with the mower's rain
+protection switched on in both:
+
+| sample | setting | `isRainProtect` |
+| --- | --- | --- |
+| two seconds before a rain-stopped run | `RainDetect: 1` | `1` |
+| dry day, mower parked under cover | on in the app | `0` |
+
+A flag that moves while the setting stands still is not the setting. The second
+sample — a `getProtectState` answer from firmware 1.13.10 — also had
+`isAnimProtect: 0` with animal protection switched on, which rules the
+"protection is enabled" reading out a second time and independently.
+
+`rain_delay` is deliberately left alone: no device class, no rename. The
+working theory is that it covers the configured post-rain hold (three hours on
+the verified hardware), which would explain why the device reports it
+separately from the sensor — `isRainProtect` drops back to `0` as soon as the
+sensor dries off in the dock, while the mower is still waiting. That is
+**unconfirmed**. Confirming it takes a rain event:
 
 ```
-grep onProtectState home-assistant.log | tail -1
+grep onProtectState home-assistant.log | tail -5
 ```
 
-If `isRainProtect` is `0` while the mower is out mowing, the flag is a live
-state and the entity can be renamed and given the `moisture` device class. Until
-then the rain-aware states come from `trigger`, which needs no interpretation.
+`isRainDelay` should go to `1` when the run breaks, stay `1` after
+`isRainProtect` has fallen back to `0`, and clear after the configured delay
+rather than when the grass dries.
+
+The mower's own rain-aware *states* still come from `trigger`, not from these
+flags, which needs no interpretation either way.
 
 All five `binary_sensor` flags are asked for with `getProtectState` when Home
 Assistant starts, and updated from the `onProtectState` push after that. The

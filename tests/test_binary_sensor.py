@@ -69,15 +69,26 @@ def test_value_fn_reads_the_matching_flag() -> None:
         assert description.value_fn(all_false) is False, description.key
 
 
-def test_no_device_classes() -> None:
-    """A device class would rename the states and claim more than we know.
+def test_rain_protect_is_the_only_moisture_flag() -> None:
+    """``rain_protect`` reports wet or dry, so it says so; the rest do not.
 
-    ``moisture`` on ``rain_protect`` would present it as "Wet"/"Dry", i.e. as a
-    live rain reading — the very thing one captured sample cannot establish.
+    Two samples, with the mower's rain protection switched on in both, settle
+    what one sample could not: ``isRainProtect`` was 1 two seconds before a
+    rain-stopped run, and 0 on a dry day with the mower under cover (the
+    ``getProtectState`` answer from firmware 1.13.10). A flag that moves while
+    the setting stands still is not the setting.
+
+    ``rain_delay`` deliberately stays classless: it is the hold period the
+    mower waits out after rain, not a moisture reading. See
+    ``MowerProtectStateEvent``.
     """
+    from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+
     from custom_components.ecovacs_mower.binary_sensor import ENTITY_DESCRIPTIONS
 
-    assert all(d.device_class is None for d in ENTITY_DESCRIPTIONS)
+    classes = {d.key: d.device_class for d in ENTITY_DESCRIPTIONS}
+    assert classes.pop("rain_protect") is BinarySensorDeviceClass.MOISTURE
+    assert set(classes.values()) == {None}
 
 
 def test_rain_is_the_only_non_diagnostic_pair() -> None:

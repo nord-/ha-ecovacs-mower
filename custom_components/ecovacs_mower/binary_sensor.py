@@ -5,18 +5,19 @@ come from ``onProtectState``, one of the unsolicited messages the library has no
 handler for either (see ``deebot_patch.messages``).
 
 These are the device's raw flags and nothing derives the mower's state from
-them: whether ``isRainProtect`` reports rain or only that rain protection is
-enabled is unsettled, and ``deebot_patch.messages`` documents why. The
-rain-aware states on ``sensor.<device>_activity`` come from the ``trigger``
-field instead.
+them; the rain-aware states on ``sensor.<device>_activity`` come from the
+``trigger`` field instead. ``isRainProtect`` is the rain sensor's own reading —
+wet or dry, and not whether rain protection is switched on — which is why
+``rain_protect`` is the one flag here that carries a device class.
+``deebot_patch.messages`` has the evidence.
 
 These entities are refreshed by ``GetProtectState``, which
 ``deebot_patch.hardware`` wires to ``MowerProtectStateEvent`` because the
 library's ``Capabilities`` has no field for the flags. The event bus asks for it
 when the first of these entities subscribes, so the flags have a value from
 startup instead of waiting for the device to push a change — which it only does
-when one flips, and rain protection that is simply left switched on never flips
-(issue #31).
+when a flag flips, so a dry spell with nothing else happening produces no push
+at all (issue #31).
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from typing import override
 from deebot_client.capabilities import Capabilities, DeviceType
 
 from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
@@ -53,14 +55,19 @@ class EcovacsProtectStateBinarySensorEntityDescription(BinarySensorEntityDescrip
 
 
 ENTITY_DESCRIPTIONS: tuple[EcovacsProtectStateBinarySensorEntityDescription, ...] = (
-    # No device class on purpose. BinarySensorDeviceClass.MOISTURE would make
-    # this read "Wet"/"Dry", which claims the flag means "it is raining right
-    # now" — and that is exactly what the single captured sample cannot show
-    # (see MowerProtectStateEvent). "On"/"Off" for a flag named "Rain
-    # protection" over-promises nothing.
+    # MOISTURE reads "Wet"/"Dry", which is what this flag reports: it is the
+    # rain sensor, not the rain-protection setting. Two samples with the
+    # setting switched on in both settle it — 1 two seconds before a
+    # rain-stopped run, 0 on a dry day with the mower parked under cover. See
+    # MowerProtectStateEvent for the full evidence.
+    #
+    # The key stays "rain_protect" although the display name no longer says
+    # that: unique_id is built from it (entity.py), so renaming the key would
+    # orphan every existing entity and its history for a cosmetic gain.
     EcovacsProtectStateBinarySensorEntityDescription(
         key="rain_protect",
         translation_key="rain_protect",
+        device_class=BinarySensorDeviceClass.MOISTURE,
         value_fn=lambda e: e.rain_protect,
     ),
     EcovacsProtectStateBinarySensorEntityDescription(
