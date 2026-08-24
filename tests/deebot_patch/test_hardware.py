@@ -27,13 +27,26 @@ O800_ALT = "2px96q"
 G1_800 = "77atlz"
 # A fourth class string with the same capabilities, confirmed as a GOAT A1600
 # LiDAR Pro (PR #29); upstream's docstring calls it A3000 LiDAR Pro instead.
-A1600 = "e4gqia"
+A1600_LIDAR = "e4gqia"
+# A fifth, reported as a GOAT A1600 RTK (issue #43) — a different machine from
+# the LiDAR Pro, not another string for it. Named _LIDAR/_RTK rather than a
+# bare A1600 so the two cannot be mistaken for each other. Upstream's module is
+# byte-identical to 9bts2s.py apart from the docstring, which names the model
+# outright.
+A1600_RTK = "xmp9ds"
 
 
 def test_supported_classes_are_the_ones_we_patch() -> None:
     # Membership is "the patch layer covers this class", not "a human confirmed
     # it on the hardware" — hardware.py's comment block records that per class.
-    assert set(SUPPORTED_CLASSES) == {O1200, O800, O800_ALT, G1_800, A1600}
+    assert set(SUPPORTED_CLASSES) == {
+        O1200,
+        O800,
+        O800_ALT,
+        G1_800,
+        A1600_LIDAR,
+        A1600_RTK,
+    }
 
 
 @pytest.fixture(autouse=True)

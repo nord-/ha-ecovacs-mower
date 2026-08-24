@@ -81,11 +81,15 @@ merely that the class string was seen:
 | **Ecovacs GOAT O800 RTK** | `2px96q` | a user ([#24](https://github.com/nord-/ha-ecovacs-mower/issues/24)) |
 | **Ecovacs GOAT G1-800** | `77atlz` | reported, patch not yet confirmed — firmware 1.36.208 ([#30](https://github.com/nord-/ha-ecovacs-mower/issues/30)) |
 | **Ecovacs GOAT A1600 LiDAR Pro** | `e4gqia` | a user, firmware 1.11.31 ([#29](https://github.com/nord-/ha-ecovacs-mower/pull/29)) |
+| **Ecovacs GOAT A1600 RTK** | `xmp9ds` | reported, patch not yet confirmed — firmware 1.17.9 ([#43](https://github.com/nord-/ha-ecovacs-mower/issues/43)) |
 
-Other GOAT models (the A1600 RTK — a different device class from the LiDAR
-Pro above — and the rest of the GOAT line) share the same three upstream
-defects described above, and would very likely work with the same fix. They
-are not in the list above, because nobody has reported one.
+The A1600 ships as two machines, and they report different device classes:
+the LiDAR Pro is `e4gqia`, the RTK is `xmp9ds`. Both rows above are real, and
+neither is a second class string for the other.
+
+The rest of the GOAT line shares the same three upstream defects described
+above, and would very likely work with the same fix. Those models are not in
+the list, because nobody has reported one.
 
 If you install this on an unsupported model, the integration will still
 load, but it will not patch that device's commands — meaning you'd be back

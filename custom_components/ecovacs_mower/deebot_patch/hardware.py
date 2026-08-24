@@ -38,7 +38,14 @@ _LOGGER = logging.getLogger(__name__)
 #            Upstream names this A3000 LiDAR Pro; its module is byte-identical
 #            to 9bts2s.py apart from the docstring, so the O800's patch
 #            applies unchanged.
-SUPPORTED_CLASSES = ("2i0fns", "9bts2s", "2px96q", "77atlz", "e4gqia")
+#   xmp9ds — GOAT A1600 RTK (reported in issue #43, firmware 1.17.9 — the
+#            reporter has not confirmed the patch yet). A different machine
+#            from e4gqia above, not a second class string for it: the RTK and
+#            LiDAR Pro variants of the A1600 ship separately. Upstream's
+#            xmp9ds.py is byte-identical to 9bts2s.py apart from the docstring,
+#            which here names the model outright ("DEEBOT GOAT A1600 RTK
+#            Capabilities"), so the O800 RTK's patch applies unchanged.
+SUPPORTED_CLASSES = ("2i0fns", "9bts2s", "2px96q", "77atlz", "e4gqia", "xmp9ds")
 
 
 async def patch_device_info(class_: str) -> None:
