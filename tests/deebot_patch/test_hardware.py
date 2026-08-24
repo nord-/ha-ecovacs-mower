@@ -21,7 +21,7 @@ O800 = "9bts2s"
 # Second class string for the same O800 RTK hardware; upstream's module is
 # byte-identical to 9bts2s.py.
 O800_ALT = "2px96q"
-# A third class string with the same capabilities, reported as a GOAT G1-800
+# A third class string with the same capabilities, verified on a GOAT G1-800
 # (issue #30); upstream's module is byte-identical to 9bts2s.py, docstring
 # included.
 G1_800 = "77atlz"

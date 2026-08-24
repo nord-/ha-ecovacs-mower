@@ -79,7 +79,7 @@ merely that the class string was seen:
 | **Ecovacs GOAT O1200 LiDAR Pro** | `2i0fns` | the author's own hardware |
 | **Ecovacs GOAT O800 RTK** | `9bts2s` | a user, firmware 1.13.8 ([#8](https://github.com/nord-/ha-ecovacs-mower/issues/8)) |
 | **Ecovacs GOAT O800 RTK** | `2px96q` | a user ([#24](https://github.com/nord-/ha-ecovacs-mower/issues/24)) |
-| **Ecovacs GOAT G1-800** | `77atlz` | reported, patch not yet confirmed — firmware 1.36.208 ([#30](https://github.com/nord-/ha-ecovacs-mower/issues/30)) |
+| **Ecovacs GOAT G1-800** | `77atlz` | a user, firmware 1.36.208 ([#30](https://github.com/nord-/ha-ecovacs-mower/issues/30)) |
 | **Ecovacs GOAT A1600 LiDAR Pro** | `e4gqia` | a user, firmware 1.11.31 ([#29](https://github.com/nord-/ha-ecovacs-mower/pull/29)) |
 | **Ecovacs GOAT A1600 RTK** | `xmp9ds` | reported, patch not yet confirmed — firmware 1.17.9 ([#43](https://github.com/nord-/ha-ecovacs-mower/issues/43)) |
 
