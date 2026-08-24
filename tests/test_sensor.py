@@ -410,3 +410,34 @@ def test_duration_sensors_are_displayed_in_a_unit_the_frontend_expands() -> None
             UnitOfTime.HOURS,
             UnitOfTime.DAYS,
         ), description.key
+
+
+def test_error_description_prefers_the_library_and_fills_its_gaps(caplog) -> None:
+    """The library's text wins; ours only covers what it has no entry for."""
+    from deebot_client.const import ERROR_CODES
+
+    from custom_components.ecovacs_mower.sensor import (
+        _MOWER_ERROR_CODES,
+        _UNKNOWN_CODES_REPORTED,
+        _error_description,
+    )
+
+    # A code the library knows keeps the library's wording, even if this table
+    # were ever to grow an entry for it.
+    assert _error_description(101, ERROR_CODES[101]) == ERROR_CODES[101]
+
+    # No overlap: an entry here that the library also has is a disagreement
+    # nobody would notice, since the branch above means it is never read.
+    assert not set(_MOWER_ERROR_CODES) & set(ERROR_CODES)
+
+    assert _error_description(422, None) == _MOWER_ERROR_CODES[422]
+
+    _UNKNOWN_CODES_REPORTED.discard(9999)
+    assert _error_description(9999, None) is None
+    assert "9999" in caplog.text
+    assert "issues/37" in caplog.text
+
+    # Asked once, not on every push for as long as the condition lasts.
+    caplog.clear()
+    assert _error_description(9999, None) is None
+    assert not caplog.text

@@ -296,6 +296,25 @@ above. This is the one entity in this list someone is likely to go
 looking for by name, so it's worth repeating here rather than only in the
 table.
 
+### Error codes without a description
+
+The error sensor's state is the raw code; its `description` attribute is the
+text for it. That text comes from `deebot-client`, whose table predates the
+mower line, so a GOAT-only code arrives with no description at all
+([#37](https://github.com/nord-/ha-ecovacs-mower/issues/37)). The integration
+fills the gaps it knows about:
+
+| Code | Description | Ecovacs app also suggests |
+|---|---|---|
+| 422 | Weak signal. Return to the station. | clean the panoramic camera, the AI front camera and the ToF sensor; mow in daylight, not in heavy rain |
+
+A code in neither table leaves the attribute empty and logs a warning naming
+the code, once per code per restart. **That warning is the ask:** report the
+code together with what the Ecovacs app shows for the same alarm in
+[#37](https://github.com/nord-/ha-ecovacs-mower/issues/37), and it can be
+added here. The app is the only authoritative source — Ecovacs publishes no
+code reference for GOAT.
+
 ## Collecting logs
 
 The **Show logs** button on the integration page filters Home Assistant's log
