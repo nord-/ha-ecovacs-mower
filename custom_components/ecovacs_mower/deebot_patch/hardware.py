@@ -34,9 +34,10 @@ _LOGGER = logging.getLogger(__name__)
 #            byte-identical to 9bts2s.py, docstring included, so the O800 RTK's
 #            patch applies unchanged — but only the protection-flag sensors
 #            were ever confirmed on this model, and issue #42 reports that
-#            start, pause and dock all do nothing. Its firmware is on a
-#            different branch than the 1.13.x every other verified model runs,
-#            so the patch that fits those may not fit this one.
+#            start, pause and dock all do nothing. Its firmware (1.36.208) is
+#            on a different branch than 9bts2s's 1.13.8, the data point the
+#            1.13.x quirks were established from, so the patch that fits that
+#            one may not fit this one.
 #   e4gqia — GOAT A1600 LiDAR Pro (confirmed, PR #29, firmware 1.11.31).
 #            Upstream names this A3000 LiDAR Pro; its module is byte-identical
 #            to 9bts2s.py apart from the docstring, so the O800's patch
