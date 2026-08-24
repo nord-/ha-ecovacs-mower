@@ -29,12 +29,14 @@ _LOGGER = logging.getLogger(__name__)
 #   2px96q — GOAT O800 RTK (user-verified, issue #24). A second class string
 #            for the same hardware: upstream's 2px96q.py is byte-identical to
 #            9bts2s.py.
-#   77atlz — GOAT G1-800 (user-verified, issue #30, firmware 1.36.208).
-#            Upstream's 77atlz.py is byte-identical to 9bts2s.py, docstring
-#            included, so the O800 RTK's patch applies unchanged. Its firmware
-#            is on a different branch than the 1.13.x every other verified
-#            model runs, and it behaves the same — the one data point we have
-#            that the 1.13.x quirks are not the whole story.
+#   77atlz — GOAT G1-800 (added on a class-string report, issue #30, firmware
+#            1.36.208; controls not confirmed). Upstream's 77atlz.py is
+#            byte-identical to 9bts2s.py, docstring included, so the O800 RTK's
+#            patch applies unchanged — but only the protection-flag sensors
+#            were ever confirmed on this model, and issue #42 reports that
+#            start, pause and dock all do nothing. Its firmware is on a
+#            different branch than the 1.13.x every other verified model runs,
+#            so the patch that fits those may not fit this one.
 #   e4gqia — GOAT A1600 LiDAR Pro (confirmed, PR #29, firmware 1.11.31).
 #            Upstream names this A3000 LiDAR Pro; its module is byte-identical
 #            to 9bts2s.py apart from the docstring, so the O800's patch
