@@ -8,6 +8,7 @@ from deebot_client.hardware import _DEVICES, get_static_device_info
 
 from custom_components.ecovacs_mower.deebot_patch.commands import (
     CleanMower,
+    GetCleanInfoMower,
     GetProtectState,
 )
 from custom_components.ecovacs_mower.deebot_patch.hardware import (
@@ -95,15 +96,17 @@ async def test_patch_swaps_in_clean_mower(class_: str) -> None:
 
 
 @pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
-async def test_patch_swaps_clean_info_v2_for_clean_info(class_: str) -> None:
+async def test_patch_swaps_clean_info_v2_for_the_mower_variant(class_: str) -> None:
     await patch_device_info(class_)
     info = await get_static_device_info(class_)
     commands = info.capabilities.get_refresh_commands(StateEvent)
     # Exact type, not isinstance: GetCleanInfoV2 inherits from GetCleanInfo, so
     # isinstance() would pass even without the patch and the test would be
     # meaningless.
-    assert any(type(c) is GetCleanInfo for c in commands)
+    assert any(type(c) is GetCleanInfoMower for c in commands)
     assert not any(type(c) is GetCleanInfoV2 for c in commands)
+    # Nor the library's own: it is answered, but with a constant idle (#48).
+    assert not any(type(c) is GetCleanInfo for c in commands)
     assert any(type(c) is GetChargeState for c in commands)
 
 

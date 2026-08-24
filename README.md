@@ -12,23 +12,25 @@ start/pause do nothing, this is likely why:
 
 Home Assistant's built-in `ecovacs` integration talks to Deebot vacuums and
 GOAT mowers through the same library, `deebot-client`. For GOAT mowers,
-four independent bugs in that path add up to a mower that can't be
+five independent bugs in that path add up to a mower that can't be
 controlled and barely reports its own state:
 
 | Defect | Effect |
 |---|---|
 | Control commands are sent to the MQTT topic `iot/p2p/clean_V2` | GOAT firmware listens on `iot/p2p/clean` and ignores `clean_V2` entirely. `start_mowing` and `pause` do nothing. |
 | State refresh uses the command `getCleanInfo_V2` | GOAT mowers never answer it. Polled state refreshes silently fail. |
+| Plain `getCleanInfo` is answered — with `idle`, always | Every state refresh replaces the real state with `idle`, which the library reads as "standing still". A mower that is out cutting reports `mowing` for a minute or two after it starts and `paused` for the hours that follow. |
 | The unsolicited messages `onChargeInfo` and `onScheduleTaskInfo` have no handler | They're dropped as unknown messages. In practice this means the mower's state in Home Assistant only updates once a day, when it happens to reconnect and get polled. |
 | Every login goes through the password endpoint, which answers `1013` for some accounts even after the device was verified | The config entry loops on "Device verification required": the emailed code is accepted, the reload logs in with the password, is refused, and another code is requested. The integration never finishes setting up. |
 
 Net effect on the upstream integration: state lags by close to a day, and
 the controls that are supposed to fix that don't work either.
 
-This integration patches all four at the protocol layer (correct command,
-correct refresh call, handlers for both missing messages, and a session renewal
-that does not touch the password endpoint) and exposes a `lawn_mower` entity
-that reflects real state within seconds and responds to start / pause / dock.
+This integration patches all five at the protocol layer (correct command, a
+refresh call that is both answered and believed, handlers for both missing
+messages, and a session renewal that does not touch the password endpoint) and
+exposes a `lawn_mower` entity that reflects real state within seconds and
+responds to start / pause / dock.
 
 ## Why a separate integration, instead of a fix upstream
 

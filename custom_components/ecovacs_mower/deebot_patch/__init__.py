@@ -12,13 +12,12 @@ import logging
 from typing import NoReturn
 
 from deebot_client.capabilities import Capabilities
-from deebot_client.commands.json.clean import GetCleanInfo
 from deebot_client.events import StateEvent
 from deebot_client.hardware import _DEVICES
 from deebot_client.messages.json import MESSAGES
 
 from .authentication import AccountAuthenticator
-from .commands import CleanMower
+from .commands import CleanMower, GetCleanInfoMower
 from .hardware import SUPPORTED_CLASSES, patch_device_info
 from .map_messages import OnArI, OnMapTrack, OnMI, OnSpecialContour
 from .messages import OnChargeInfo, OnPos, OnProtectState, OnScheduleTaskInfo
@@ -27,6 +26,7 @@ __all__ = [
     "SUPPORTED_CLASSES",
     "AccountAuthenticator",
     "CleanMower",
+    "GetCleanInfoMower",
     "PatchContractError",
     "apply",
     "patch_device_info",
@@ -90,9 +90,9 @@ def verify_capabilities(capabilities: Capabilities, class_: str) -> None:
             f"instead of CleanMower — the patch ran too late"
         )
 
-    # Exact type comparison, not isinstance: GetCleanInfoV2 inherits from
-    # GetCleanInfo, so isinstance() would accept exactly the unpatched set we
-    # want to catch. The check would be toothless.
+    # Exact type comparison, not isinstance: both GetCleanInfoV2 and our own
+    # GetCleanInfoMower inherit from GetCleanInfo, so isinstance() would accept
+    # exactly the unpatched set we want to catch. The check would be toothless.
     commands = capabilities.get_refresh_commands(StateEvent)
-    if not any(type(c) is GetCleanInfo for c in commands):
-        _fail(f"GetCleanInfo is missing from the state commands for {class_}")
+    if not any(type(c) is GetCleanInfoMower for c in commands):
+        _fail(f"GetCleanInfoMower is missing from the state commands for {class_}")

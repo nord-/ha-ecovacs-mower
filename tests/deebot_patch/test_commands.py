@@ -2,11 +2,15 @@
 
 from unittest.mock import Mock, call
 
-from deebot_client.commands.json.clean import Clean, CleanV2
-from deebot_client.models import CleanAction
+from deebot_client.message import HandlingState
+
+from deebot_client.commands.json.clean import Clean, CleanV2, GetCleanInfo
+from deebot_client.events import StateEvent
+from deebot_client.models import CleanAction, State
 
 from custom_components.ecovacs_mower.deebot_patch.commands import (
     CleanMower,
+    GetCleanInfoMower,
     GetProtectState,
 )
 from custom_components.ecovacs_mower.deebot_patch.messages import (
@@ -94,3 +98,61 @@ def test_get_protect_state_notifies_the_protection_flags() -> None:
             )
         )
     ]
+
+
+def test_the_mower_variant_asks_the_same_command() -> None:
+    # Issue #48. Only one answer is ignored; the request is unchanged, and the
+    # V2 name is still the one GOAT does not answer at all.
+    assert GetCleanInfoMower.NAME == GetCleanInfo.NAME == "getCleanInfo"
+
+
+def test_a_polled_idle_notifies_nothing() -> None:
+    """The answer that made the poll overwrite the truth every five minutes.
+
+    Every one of the 74 polls during the run on 2026-08-24 answered exactly
+    this, while the mower was cutting.
+    """
+    event_bus = Mock()
+    result = GetCleanInfoMower._handle_body_data_dict(event_bus, {"state": "idle"})
+
+    event_bus.notify.assert_not_called()
+    # success(), not analyse(): the payload parsed, there was nothing to say.
+    assert result.state is HandlingState.SUCCESS
+
+
+def test_the_librarys_own_command_still_believes_an_idle() -> None:
+    """Documents both the bug and the fix's blast radius.
+
+    An idle *push* keeps its meaning: onCleanInfo resolves to the library's own
+    GetCleanInfo through get_legacy_message(), which the patch does not touch.
+    """
+    event_bus = Mock()
+    GetCleanInfo._handle_body_data_dict(event_bus, {"state": "idle"})
+
+    assert event_bus.notify.call_args_list == [call(StateEvent(State.IDLE))]
+
+
+def test_a_working_answer_is_still_believed() -> None:
+    event_bus = Mock()
+    GetCleanInfoMower._handle_body_data_dict(
+        event_bus, {"state": "clean", "cleanState": {"motionState": "working"}}
+    )
+
+    assert event_bus.notify.call_args_list == [call(StateEvent(State.CLEANING))]
+
+
+def test_a_go_charging_answer_is_still_believed() -> None:
+    event_bus = Mock()
+    GetCleanInfoMower._handle_body_data_dict(event_bus, {"state": "goCharging"})
+
+    assert event_bus.notify.call_args_list == [call(StateEvent(State.RETURNING))]
+
+
+def test_an_alert_wins_over_the_dropped_idle() -> None:
+    """An error is not something to swallow because idle came along with it."""
+    event_bus = Mock()
+    GetCleanInfoMower._handle_body_data_dict(
+        event_bus, {"state": "idle", "trigger": "alert"}
+    )
+
+    assert event_bus.notify.call_args_list == [call(StateEvent(State.ERROR))]

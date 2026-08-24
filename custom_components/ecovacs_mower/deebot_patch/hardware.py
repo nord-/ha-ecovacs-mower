@@ -14,11 +14,10 @@ from types import MappingProxyType
 
 from deebot_client.capabilities import CapabilityEvent
 from deebot_client.commands.json.charge_state import GetChargeState
-from deebot_client.commands.json.clean import GetCleanInfo
 from deebot_client.events import StateEvent
 from deebot_client.hardware import _DEVICES, get_static_device_info
 
-from .commands import CleanMower, GetProtectState
+from .commands import CleanMower, GetCleanInfoMower, GetProtectState
 from .messages import MowerProtectStateEvent
 
 _LOGGER = logging.getLogger(__name__)
@@ -56,8 +55,10 @@ async def patch_device_info(class_: str) -> None:
 
     * ``clean.action.command``: ``CleanV2`` publishes on ``clean_V2``, which
       GOAT firmware ignores. Swapped for ``CleanMower`` on ``clean``.
-    * ``state``: ``GetCleanInfoV2`` is not answered by GOAT. Swapped for
-      ``GetCleanInfo``.
+    * ``state``: ``GetCleanInfoV2`` is not answered by GOAT, and plain
+      ``GetCleanInfo`` is answered with a constant ``idle``. Swapped for
+      ``GetCleanInfoMower``, which sends the same command and ignores that one
+      answer.
     * ``MowerProtectStateEvent``: given the refresh command it had none of.
 
     The call is idempotent and does nothing for classes outside
@@ -89,7 +90,7 @@ async def patch_device_info(class_: str) -> None:
             capabilities.clean,
             action=replace(capabilities.clean.action, command=CleanMower),
         ),
-        state=CapabilityEvent(StateEvent, [GetChargeState(), GetCleanInfo()]),
+        state=CapabilityEvent(StateEvent, [GetChargeState(), GetCleanInfoMower()]),
     )
     # The protection flags are not a library capability, so there is no field
     # to hang a CapabilityEvent on and nothing to hand dataclasses.replace.
