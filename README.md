@@ -205,18 +205,31 @@ per flag, with no interpretation on top.
 
 `rain_protect` (`isRainProtect`) is the exception: it is presented as a live
 rain reading, named **Rain sensor** and given the `moisture` device class, so it
-reads Wet/Dry. Two samples settle what one could not, with the mower's rain
-protection switched on in both:
+reads Wet/Dry. Two samples rule out the reading one could not, with the mower's
+rain protection switched on in both:
 
 | sample | setting | `isRainProtect` |
 | --- | --- | --- |
-| two seconds before a rain-stopped run | `RainDetect: 1` | `1` |
+| two seconds before a rain-stopped run | `RainDetect: 1` *(settings message)* | `1` |
 | dry day, mower parked under cover | on in the app | `0` |
 
 A flag that moves while the setting stands still is not the setting. The second
 sample — a `getProtectState` answer from firmware 1.13.10 — also had
 `isAnimProtect: 0` with animal protection switched on, which rules the
-"protection is enabled" reading out a second time and independently.
+"protection is enabled" reading out a second time — on a sibling flag rather
+than this one, so it leans on the five flags being the same kind of thing.
+
+That second witness cuts both ways: it means `animal_protect` is not the
+animal-protection setting either, so the entity still named **Animal
+protection** is named for something it is not. It is left alone because no
+positive reading is established — one sample cannot separate "an animal is
+detected" from "the mower is holding for an animal" — and a name that is
+merely imprecise beats one that is confidently wrong (issue #45).
+
+What the samples do *not* separate is a wet sensor from a mower currently held
+for rain: both read `1` two seconds before a rain-stopped run and `0` on a dry
+day under cover. `moisture` fits either way, and telling them apart needs the
+same rain event `rain_delay` needs, below.
 
 `rain_delay` is deliberately left alone: no device class, no rename. The
 working theory is that it covers the configured post-rain hold (three hours on
@@ -233,14 +246,20 @@ grep onProtectState home-assistant.log | tail -5
 `isRainProtect` has fallen back to `0`, and clear after the configured delay
 rather than when the grass dries.
 
-The mower's own rain-aware *states* still come from `trigger`, not from these
-flags, which needs no interpretation either way.
+The mower's own rain-aware *states* still come from `trigger`, which needs no
+interpretation, not from these flags.
+
+Note that the display name feeds the entity id at first registration only:
+installs that predate the **Rain sensor** rename keep
+`binary_sensor.<device>_rain_protection`, while fresh ones get
+`binary_sensor.<device>_rain_sensor`. Nothing breaks, but an automation snippet
+naming this entity is install-dependent.
 
 All five `binary_sensor` flags are asked for with `getProtectState` when Home
 Assistant starts, and updated from the `onProtectState` push after that. The
 device only pushes when a flag flips, so before that command was wired up
-(issue #31) the flags stayed `unknown` for anyone whose protection settings
-simply stayed as they were.
+(issue #31) the flags stayed `unknown` through any dry, uneventful spell — and
+from every restart.
 
 The rain *reason* on `sensor.activity` is not restored by a restart, though — it
 comes from `trigger`, which nothing can ask for, so a restart during an active

@@ -42,8 +42,8 @@ class GetProtectState(JsonCommandWithMessageHandling, OnProtectState):
 
     The device sends ``onProtectState`` when a flag flips and never otherwise,
     so before this the five ``binary_sensor`` entities read "unknown" from
-    startup until the weather or the mower next did something — which through a
-    dry, uneventful spell is a very long time (issue #31).
+    startup until the weather or the mower next changed something — which
+    through a dry, uneventful spell is a very long time (issue #31).
 
     ``OnProtectState`` is inherited for its handler: the answer to
     ``getProtectState`` carries the same payload as the push, so both entry

@@ -182,22 +182,32 @@ class MowerProtectStateEvent(Event):
     The whole set arrives together and each value holds until the next message.
 
     ``rain_protect`` keeps the wire field's own name on purpose: it is what the
-    payload calls the flag, and the field name should not editorialise. What
-    the flag *means* is settled, though. It is the rain sensor's reading, not
-    the rain-protection setting:
+    payload calls the flag, and the field name should not editorialise. The
+    rain-protection *setting* reading is ruled out, though; what survives is
+    the sensor's own reading:
 
-        sample                                 setting        isRainProtect
-        two seconds before a rain-stopped run  RainDetect: 1  1
-        dry day, mower parked under cover      on in the app  0
+        sample                                 setting                   isRainProtect
+        two seconds before a rain-stopped run  RainDetect: 1 (settings)  1
+        dry day, mower parked under cover      on in the app             0
 
-    The second sample is a ``getProtectState`` answer from firmware 1.13.10. A
-    flag that moves while the setting stands still is not the setting. That
-    same answer had ``isAnimProtect: 0`` with animal protection switched on,
-    which rules the setting reading out a second time and independently — it
-    was the match between ``isAnimProtect: 0`` and ``ProtectAnimal.enable: 0``
-    in the first sample that made the two readings look equally good.
-    ``binary_sensor.py`` gives ``rain_protect`` the ``moisture`` device class on
-    the strength of this.
+    The second sample is a ``getProtectState`` answer from firmware 1.13.10;
+    the first row's ``RainDetect: 1`` is read off the settings message in the
+    same log, not off a live field. A flag that moves while the setting stands
+    still is not the setting. That same answer had ``isAnimProtect: 0`` with
+    animal protection switched on, which rules the setting reading out a
+    second time — on a sibling flag rather than this one, so it leans on the
+    five flags being the same kind of thing — and it was the match between
+    ``isAnimProtect: 0`` and ``ProtectAnimal.enable: 0`` in the first sample
+    that had made the two readings look equally good. ``binary_sensor.py``
+    gives ``rain_protect`` the ``moisture`` device class on the strength of
+    this.
+
+    What the samples do *not* separate is "the rain sensor is wet" from "the
+    mower is currently held for rain": both are 1 two seconds before a
+    rain-stopped run and 0 on a dry day under cover. ``moisture`` is the right
+    class either way — in practice the two coincide, and no class fits the
+    second reading better — but telling them apart needs the same rain event
+    ``rain_delay`` needs, below.
 
     ``rain_delay`` stays uninterpreted and carries no device class. The working
     theory — **unconfirmed** — is that it covers the configured post-rain hold,

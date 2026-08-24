@@ -202,6 +202,35 @@ _PROTECT_PAYLOAD = {
 }
 
 
+# The getProtectState answer that settled what isRainProtect means: firmware
+# 1.13.10, dry day, mower parked under cover, with rain protection AND animal
+# protection both switched on in the app. Both flags read 0 anyway, which is
+# what rules out the "this protection is enabled" reading for either of them.
+# Pinned here so the evidence the moisture device class rests on lives in the
+# repo, not only in a docstring.
+_PROTECT_PAYLOAD_DRY = {
+    "isAnimProtect": 0,
+    "isRainProtect": 0,
+    "isRainDelay": 0,
+    "isEStop": 0,
+    "isLocked": 0,
+    "isPinCode": 0,
+    "isPrepareDataSuccess": 1,
+}
+
+
+def test_on_protect_state_dry_day_sample_reads_every_flag_false() -> None:
+    assert _notified(OnProtectState, _PROTECT_PAYLOAD_DRY, MowerProtectStateEvent) == [
+        MowerProtectStateEvent(
+            rain_protect=False,
+            rain_delay=False,
+            emergency_stop=False,
+            locked=False,
+            animal_protect=False,
+        )
+    ]
+
+
 def test_on_protect_state() -> None:
     assert _notified(OnProtectState, _PROTECT_PAYLOAD, MowerProtectStateEvent) == [
         MowerProtectStateEvent(

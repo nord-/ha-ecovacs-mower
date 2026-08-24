@@ -8,7 +8,9 @@ These are the device's raw flags and nothing derives the mower's state from
 them; the rain-aware states on ``sensor.<device>_activity`` come from the
 ``trigger`` field instead. ``isRainProtect`` is the rain sensor's own reading —
 wet or dry, and not whether rain protection is switched on — which is why
-``rain_protect`` is the one flag here that carries a device class.
+``rain_protect`` is the one flag here that carries a device class. The same
+evidence shows ``animal_protect`` is not its setting either, but nothing
+positive is established there, so it keeps the wire field's name (issue #45).
 ``deebot_patch.messages`` has the evidence.
 
 These entities are refreshed by ``GetProtectState``, which
@@ -57,9 +59,11 @@ class EcovacsProtectStateBinarySensorEntityDescription(BinarySensorEntityDescrip
 ENTITY_DESCRIPTIONS: tuple[EcovacsProtectStateBinarySensorEntityDescription, ...] = (
     # MOISTURE reads "Wet"/"Dry", which is what this flag reports: it is the
     # rain sensor, not the rain-protection setting. Two samples with the
-    # setting switched on in both settle it — 1 two seconds before a
-    # rain-stopped run, 0 on a dry day with the mower parked under cover. See
-    # MowerProtectStateEvent for the full evidence.
+    # setting switched on in both rule the setting out — 1 two seconds before a
+    # rain-stopped run, 0 on a dry day with the mower parked under cover. They
+    # do not separate a wet sensor from a mower currently held for rain, which
+    # moisture fits either way. See MowerProtectStateEvent for the full
+    # evidence.
     #
     # The key stays "rain_protect" although the display name no longer says
     # that: unique_id is built from it (entity.py), so renaming the key would
@@ -89,6 +93,13 @@ ENTITY_DESCRIPTIONS: tuple[EcovacsProtectStateBinarySensorEntityDescription, ...
         value_fn=lambda e: e.locked,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+    # The name is provisional. The dry-day sample that settled rain_protect had
+    # isAnimProtect: 0 with animal protection switched on in the app, so this
+    # flag is not the setting either. Unlike rain_protect there is no positive
+    # reading to rename it to — "an animal is detected" and "the mower is
+    # holding for an animal" both fit the one sample we have — so it keeps the
+    # wire field's name and no device class until a sighting says which
+    # (issue #45).
     EcovacsProtectStateBinarySensorEntityDescription(
         key="animal_protect",
         translation_key="animal_protect",
