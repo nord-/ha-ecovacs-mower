@@ -376,7 +376,7 @@ def _error_description(code: int, description: str | None) -> str | None:
     if code not in _UNKNOWN_CODES_REPORTED:
         _UNKNOWN_CODES_REPORTED.add(code)
         _LOGGER.warning(
-            "No description for mower error code %s. Please report the code "
+            "No description for error code %s. Please report the code "
             "together with what the Ecovacs app shows for it at %s",
             code,
             _REPORT_URL,
