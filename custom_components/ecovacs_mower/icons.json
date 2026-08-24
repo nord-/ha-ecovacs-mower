@@ -14,7 +14,10 @@
         "default": "mdi:timer-sand"
       },
       "rain_protect": {
-        "default": "mdi:weather-rainy"
+        "default": "mdi:weather-rainy",
+        "state": {
+          "off": "mdi:weather-partly-cloudy"
+        }
       }
     },
     "button": {
