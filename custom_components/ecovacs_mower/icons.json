@@ -83,6 +83,9 @@
       "lifespan_weed_rope": {
         "default": "mdi:string-lights"
       },
+      "mowing_progress": {
+        "default": "mdi:progress-check"
+      },
       "network_ip": {
         "default": "mdi:ip-network-outline"
       },

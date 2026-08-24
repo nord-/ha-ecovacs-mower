@@ -7,6 +7,7 @@ library has been removed: this integration only supports MQTT.
 
 import asyncio
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from functools import partial
 import logging
 import ssl
@@ -17,12 +18,14 @@ from deebot_client.authentication import create_rest_config
 from deebot_client.capabilities import DeviceType
 from deebot_client.const import UNDEFINED, UndefinedType
 from deebot_client.device import Device
+from deebot_client.events import StateEvent, StatsEvent
 from deebot_client.exceptions import (
     DeebotError,
     DeviceVerificationRequiredError,
     InvalidAuthenticationError,
 )
 from deebot_client.events.map import PositionsEvent
+from deebot_client.models import State
 from deebot_client.mqtt_client import MqttClient, create_mqtt_config
 from deebot_client.rs.map import PositionType
 from deebot_client.util import md5
@@ -33,13 +36,14 @@ from homeassistant.const import (
     CONF_PASSWORD,
     CONF_USERNAME,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryError,
     ConfigEntryNotReady,
 )
 from homeassistant.helpers import aiohttp_client
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.util.ssl import get_default_no_verify_context
 
@@ -50,6 +54,7 @@ from .const import (
     CONF_VERIFY_MQTT_CERTIFICATE,
     DOMAIN,
     ISSUE_TRACKER_URL,
+    POLL_INTERVAL,
 )
 from .deebot_patch import (
     AccountAuthenticator,
@@ -102,6 +107,7 @@ class EcovacsController:
         self._devices: list[Device] = []
         self.maps: dict[str, MowerMap] = {}
         self._map_stores: dict[str, Store[dict[str, Any]]] = {}
+        self._unsub_polls: dict[str, CALLBACK_TYPE] = {}
         rest_url = config.get(CONF_OVERRIDE_REST_URL)
         self._device_id = config[CONF_DEVICE_ID]
         country = config[CONF_COUNTRY]
@@ -205,6 +211,7 @@ class EcovacsController:
                         await device.initialize(mqtt)
                         self._devices.append(device)
                         if device.capabilities.device_type is DeviceType.MOWER:
+                            self._setup_polling(device)
                             # Map data is best effort; mower control is sacred.
                             # A failure here must not fail the TaskGroup and
                             # take mower control down with it.
@@ -303,8 +310,62 @@ class EcovacsController:
         device.events.subscribe(MowerNoGoZonesEvent, on_nogo)
         device.events.subscribe(PositionsEvent, on_positions)
 
+    def _setup_polling(self, device: Device) -> None:
+        """Poll the mower's state and stats while it is out, not while docked.
+
+        Controller-owned rather than tied to any one entity's lifecycle: the
+        lawn_mower, activity and mowing_progress/stats entities can each be
+        individually disabled in the entity registry, and a background refresh
+        that only one of them happened to own must not silently stop feeding
+        the other three.
+        """
+
+        async def on_status(event: StateEvent) -> None:
+            # There is nothing to ask about in the dock — the battery reports
+            # itself — and leaving is the one transition the mower has not
+            # been seen to drop.
+            if event.state is State.DOCKED:
+                self._stop_polling(device.device_info["did"])
+            else:
+                self.start_polling(device)
+
+        device.events.subscribe(StateEvent, on_status)
+
+    def start_polling(self, device: Device) -> None:
+        """Start asking for the mower's state and stats, unless already doing so.
+
+        Public: lawn_mower.py's start-mowing command calls this directly. A
+        command sent from HA never produces a StateEvent by itself — only a
+        confirmed push does — so nothing else would restart the tick if that
+        push never lands.
+        """
+        did = device.device_info["did"]
+        if did not in self._unsub_polls:
+            self._unsub_polls[did] = async_track_time_interval(
+                self._hass, partial(self._poll, device), POLL_INTERVAL
+            )
+
+    def _stop_polling(self, did: str) -> None:
+        """Stop asking. Idempotent, so removal after a docking is harmless."""
+        if (unsub := self._unsub_polls.pop(did, None)) is not None:
+            unsub()
+
+    async def _poll(self, device: Device, now: datetime) -> None:
+        """One tick: refresh the state and the mowing stats for one device.
+
+        One getStats notifies both StatsEvent and MowerStatsEvent, so
+        refreshing StatsEvent — which Device.__init__ always subscribes to —
+        covers the mowing_progress sensor too without depending on it being
+        enabled.
+        """
+        device.events.request_refresh(StateEvent)
+        device.events.request_refresh(StatsEvent)
+
     async def teardown(self) -> None:
         """Disconnect controller."""
+        for unsub in self._unsub_polls.values():
+            unsub()
+        self._unsub_polls.clear()
         for did, store in self._map_stores.items():
             # A failed save must never block device teardown or the MQTT
             # disconnect below: map is best effort, mower control is sacred.

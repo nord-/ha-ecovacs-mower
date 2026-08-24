@@ -1,5 +1,6 @@
 """Constants for Ecovacs Mower."""
 
+from datetime import timedelta
 from enum import StrEnum
 
 from deebot_client.events import LifeSpan
@@ -38,3 +39,20 @@ SUPPORTED_LIFESPANS = (
     LifeSpan.TRIMMER_BRUSH,
     LifeSpan.WEED_ROPE,
 )
+
+# The mower is not a reliable narrator of its own state. On 2026-08-21 it
+# finished a run, drove home and started charging without sending
+# onChargeInfo, onChargeState, or even the bury-point task events it logs for
+# itself — while onStats, onBattery, onPos and onMapTrack all kept arriving.
+# The entity stayed "mowing" for two hours; one homeassistant.update_entity
+# corrected it in 200 ms, over REST, so the answer was there the whole time
+# and nobody had asked for it.
+#
+# Five minutes: worst case the state is that stale, against two commands per
+# interval on Ecovacs' cloud API. Push still does the fast path — this only
+# catches what push drops.
+#
+# Owned by EcovacsController rather than any one entity: lawn_mower, activity
+# and mowing_progress/stats can each be individually disabled in the entity
+# registry, and this has to keep running regardless of which of them are.
+POLL_INTERVAL = timedelta(minutes=5)

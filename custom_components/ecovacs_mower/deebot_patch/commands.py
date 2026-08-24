@@ -18,6 +18,9 @@ doing (issue #48).
 ``GetProtectState`` is not a fix for a broken command but a command the library
 does not have at all: the mower pushes ``onProtectState`` when a protection flag
 flips, and nothing had ever asked for the current value (issue #31).
+
+``GetStatsMower`` is a third kind again: the command works and is answered, the
+library just discards one of the three numbers it answers with (issue #39).
 """
 
 from __future__ import annotations
@@ -26,10 +29,11 @@ from typing import TYPE_CHECKING, Any
 
 from deebot_client.commands.json.clean import Clean, GetCleanInfo
 from deebot_client.commands.json.common import JsonCommandWithMessageHandling
+from deebot_client.commands.json.stats import GetStats
 from deebot_client.message import HandlingResult
 from deebot_client.models import CleanMode
 
-from .messages import OnProtectState
+from .messages import MowerStatsEvent, OnProtectState
 
 if TYPE_CHECKING:
     from deebot_client.event_bus import EventBus
@@ -112,3 +116,35 @@ class GetProtectState(JsonCommandWithMessageHandling, OnProtectState):
     """
 
     NAME = "getProtectState"
+
+
+class GetStatsMower(GetStats):
+    """``getStats``, keeping the field the library throws away.
+
+    The answer carries three numbers — ``area``, ``time`` and ``mowedArea`` —
+    and upstream's handler builds a ``StatsEvent`` from the first two. On GOAT
+    the dropped one is the interesting one: ``area`` is the target area of the
+    running job and holds still, ``mowedArea`` is the part already cut and
+    climbs (issue #39).
+
+    ``NAME`` is inherited on purpose. The wire command is unchanged, so this
+    replaces the parsing of an existing request rather than adding a second one,
+    and ``super()`` still runs so ``StatsEvent`` keeps being published for the
+    area and time sensors that were already built on it.
+    """
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data, then publish the mower's own pair.
+
+        Missing keys become ``None`` rather than 0: a firmware that does not
+        report ``mowedArea`` should leave the progress entity unknown, not claim
+        the job has not started.
+        """
+        result = super()._handle_body_data_dict(event_bus, data)
+        event_bus.notify(
+            MowerStatsEvent(area=data.get("area"), mowed_area=data.get("mowedArea"))
+        )
+        return result

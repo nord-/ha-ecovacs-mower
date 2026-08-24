@@ -38,11 +38,13 @@ def test_expected_sensor_keys() -> None:
         ENTITY_DESCRIPTIONS,
         EcovacsActivitySensor,
         EcovacsErrorSensor,
+        EcovacsMowingProgressSensor,
     )
 
     keys = {d.key for d in ENTITY_DESCRIPTIONS} | {
         EcovacsErrorSensor.entity_description.key,
         EcovacsActivitySensor.entity_description.key,
+        EcovacsMowingProgressSensor.entity_description.key,
     }
     assert keys == {
         "stats_area",
@@ -56,6 +58,7 @@ def test_expected_sensor_keys() -> None:
         "network_ssid",
         "error",
         "activity",
+        "mowing_progress",
     }
 
 
@@ -85,6 +88,7 @@ def test_every_description_has_a_translation() -> None:
         LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsActivitySensor,
         EcovacsErrorSensor,
+        EcovacsMowingProgressSensor,
     )
 
     root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
@@ -96,6 +100,7 @@ def test_every_description_has_a_translation() -> None:
         *LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsErrorSensor.entity_description,
         EcovacsActivitySensor.entity_description,
+        EcovacsMowingProgressSensor.entity_description,
     )
     for description in descriptions:
         if description.translation_key:
@@ -118,6 +123,7 @@ def test_every_sensor_has_an_icon() -> None:
         LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsActivitySensor,
         EcovacsErrorSensor,
+        EcovacsMowingProgressSensor,
     )
 
     root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
@@ -129,6 +135,7 @@ def test_every_sensor_has_an_icon() -> None:
         *LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsErrorSensor.entity_description,
         EcovacsActivitySensor.entity_description,
+        EcovacsMowingProgressSensor.entity_description,
     )
     for description in descriptions:
         if description.translation_key:
@@ -150,6 +157,7 @@ def test_no_stale_sensor_translations_or_icons() -> None:
         LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsActivitySensor,
         EcovacsErrorSensor,
+        EcovacsMowingProgressSensor,
     )
 
     root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
@@ -161,6 +169,7 @@ def test_no_stale_sensor_translations_or_icons() -> None:
         *LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsErrorSensor.entity_description,
         EcovacsActivitySensor.entity_description,
+        EcovacsMowingProgressSensor.entity_description,
     )
     keys = {d.translation_key for d in descriptions if d.translation_key}
 
@@ -410,6 +419,207 @@ def test_duration_sensors_are_displayed_in_a_unit_the_frontend_expands() -> None
             UnitOfTime.HOURS,
             UnitOfTime.DAYS,
         ), description.key
+
+
+async def test_progress_sensor_is_gated_on_supported_classes() -> None:
+    """An unsupported mower class would sit at unknown forever without this.
+
+    MowerStatsEvent's refresh command only exists for classes deebot_patch has
+    patched (hardware.py's SUPPORTED_CLASSES); every other MOWER class has no
+    command behind it at all.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from deebot_client.capabilities import DeviceType
+
+    from custom_components.ecovacs_mower.deebot_patch import SUPPORTED_CLASSES
+    from custom_components.ecovacs_mower.sensor import (
+        EcovacsMowingProgressSensor,
+        async_setup_entry,
+    )
+
+    def _mower(class_: str, did: str):
+        device = MagicMock()
+        device.capabilities.device_type = DeviceType.MOWER
+        device.capabilities.error = None
+        device.capabilities.life_span.types = ()
+        device.device_info = {"did": did, "class": class_}
+        return device
+
+    supported = _mower(next(iter(SUPPORTED_CLASSES)), "did-supported")
+    unsupported = _mower("not-a-real-class", "did-unsupported")
+
+    config_entry = MagicMock()
+    config_entry.runtime_data.devices = [supported, unsupported]
+
+    added: list = []
+    with patch(
+        "custom_components.ecovacs_mower.sensor.get_supported_entities",
+        return_value=[],
+    ):
+        await async_setup_entry(MagicMock(), config_entry, added.extend)
+
+    progress_devices = {
+        e._device for e in added if isinstance(e, EcovacsMowingProgressSensor)
+    }
+    assert progress_devices == {supported}
+
+
+def _bare_progress_sensor():
+    """A progress sensor without HA, for the same reason as the activity one."""
+    from unittest.mock import Mock
+
+    from custom_components.ecovacs_mower.sensor import EcovacsMowingProgressSensor
+
+    sensor = EcovacsMowingProgressSensor.__new__(EcovacsMowingProgressSensor)
+    sensor._device = Mock()
+    sensor._last_state = None
+    sensor.async_write_ha_state = lambda: None
+    return sensor
+
+
+def _job(area: int = 211275, mowed: int = 87825):
+    from custom_components.ecovacs_mower.deebot_patch.messages import MowerStatsEvent
+
+    return MowerStatsEvent(area=area, mowed_area=mowed)
+
+
+def _state_event(state):
+    from deebot_client.events import StateEvent
+
+    return StateEvent(state)
+
+
+def test_progress_is_the_ratio_of_the_two_fields() -> None:
+    # A real getStats answer from a mowing GOAT O1200: 87825 cm2 cut of a
+    # 211275 cm2 job.
+    from custom_components.ecovacs_mower.sensor import _progress
+
+    assert _progress(211275, 87825) == 42
+
+
+def test_no_job_is_unknown_rather_than_zero() -> None:
+    """Between jobs the device reports zeros, which is not a job at 0 %.
+
+    Reported as 0, every idle mower would look exactly like one that has just
+    started, and "notify me when it reaches 100" would have no way to tell the
+    difference from the state alone.
+    """
+    from custom_components.ecovacs_mower.sensor import _progress
+
+    assert _progress(0, 0) is None
+
+
+def test_a_firmware_that_omits_the_field_is_unknown() -> None:
+    from custom_components.ecovacs_mower.sensor import _progress
+
+    assert _progress(211275, None) is None
+
+
+def test_progress_never_exceeds_a_hundred() -> None:
+    from custom_components.ecovacs_mower.sensor import _progress
+
+    assert _progress(100, 150) == 100
+
+
+async def test_a_job_starting_is_looked_at_at_once() -> None:
+    """Otherwise the first reading of a run waits for the platform's next tick."""
+    from deebot_client.models import State
+
+    from custom_components.ecovacs_mower.deebot_patch.messages import MowerStatsEvent
+
+    sensor = _bare_progress_sensor()
+
+    await sensor._on_state(_state_event(State.CLEANING))
+
+    sensor._device.events.request_refresh.assert_called_once_with(MowerStatsEvent)
+
+
+async def test_repeated_pushes_of_the_same_state_do_not_re_trigger() -> None:
+    """A push is not a transition; entering CLEANING while already CLEANING is not."""
+    from deebot_client.models import State
+
+    sensor = _bare_progress_sensor()
+
+    await sensor._on_state(_state_event(State.CLEANING))
+    await sensor._on_state(_state_event(State.CLEANING))
+
+    sensor._device.events.request_refresh.assert_called_once()
+
+
+async def test_docking_clears_the_reading_immediately() -> None:
+    """Docking must not wait for a zeroed getStats answer to clear the sensor.
+
+    A GOAT G1-800 on firmware 1.36.208 never zeros mowedArea/area between jobs
+    at all (reported against issue #39) — six hours after a job ended, a
+    fresh getStats answer still read the finished job's numbers. Waiting for
+    a zero would leave this firmware stuck showing the last job's percentage
+    forever, so the state itself — not another getStats round trip — is what
+    clears it.
+    """
+    from deebot_client.models import State
+
+    sensor = _bare_progress_sensor()
+    sensor._attr_native_value = 42
+
+    await sensor._on_state(_state_event(State.DOCKED))
+
+    assert sensor._attr_native_value is None
+    sensor._device.events.request_refresh.assert_not_called()
+
+
+async def test_a_stats_answer_while_docked_is_not_trusted() -> None:
+    """The same firmware quirk can also feed a stale answer to _on_stats directly.
+
+    Gating on _progress()'s zero check alone is not enough — it never fires
+    on this firmware — so _on_stats also has to know the mower is currently
+    parked and refuse the answer regardless of what it contains.
+    """
+    from deebot_client.models import State
+
+    sensor = _bare_progress_sensor()
+    sensor._last_state = State.DOCKED
+
+    await sensor._on_stats(_job(1374800, 1374800))
+
+    assert sensor._attr_native_value is None
+
+
+async def test_a_stats_answer_before_any_state_is_seen_is_not_trusted() -> None:
+    """Startup ordering between the two subscriptions is not guaranteed.
+
+    If a stats answer happens to arrive before this sensor has seen its first
+    StateEvent, there is no basis yet for believing a job is running.
+    """
+    sensor = _bare_progress_sensor()
+    assert sensor._last_state is None
+
+    await sensor._on_stats(_job())
+
+    assert sensor._attr_native_value is None
+
+
+async def test_the_states_in_between_are_left_alone() -> None:
+    """Only the two transitions are acted on; the rest ride the tick."""
+    from deebot_client.models import State
+
+    for state in (State.PAUSED, State.IDLE, State.RETURNING, State.ERROR):
+        sensor = _bare_progress_sensor()
+        await sensor._on_state(_state_event(state))
+        sensor._device.events.request_refresh.assert_not_called()
+
+
+async def test_the_percentage_follows_the_answer() -> None:
+    from deebot_client.models import State
+
+    sensor = _bare_progress_sensor()
+    sensor._last_state = State.CLEANING
+
+    await sensor._on_stats(_job(211275, 208275))
+    assert sensor._attr_native_value == 99
+
+    await sensor._on_stats(_job(0, 0))
+    assert sensor._attr_native_value is None
 
 
 def test_error_description_prefers_the_library_and_fills_its_gaps(caplog) -> None:

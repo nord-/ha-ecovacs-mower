@@ -5,11 +5,20 @@ Everything related to vacuum stations (dust bag, mop drying) and the legacy
 XMPP-connected class (``EcovacsLegacy*``) has been removed: this integration only
 supports GOAT lawn mowers over MQTT, which have no station at all.
 
-``EcovacsActivitySensor`` at the bottom is the one addition core has no
-counterpart for. It exists because HA's ``LawnMowerActivity`` enum cannot say
+``EcovacsActivitySensor`` and ``EcovacsMowingProgressSensor`` at the bottom are
+the two additions core has no counterpart for.
+
+The activity sensor exists because HA's ``LawnMowerActivity`` enum cannot say
 *why* the mower stopped — see the comment above ``_STATE_TO_ACTIVITY``. The
 protection flags from ``onProtectState`` are deliberately *not* what it reads;
 ``deebot_patch.messages`` explains why.
+
+The progress sensor is the one entity in this platform whose reading depends on
+a poll — ``EcovacsController``'s, not one of its own. The number it reports only
+exists while a job is running and the device never pushes it (issue #39), so
+asking is the only way to see it move. The poll follows the job rather than the
+clock: it starts when the mower starts mowing and stops when it parks, so a
+rainy week costs nothing.
 """
 
 from collections.abc import Callable
@@ -52,7 +61,8 @@ from homeassistant.helpers.typing import StateType
 
 from . import EcovacsMowerConfigEntry
 from .const import SUPPORTED_LIFESPANS
-from .deebot_patch.messages import MowerTriggerEvent
+from .deebot_patch import SUPPORTED_CLASSES
+from .deebot_patch.messages import MowerStatsEvent, MowerTriggerEvent
 from .entity import (
     EcovacsCapabilityEntityDescription,
     EcovacsDescriptionEntity,
@@ -84,6 +94,19 @@ def get_area_native_unit_of_measurement(device_type: DeviceType) -> str | None:
 
 ENTITY_DESCRIPTIONS: tuple[EcovacsSensorEntityDescription, ...] = (
     # Stats
+    #
+    # Named "Job target area"/"Job target duration", not "Mowed area"/"Mowing
+    # time": on GOAT, StatsEvent.area/.time are the running job's *target* —
+    # the area held still for the whole run while MowerStatsEvent.mowed_area
+    # climbs towards it (see its docstring), and time likewise held at a
+    # constant estimate across four captured samples before dropping to 0
+    # between jobs. Now that this platform's tick refreshes StatsEvent every
+    # five minutes (see EcovacsController), a "Mowed area" label would read
+    # the whole job's target from the first second of a run, not what has
+    # actually been cut — this PR's own mowed_area analysis is what surfaced
+    # that the two numbers differ. No fix for stats_time's semantics is
+    # possible the same way stats_area's could be repointed at mowed_area:
+    # getStats has no elapsed-time counterpart to it, only the target.
     EcovacsSensorEntityDescription[StatsEvent](
         key="stats_area",
         capability_fn=lambda caps: caps.stats.clean,
@@ -267,6 +290,15 @@ async def async_setup_entry(
         EcovacsActivitySensor(device)
         for device in controller.devices
         if device.capabilities.device_type is DeviceType.MOWER
+    )
+    entities.extend(
+        EcovacsMowingProgressSensor(device)
+        for device in controller.devices
+        if device.capabilities.device_type is DeviceType.MOWER
+        # MowerStatsEvent's refresh command only exists for patched classes
+        # (deebot_patch/hardware.py); without this an unsupported mower class
+        # gets an entity that can never have a value.
+        and device.device_info["class"] in SUPPORTED_CLASSES
     )
 
     async_add_entities(entities)
@@ -478,3 +510,105 @@ class EcovacsActivitySensor(
             self._state, interrupted_by_rain=self._interrupted_by_rain
         )
         self.async_write_ha_state()
+
+
+def _progress(area: int | None, mowed_area: int | None) -> int | None:
+    """Percent of the running job that is done, or None when there is no job.
+
+    A zero ``area`` is the absence of a job, not a job that is zero percent
+    done: the device reports ``{"area": 0, "time": 0, "mowedArea": 0}`` whenever
+    nothing is running. Reporting 0 there would make every automation that waits
+    for 100 look, between jobs, exactly like one that has just started.
+
+    Capping at 100 has not been needed on the verified hardware — a completed run
+    reports ``mowedArea`` exactly equal to its target — but a percentage above
+    100 in a dashboard is worse than one call to ``min``.
+    """
+    if not area or mowed_area is None:
+        return None
+    return min(round(mowed_area / area * 100), 100)
+
+
+class EcovacsMowingProgressSensor(
+    EcovacsEntity[CapabilityEvent[StatsEvent]],
+    SensorEntity,
+):
+    """How much of the running job the mower has cut, in percent.
+
+    A calculation on top of one getStats answer, nothing more. The device never
+    pushes that answer — ``onStats`` did not arrive once in 38 hours of logging
+    (issue #39) — so somebody has to ask, and ``EcovacsController`` already does
+    on exactly the trigger and interval this needs. That same answer refreshes
+    ``StatsEvent``, which the area and time sensors are built on, so they stop
+    being frozen too.
+    """
+
+    entity_description: SensorEntityDescription = SensorEntityDescription(
+        key="mowing_progress",
+        translation_key="mowing_progress",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+    )
+
+    def __init__(self, device: Device) -> None:
+        """Initialize entity."""
+        super().__init__(device, device.capabilities.stats.clean)
+        self._last_state: State | None = None
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listeners now that hass is ready."""
+        await super().async_added_to_hass()
+
+        # Not the capability's own event: that one is StatsEvent, which is the
+        # library's and has no field for the mowed area. Both events come out of
+        # the same GetStatsMower answer. Subscribing is also what buys the one
+        # sync at startup — the bus refreshes an event type for its first
+        # subscriber.
+        self._subscribe(MowerStatsEvent, self._on_stats)
+        self._subscribe(StateEvent, self._on_state)
+
+    async def _on_stats(self, event: MowerStatsEvent) -> None:
+        """Publish the percentage, but only while a job might be running.
+
+        Gated on the mower's own state rather than trusting the payload's zero
+        convention: a GOAT G1-800 on firmware 1.36.208 reported ``mowedArea``
+        still equal to the last job's ``area`` six hours after that job ended
+        — this firmware branch never zeroes the stats between jobs at all
+        (reported against issue #39). ``_progress()``'s zero check alone would
+        read that as a job stuck at 100 %, permanently, for as long as the
+        mower sits parked.
+        """
+        if self._last_state is None or self._last_state is State.DOCKED:
+            return
+        self._attr_native_value = _progress(event.area, event.mowed_area)
+        self.async_write_ha_state()
+
+    async def _on_state(self, event: StateEvent) -> None:
+        """Take one look when a job starts; clear the reading when it parks.
+
+        Starting is worth a look so the first reading of a run does not wait
+        for the next tick. Docking clears the value immediately rather than
+        asking again and waiting for a zeroed answer: whether the stats ever
+        zero out at all is exactly the thing that differs by firmware branch
+        (see _on_stats), so the state is the only signal both branches agree
+        on.
+
+        Only entering a state counts either way: a repeated push of the same
+        state (the captured telemetry has two CLEANING pushes 16 seconds
+        apart) must not trigger a second, redundant getStats.
+
+        Nothing else is acted on. ``paused`` is left alone too: it is a normal
+        mid-run state (rain, a manual pause) rather than a start or dock edge,
+        and the periodic tick already keeps asking while the mower is out
+        regardless of which of those it currently is.
+        """
+        if event.state == self._last_state:
+            return
+        self._last_state = event.state
+
+        if event.state is State.CLEANING:
+            self._device.events.request_refresh(MowerStatsEvent)
+        elif event.state is State.DOCKED:
+            self._attr_native_value = None
+            self.async_write_ha_state()

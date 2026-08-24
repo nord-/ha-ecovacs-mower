@@ -98,8 +98,9 @@
           "error": "Error"
         }
       },
-      "stats_area": { "name": "Mowed area" },
-      "stats_time": { "name": "Mowing time" },
+      "mowing_progress": { "name": "Mowing progress" },
+      "stats_area": { "name": "Job target area" },
+      "stats_time": { "name": "Job target duration" },
       "total_stats_area": { "name": "Total mowed area" },
       "total_stats_time": { "name": "Total mowing time" },
       "total_stats_cleanings": { "name": "Total mowing sessions" },

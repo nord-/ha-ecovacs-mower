@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 import logging
 from typing import override
 
 from deebot_client.capabilities import Capabilities, DeviceType
 from deebot_client.device import Device
-from deebot_client.events import StateEvent
+from deebot_client.events import StateEvent, StatsEvent
 from deebot_client.models import CleanAction, State
 from homeassistant.components.lawn_mower import (
     LawnMowerActivity,
@@ -20,22 +19,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EcovacsMowerConfigEntry
+from .controller import EcovacsController
 from .entity import EcovacsEntity
 
 _LOGGER = logging.getLogger(__name__)
-
-# The mower is not a reliable narrator of its own state. On 2026-08-21 it
-# finished a run, drove home and started charging without sending
-# onChargeInfo, onChargeState, or even the bury-point task events it logs for
-# itself — while onStats, onBattery, onPos and onMapTrack all kept arriving.
-# The entity stayed "mowing" for two hours; one homeassistant.update_entity
-# corrected it in 200 ms, over REST, so the answer was there the whole time
-# and nobody had asked for it.
-#
-# Five minutes: worst case the state is that stale, against two commands per
-# interval on Ecovacs' cloud API. Push still does the fast path — this only
-# catches what push drops.
-SCAN_INTERVAL = timedelta(minutes=5)
 
 # IDLE means "standing still", not "standing in the dock" — hence PAUSED.
 # Docking is reported separately via onChargeInfo with state "idle", which
@@ -58,7 +45,7 @@ async def async_setup_entry(
     """Add the lawn mowers."""
     controller = config_entry.runtime_data
     mowers = [
-        EcovacsMower(device)
+        EcovacsMower(device, controller)
         for device in controller.devices
         if device.capabilities.device_type is DeviceType.MOWER
     ]
@@ -67,14 +54,13 @@ async def async_setup_entry(
 
 
 class EcovacsMower(EcovacsEntity[Capabilities], LawnMowerEntity):
-    """An Ecovacs GOAT lawn mower."""
+    """An Ecovacs GOAT lawn mower.
 
-    # The base class does not poll, and every other platform here keeps it that
-    # way: their events either arrive or are genuinely unknown. This one is the
-    # exception because a wrong mower state drives automations. Its refresh
-    # publishes StateEvent on the bus, so the activity sensor is corrected by
-    # the same round trip rather than needing a poll of its own.
-    _attr_should_poll = True
+    The periodic refresh that keeps the state honest even without a push
+    lives in EcovacsController (see POLL_INTERVAL in const.py), not here: a
+    disabled lawn_mower entity must not also starve the activity and
+    mowing_progress/stats sensors of their five-minute update.
+    """
 
     _attr_supported_features = (
         LawnMowerEntityFeature.DOCK
@@ -84,9 +70,10 @@ class EcovacsMower(EcovacsEntity[Capabilities], LawnMowerEntity):
 
     entity_description = LawnMowerEntityEntityDescription(key="mower", name=None)
 
-    def __init__(self, device: Device) -> None:
+    def __init__(self, device: Device, controller: EcovacsController) -> None:
         """Initialize the lawn mower."""
         super().__init__(device, device.capabilities)
+        self._controller = controller
 
     @override
     async def async_added_to_hass(self) -> None:
@@ -101,9 +88,37 @@ class EcovacsMower(EcovacsEntity[Capabilities], LawnMowerEntity):
             self._attr_activity = activity
             self.async_write_ha_state()
 
+        # Subscribing is also the startup check: the bus hands over the last
+        # event if it has one and otherwise refreshes for the first subscriber.
         self._subscribe(self._capability.state.event, on_status)
 
+    @override
+    async def async_update(self) -> None:
+        """Ask for everything this mower is asked for.
+
+        The mowing progress wants the same answer as the state, and one
+        getStats notifies both StatsEvent and MowerStatsEvent, so refreshing
+        StatsEvent here covers both.
+
+        Refreshing StatsEvent rather than MowerStatsEvent is deliberate:
+        Device.__init__ always subscribes to StatsEvent itself, so this keeps
+        working even if the progress sensor is disabled — MowerStatsEvent's
+        only subscriber.
+
+        Also what the update_entity service calls, which stays reachable while
+        docked on purpose: asking by hand is how the 2026-08-21 state was
+        corrected in the first place (see POLL_INTERVAL in const.py).
+        """
+        await super().async_update()
+        self._device.events.request_refresh(StatsEvent)
+
     async def _clean_command(self, action: CleanAction) -> None:
+        if action is CleanAction.START:
+            # A command sent from HA never produces a StateEvent on its own —
+            # only a confirmed push does — so the controller's own tick would
+            # not restart on a dropped leaving-the-dock push without this
+            # nudge.
+            self._controller.start_polling(self._device)
         await self._execute_command(
             self._capability.clean.action.command(action)
         )

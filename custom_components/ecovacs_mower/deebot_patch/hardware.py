@@ -14,11 +14,11 @@ from types import MappingProxyType
 
 from deebot_client.capabilities import CapabilityEvent
 from deebot_client.commands.json.charge_state import GetChargeState
-from deebot_client.events import StateEvent
+from deebot_client.events import StateEvent, StatsEvent
 from deebot_client.hardware import _DEVICES, get_static_device_info
 
-from .commands import CleanMower, GetCleanInfoMower, GetProtectState
-from .messages import MowerProtectStateEvent
+from .commands import CleanMower, GetCleanInfoMower, GetProtectState, GetStatsMower
+from .messages import MowerProtectStateEvent, MowerStatsEvent
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ SUPPORTED_CLASSES = ("2i0fns", "9bts2s", "2px96q", "77atlz", "e4gqia", "xmp9ds")
 async def patch_device_info(class_: str) -> None:
     """Replace the cached device definition with one where the mow bugs are fixed.
 
-    Three corrections:
+    Four corrections:
 
     * ``clean.action.command``: ``CleanV2`` publishes on ``clean_V2``, which
       GOAT firmware ignores. Swapped for ``CleanMower`` on ``clean``.
@@ -62,7 +62,10 @@ async def patch_device_info(class_: str) -> None:
       ``GetCleanInfo`` is answered with a constant ``idle``. Swapped for
       ``GetCleanInfoMower``, which sends the same command and ignores that one
       answer.
-    * ``MowerProtectStateEvent``: given the refresh command it had none of.
+    * ``stats.clean``: ``GetStats`` drops ``mowedArea``, the one number that
+      moves while a job runs. Swapped for ``GetStatsMower``.
+    * ``MowerProtectStateEvent`` and ``MowerStatsEvent``: given the refresh
+      commands they had none of.
 
     The call is idempotent and does nothing for classes outside
     ``SUPPORTED_CLASSES``.
@@ -94,9 +97,16 @@ async def patch_device_info(class_: str) -> None:
             action=replace(capabilities.clean.action, command=CleanMower),
         ),
         state=CapabilityEvent(StateEvent, [GetChargeState(), GetCleanInfoMower()]),
+        # Only stats.clean is replaced; total and report are the library's
+        # own and are carried through by replace().
+        stats=replace(
+            capabilities.stats,
+            clean=CapabilityEvent(StatsEvent, [GetStatsMower()]),
+        ),
     )
-    # The protection flags are not a library capability, so there is no field
-    # to hang a CapabilityEvent on and nothing to hand dataclasses.replace.
+    # Neither the protection flags nor the mowing progress is a library
+    # capability, so there is no field to hang a CapabilityEvent on and nothing
+    # to hand dataclasses.replace.
     # get_refresh_commands() reads one mapping, built once in __post_init__ from
     # the dataclass fields, so the entry goes straight in there — the same
     # object.__setattr__ on the same frozen instance that __post_init__ does.
@@ -110,11 +120,24 @@ async def patch_device_info(class_: str) -> None:
     # re-runs __post_init__, which rebuilds the mapping from the fields, and an
     # entry that no field describes would be dropped without a word. A future
     # correction goes above this one for the same reason.
+    #
+    # StatsEvent (via stats.clean, above) and MowerStatsEvent (here) are two
+    # independent keys in that mapping, each carrying its own GetStatsMower.
+    # Both are first-subscribed early — StatsEvent by Device.__init__ itself,
+    # MowerStatsEvent by the progress sensor — so an unavailable->available
+    # flap, which refreshes every registered event type, sends two identical
+    # getStats requests instead of one. Accepted: deduping identical commands
+    # across event types would mean changing the event bus itself, and the
+    # cost is one extra request on a rare transition, not a wrong answer.
     object.__setattr__(
         patched,
         "_events",
         MappingProxyType(
-            {**patched._events, MowerProtectStateEvent: [GetProtectState()]}
+            {
+                **patched._events,
+                MowerProtectStateEvent: [GetProtectState()],
+                MowerStatsEvent: [GetStatsMower()],
+            }
         ),
     )
 

@@ -3,19 +3,24 @@
 import pytest
 from deebot_client.commands.json.charge_state import GetChargeState
 from deebot_client.commands.json.clean import CleanV2, GetCleanInfo, GetCleanInfoV2
-from deebot_client.events import BatteryEvent, StateEvent
+from deebot_client.commands.json.stats import GetStats
+from deebot_client.events import BatteryEvent, StateEvent, StatsEvent
 from deebot_client.hardware import _DEVICES, get_static_device_info
 
 from custom_components.ecovacs_mower.deebot_patch.commands import (
     CleanMower,
     GetCleanInfoMower,
     GetProtectState,
+    GetStatsMower,
 )
 from custom_components.ecovacs_mower.deebot_patch.hardware import (
     SUPPORTED_CLASSES,
     patch_device_info,
 )
-from custom_components.ecovacs_mower.deebot_patch.messages import MowerProtectStateEvent
+from custom_components.ecovacs_mower.deebot_patch.messages import (
+    MowerProtectStateEvent,
+    MowerStatsEvent,
+)
 
 O1200 = "2i0fns"
 O800 = "9bts2s"
@@ -330,3 +335,54 @@ async def test_patch_must_run_before_get_devices() -> None:
 
     with pytest.raises(PatchContractError):
         verify_capabilities(device_info.static.capabilities, O1200)
+
+
+async def test_unpatched_library_drops_the_mowed_area() -> None:
+    # Documents the gap issue #39 asks about: the library's GetStats parses
+    # area and time and throws mowedArea away, and it is the only field that
+    # moves while a job runs.
+    info = await get_static_device_info(O1200)
+    commands = info.capabilities.get_refresh_commands(StatsEvent)
+    assert [type(c) for c in commands] == [GetStats]
+
+
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_patch_swaps_in_the_stats_command_that_keeps_mowed_area(
+    class_: str,
+) -> None:
+    await patch_device_info(class_)
+    info = await get_static_device_info(class_)
+    commands = info.capabilities.get_refresh_commands(StatsEvent)
+    # Exact type, not isinstance: GetStatsMower inherits from GetStats, so
+    # isinstance() would pass on the unpatched definition too.
+    assert [type(c) for c in commands] == [GetStatsMower]
+
+
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_patch_wires_a_refresh_command_for_the_mowing_progress(
+    class_: str,
+) -> None:
+    # Same trap as the protection flags (issue #31): MowerStatsEvent is not a
+    # library capability, so without an entry in the events mapping the bus
+    # finds no command when the progress sensor subscribes and the value stays
+    # unknown until something else happens to ask for stats.
+    await patch_device_info(class_)
+    info = await get_static_device_info(class_)
+    commands = info.capabilities.get_refresh_commands(MowerStatsEvent)
+    assert [type(c) for c in commands] == [GetStatsMower]
+
+
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_patch_preserves_the_other_stats_capabilities(class_: str) -> None:
+    # Only stats.clean is replaced; the total and report siblings are the
+    # library's own and must survive dataclasses.replace.
+    before = await get_static_device_info(class_)
+    total_before = before.capabilities.stats.total
+    report_before = before.capabilities.stats.report
+    _DEVICES.pop(class_, None)
+
+    await patch_device_info(class_)
+    after = await get_static_device_info(class_)
+
+    assert after.capabilities.stats.total == total_before
+    assert after.capabilities.stats.report == report_before

@@ -74,27 +74,58 @@ def test_supported_features() -> None:
     )
 
 
-def test_the_mower_entity_is_polled() -> None:
-    # 2026-08-21: the mower finished a run, drove home and started charging
-    # without sending onChargeInfo, onChargeState, or even the bury-point task
-    # events it logs for itself — while onStats, onBattery, onPos and
-    # onMapTrack all kept arriving. The entity stayed "mowing" for two hours,
-    # and one homeassistant.update_entity corrected it in 200 ms. Push alone
-    # does not keep this entity honest.
-    #
-    # Asserted on an instance, not on the class: Home Assistant's cached
-    # properties turn ``_attr_should_poll`` into a property object, so reading
-    # it off the class compares a property to a bool and passes for the wrong
-    # reason.
-    from datetime import timedelta
+async def test_one_tick_asks_for_the_state_and_the_stats() -> None:
+    """The mowing progress rides this tick instead of running one of its own.
+
+    It wants the same answer on the same trigger at the same interval, and one
+    getStats notifies both StatsEvent and MowerStatsEvent, so a second timer
+    would buy nothing but drift. StatsEvent, not MowerStatsEvent, is what gets
+    asked for directly: Device.__init__ always subscribes to it, so the stats
+    round trip does not depend on the progress sensor being enabled.
+    """
     from unittest.mock import MagicMock
 
-    from custom_components.ecovacs_mower.lawn_mower import SCAN_INTERVAL, EcovacsMower
+    from deebot_client.events import StateEvent, StatsEvent
+
+    from custom_components.ecovacs_mower.lawn_mower import EcovacsMower
 
     device = MagicMock()
     device.device_info = {"did": "did"}
+    mower = EcovacsMower(device, MagicMock())
+    mower._subscribed_events = {StateEvent}
 
-    assert EcovacsMower(device).should_poll is True
-    # Often enough that a dropped message is a nuisance rather than a wrong
-    # state all afternoon, rare enough to stay polite to Ecovacs' cloud.
-    assert timedelta(minutes=1) <= SCAN_INTERVAL <= timedelta(minutes=15)
+    await mower.async_update()
+
+    asked = {call.args[0] for call in device.events.request_refresh.call_args_list}
+    assert asked == {StateEvent, StatsEvent}
+
+
+async def test_a_dropped_leaving_push_is_still_bounded_by_the_poll() -> None:
+    """Starting from HA restarts the controller's tick, not just a pushed StateEvent.
+
+    Without this, a start command whose onCleanInfo/onChargeInfo push never
+    arrives (firmware 1.13.x's documented failure mode) leaves the controller's
+    poll stopped and nothing polls until the next availability flap. The tick
+    itself lives in EcovacsController, not here — see test_controller.py — so
+    this only checks that the entity asks the controller to (re)start it.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deebot_client.models import CleanAction
+
+    from custom_components.ecovacs_mower.lawn_mower import EcovacsMower
+
+    device = MagicMock()
+    device.device_info = {"did": "did"}
+    controller = MagicMock()
+    mower = EcovacsMower(device, controller)
+    mower._execute_command = AsyncMock()
+
+    await mower._clean_command(CleanAction.START)
+    controller.start_polling.assert_called_once_with(device)
+
+    # Pausing is not a leaving-the-dock command; it must not poke the
+    # controller's poll at all.
+    controller.start_polling.reset_mock()
+    await mower._clean_command(CleanAction.PAUSE)
+    controller.start_polling.assert_not_called()

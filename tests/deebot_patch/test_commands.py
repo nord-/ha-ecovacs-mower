@@ -2,19 +2,21 @@
 
 from unittest.mock import Mock, call
 
-from deebot_client.message import HandlingState
-
 from deebot_client.commands.json.clean import Clean, CleanV2, GetCleanInfo
-from deebot_client.events import StateEvent
+from deebot_client.commands.json.stats import GetStats
+from deebot_client.events import StateEvent, StatsEvent
+from deebot_client.message import HandlingState
 from deebot_client.models import CleanAction, State
 
 from custom_components.ecovacs_mower.deebot_patch.commands import (
     CleanMower,
     GetCleanInfoMower,
     GetProtectState,
+    GetStatsMower,
 )
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     MowerProtectStateEvent,
+    MowerStatsEvent,
     OnProtectState,
 )
 
@@ -98,6 +100,48 @@ def test_get_protect_state_notifies_the_protection_flags() -> None:
             )
         )
     ]
+
+
+# The payload is a real answer to getStats, captured while a GOAT O1200 was
+# mowing: area is the job's target, mowedArea the part already cut.
+_MOWING = {"area": 211275, "time": 704, "mowedArea": 87825}
+
+
+def test_get_stats_mower_asks_the_same_command_as_the_library() -> None:
+    # Issue #39. Only the parsing is replaced. If the name diverged this would
+    # be a second request for the same numbers.
+    assert GetStatsMower.NAME == GetStats.NAME == "getStats"
+
+
+def test_get_stats_mower_keeps_the_field_the_library_drops() -> None:
+    event_bus = Mock()
+    GetStatsMower._handle_body_data_dict(event_bus, _MOWING)
+    assert (
+        call(MowerStatsEvent(area=211275, mowed_area=87825))
+        in event_bus.notify.call_args_list
+    )
+
+
+def test_get_stats_mower_still_notifies_the_librarys_own_event() -> None:
+    # The area and time sensors subscribe to StatsEvent and must not notice
+    # that the command behind them was swapped.
+    event_bus = Mock()
+    GetStatsMower._handle_body_data_dict(event_bus, _MOWING)
+    assert (
+        call(StatsEvent(area=211275, time=704, type=None))
+        in event_bus.notify.call_args_list
+    )
+
+
+def test_get_stats_mower_reports_a_missing_field_as_none() -> None:
+    # A firmware that does not send mowedArea must still yield area and time.
+    # The progress entity reads "unknown" rather than the whole answer failing.
+    event_bus = Mock()
+    GetStatsMower._handle_body_data_dict(event_bus, {"area": 0, "time": 0})
+    assert (
+        call(MowerStatsEvent(area=0, mowed_area=None))
+        in event_bus.notify.call_args_list
+    )
 
 
 def test_the_mower_variant_asks_the_same_command() -> None:

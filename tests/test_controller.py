@@ -462,6 +462,142 @@ def test_constraint_check_catches_a_leak(tmp_path: Path) -> None:
     assert not _forbidden_imports(clean)
 
 
+def test_the_poll_interval_is_sane() -> None:
+    # 2026-08-21: the mower finished a run, drove home and started charging
+    # without sending onChargeInfo, onChargeState, or even the bury-point task
+    # events it logs for itself — while onStats, onBattery, onPos and
+    # onMapTrack all kept arriving. The entity stayed "mowing" for two hours,
+    # and one homeassistant.update_entity corrected it in 200 ms. Push alone
+    # does not keep the state honest.
+    from datetime import timedelta
+
+    from custom_components.ecovacs_mower.const import POLL_INTERVAL
+
+    # Often enough that a dropped message is a nuisance rather than a wrong
+    # state all afternoon, rare enough to stay polite to Ecovacs' cloud.
+    assert timedelta(minutes=1) <= POLL_INTERVAL <= timedelta(minutes=15)
+
+
+async def test_setup_polling_starts_on_leaving_and_stops_on_docking() -> None:
+    """The tick lives here now, not on the lawn_mower entity.
+
+    A disabled lawn_mower entity must not also stop the activity and
+    mowing_progress/stats sensors from getting their five-minute refresh, so
+    this subscribes on the device directly rather than through any entity.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from deebot_client.events import StateEvent
+    from deebot_client.models import State
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = MagicMock()
+    controller._unsub_polls = {}
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1"}
+
+    callbacks: dict[type, object] = {}
+    device.events.subscribe = lambda event_type, callback: callbacks.__setitem__(
+        event_type, callback
+    )
+
+    with patch(
+        "custom_components.ecovacs_mower.controller.async_track_time_interval"
+    ) as track:
+        controller._setup_polling(device)
+        on_status = callbacks[StateEvent]
+
+        # Subscribing is the startup check: nothing starts for a mower already
+        # parked.
+        await on_status(StateEvent(State.DOCKED))
+        track.assert_not_called()
+
+        # Leaving the dock: onCleanInfo/onScheduleTaskInfo pushes CLEANING
+        # directly.
+        await on_status(StateEvent(State.CLEANING))
+        track.assert_called_once()
+
+        # Every further answer out on the lawn keeps the one timer.
+        await on_status(StateEvent(State.PAUSED))
+        track.assert_called_once()
+        unsub = track.return_value
+        unsub.assert_not_called()
+
+        await on_status(StateEvent(State.DOCKED))
+        unsub.assert_called_once()
+
+        # And back out again, on a timer that was cancelled and not reused.
+        await on_status(StateEvent(State.CLEANING))
+        assert track.call_count == 2
+
+
+async def test_start_polling_is_idempotent() -> None:
+    """lawn_mower.py calls this directly on a self-initiated start command."""
+    from unittest.mock import MagicMock, patch
+
+    from custom_components.ecovacs_mower.const import POLL_INTERVAL
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = MagicMock()
+    controller._unsub_polls = {}
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1"}
+
+    with patch(
+        "custom_components.ecovacs_mower.controller.async_track_time_interval"
+    ) as track:
+        controller.start_polling(device)
+        assert track.call_args.args[0] is controller._hass
+        assert track.call_args.args[2] == POLL_INTERVAL
+
+        # Already polling: a second call must not add a second timer.
+        controller.start_polling(device)
+        track.assert_called_once()
+
+
+async def test_poll_refreshes_state_and_stats() -> None:
+    from unittest.mock import MagicMock
+
+    from deebot_client.events import StateEvent, StatsEvent
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    controller = EcovacsController.__new__(EcovacsController)
+    device = MagicMock()
+
+    await controller._poll(device, None)
+
+    asked = {call.args[0] for call in device.events.request_refresh.call_args_list}
+    assert asked == {StateEvent, StatsEvent}
+
+
+async def test_teardown_cancels_outstanding_polls() -> None:
+    """A poll timer belongs to HA's scheduler, not the device; it survives the
+    device object going away and must be cancelled explicitly."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._map_stores = {}
+    controller.maps = {}
+    controller._devices = []
+    controller._mqtt_client = None
+    controller._authenticator = AsyncMock()
+    unsub = MagicMock()
+    controller._unsub_polls = {"did-1": unsub}
+
+    await controller.teardown()
+
+    unsub.assert_called_once()
+    assert controller._unsub_polls == {}
+
+
 async def test_setup_map_restores_persisted_geometry() -> None:
     from unittest.mock import AsyncMock, MagicMock, patch
 

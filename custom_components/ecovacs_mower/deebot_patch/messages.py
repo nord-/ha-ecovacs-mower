@@ -20,6 +20,11 @@ short, ``"workComplete"`` when it finished, ``"app"`` when someone pressed a
 button. Without it, a run cut short by rain is indistinguishable from one that
 simply finished.
 
+``MowerStatsEvent`` is the other event here with no message of its own. It
+carries ``mowedArea``, a field ``getStats`` answers with and the library's
+``StatsEvent`` drops — the only number that moves while a job runs (issue
+#39). The command that produces it is ``GetStatsMower`` in ``commands.py``.
+
 ``OnPos`` is different in kind from the rest of this module: ``onPos`` is not
 unhandled, it is handled wrongly. See the class for what and why.
 
@@ -79,6 +84,31 @@ def notify_trigger(event_bus: EventBus, data: dict[str, Any]) -> None:
     """
     if isinstance(trigger := data.get("trigger"), str) and trigger:
         event_bus.notify(MowerTriggerEvent(trigger))
+
+
+@dataclass(frozen=True)
+class MowerStatsEvent(Event):
+    """The running job's target area and how much of it is already cut.
+
+    Both numbers come from one ``getStats`` answer, and the pair is what makes
+    a percentage possible. ``area`` is not what its name suggests: on GOAT it is
+    the *target* area of the current job — what the app shows as the mowing zone
+    — and it stands still for the whole run while ``mowedArea`` climbs towards
+    it. Calibrated against the owner's lawn: the ``bd_task-mow-*`` telemetry
+    reported ``workArea`` 320.5675 m² for a full mow, and the zone polygons the
+    map decoder had already parsed sum to 319.30 m².
+
+    An edge-cutting job (``workType`` 33 rather than 18) reports the strip it
+    sweeps, 21.13 m² on the same lawn, not the lawn. The consumer does not care:
+    a ratio of the two fields is the fraction of *this* job that is done, and
+    the unit cancels.
+
+    Both are cm² and both read 0 between jobs, which is why the entity treats a
+    zero ``area`` as "no job" rather than as zero percent.
+    """
+
+    area: int | None
+    mowed_area: int | None
 
 
 def handle_clean_info(event_bus: EventBus, data: dict[str, Any]) -> HandlingResult:

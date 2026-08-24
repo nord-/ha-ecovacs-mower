@@ -164,12 +164,12 @@ stored, and the entry stops asking. There is no need to delete and re-add it.
 
 ## What you get
 
-Thirty-seven entities on the mower's device page, across eight platforms:
+Thirty-eight entities on the mower's device page, across eight platforms:
 
 | Platform | Count | What |
 |---|---|---|
 | `lawn_mower` | 1 | Real state (`mowing`, `paused`, `returning`, `docked`, `error`) that updates within seconds, plus working `start_mowing`, `pause`, and `dock` |
-| `sensor` | 15 | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowed area, mowing time, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name |
+| `sensor` | 16 | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowing progress (see below), mowed area, mowing time, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name |
 | `binary_sensor` | 5 | Rain sensor, rain delay, emergency stop, locked, animal protection — the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
 | `switch` | 7 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
 | `number` | 2 | Notification volume, cutting direction |
@@ -273,9 +273,44 @@ The rain *reason* on `sensor.activity` is not restored by a restart, though — 
 comes from `trigger`, which nothing can ask for, so a restart during an active
 rain delay reads as plain `docked` until the mower's next scheduled run.
 
+### How far along the mower is
+
+`sensor.<device>_mowing_progress` reports the percentage of the running job that
+is cut — the same figure the Ecovacs app shows next to the zone size.
+
+The device answers `getStats` with three numbers, of which `deebot-client` keeps
+two. The third, `mowedArea`, is the only one that moves during a run: `area` is
+the *target* area of the current job and holds still while `mowedArea` climbs
+towards it. The sensor is the ratio of the two, so the unit cancels — which
+matters for edge cutting, where the target is the strip along the boundary rather
+than the lawn.
+
+Two things worth knowing:
+
+- **It is unknown between jobs**, not 0. The device reports zeros when nothing is
+  running, and a 0 there would be indistinguishable from a job that has just
+  started.
+- **It is polled, and the poll follows the job rather than the clock.** The
+  device never pushes this number — `onStats` did not arrive once in 38 hours of
+  logging — so asking is the only way to see it move. One request goes out at
+  startup to sync, and after that only while a run is in progress: the poll
+  starts when the mower starts mowing, ticks every five minutes through the rest
+  of the run, and stops when it parks. A run interrupted by charging needs no
+  special case — the mower docks, the poll stops, and it starts again when the
+  job resumes.
+
+`paused` is deliberately not a reason to stop asking: it is a normal mid-run
+state (rain, a manual pause), not a sign the job has ended, and the poll keeps
+going regardless of which non-docked state the mower is currently in.
+
+The same poll refreshes the job-target-area and job-target-duration sensors,
+which the device otherwise leaves untouched between restarts. Named after what
+they actually hold — GOAT's `getStats` reports the running job's target, not
+what has been cut or elapsed so far; only `mowedArea` climbs during a run.
+
 ### Entities disabled by default
 
-**17 of the 37 entities** ship with `entity_registry_enabled_default=False`,
+**17 of the 38 entities** ship with `entity_registry_enabled_default=False`,
 all inherited unchanged from upstream Home Assistant core's `ecovacs`
 integration — they're advanced settings or diagnostics, off by default
 there too. They appear in the mower's entity list right after setup, but
@@ -287,7 +322,7 @@ a bug: if one of these looks blank or "unavailable," this is why.
 |---|---|---|
 | `switch` | 7 of 7 | all of them: advanced mode, TrueDetect, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
 | `number` | 2 of 2 | both: volume, cutting direction |
-| `sensor` | 4 of 15 | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code** |
+| `sensor` | 4 of 16 | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code** |
 | `button` | 4 of 5 | the four consumable-lifespan resets (blade, lens brush, trimmer brush, weed rope) — "Locate mower" is enabled by default |
 
 **If you're planning anything on the error sensor** — an alarm, a
