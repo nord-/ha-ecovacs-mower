@@ -164,12 +164,13 @@ stored, and the entry stops asking. There is no need to delete and re-add it.
 
 ## What you get
 
-Thirty-eight entities on the mower's device page, across eight platforms:
+Thirty-eight entities on the mower's device page, across eight platforms —
+plus one per UWB beacon on the models that use them:
 
 | Platform | Count | What |
 |---|---|---|
 | `lawn_mower` | 1 | Real state (`mowing`, `paused`, `returning`, `docked`, `error`) that updates within seconds, plus working `start_mowing`, `pause`, and `dock` |
-| `sensor` | 16 | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowing progress (see below), mowed area, mowing time, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name |
+| `sensor` | 16 + one per beacon | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowing progress (see below), mowed area, mowing time, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name, and on a beacon-guided mower one battery percentage per UWB beacon (see below) |
 | `binary_sensor` | 5 | Rain sensor, rain delay, emergency stop, locked, animal protection — the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
 | `switch` | 7 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
 | `number` | 2 | Notification volume, cutting direction |
@@ -310,6 +311,46 @@ which the device otherwise leaves untouched between restarts. Named after what
 they actually hold — GOAT's `getStats` reports the running job's target, not
 what has been cut or elapsed so far; only `mowedArea` climbs during a run.
 
+### The UWB beacons
+
+On a beacon-guided GOAT, each beacon gets its own sensor:
+
+```
+sensor.<device>_beacon_<serial>    83 %
+```
+
+The serial is the code the Ecovacs app prints next to each beacon on its own
+maintenance page, so the two agree on which one is which. They are batteries as
+far as Home Assistant is concerned — `device_class: battery` — which means the
+built-in low-battery handling applies without anyone writing a template.
+
+They appear once the mower has answered `getLifeSpan` for the first time, not
+at setup: the payload is what says how many beacons there are and what they are
+called, and nothing else does. A beacon that stops being reported keeps its
+entity and reads unknown rather than holding the dead cell's last charge;
+deleting it is a manual step in the entity registry, deliberately, because a
+poll that failed is not proof that a beacon is gone.
+
+`deebot-client` drops these. Its `LifeSpan` enum has no member for the
+`uwbCell` component, and it raises on one rather than skipping it — which took
+the rest of the answer with it, since the parser publishes as it goes. On a
+G1-800 the components arrive in the order blade, beacons, lens brush, so the
+blade percentage worked, the beacons were invisible, **and the lens brush
+reported a value from before the beacons were paired that could never change.**
+That last one is fixed here too, as a side effect of not giving up on the
+answer.
+
+Two things this does not do yet:
+
+- **There is no per-beacon reset button.** The existing lifespan resets each
+  target a single component; targeting one beacon needs its serial, and the
+  wire format for that has not been captured. Reset the cell in the Ecovacs app
+  for now.
+- **It rides the poll.** No mower has been observed pushing `onLifeSpan`, so
+  the readings refresh on the same schedule as everything else that needs a
+  round trip — and on the firmware where those round trips fail intermittently,
+  they go stale for as long as the failures last.
+
 ### Entities disabled by default
 
 **17 of the 38 entities** ship with `entity_registry_enabled_default=False`,
@@ -324,7 +365,7 @@ a bug: if one of these looks blank or "unavailable," this is why.
 |---|---|---|
 | `switch` | 7 of 7 | all of them: advanced mode, TrueDetect, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
 | `number` | 2 of 2 | both: volume, cutting direction |
-| `sensor` | 4 of 16 | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code** |
+| `sensor` | 4 of the 16 fixed ones | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code**. The per-beacon sensors are enabled |
 | `button` | 4 of 5 | the four consumable-lifespan resets (blade, lens brush, trimmer brush, weed rope) — "Locate mower" is enabled by default |
 
 **If you're planning anything on the error sensor** — an alarm, a

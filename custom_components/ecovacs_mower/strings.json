@@ -111,7 +111,8 @@
       "lifespan_blade": { "name": "Blades remaining" },
       "lifespan_lens_brush": { "name": "Lens brush remaining" },
       "lifespan_trimmer_brush": { "name": "Trimmer brush remaining" },
-      "lifespan_weed_rope": { "name": "Weed rope remaining" }
+      "lifespan_weed_rope": { "name": "Weed rope remaining" },
+      "beacon": { "name": "Beacon {serial}" }
     },
     "switch": {
       "advanced_mode": { "name": "Advanced mode" },

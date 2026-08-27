@@ -68,6 +68,9 @@
           "returning_rain": "mdi:weather-pouring"
         }
       },
+      "beacon": {
+        "default": "mdi:map-marker-radius"
+      },
       "error": {
         "default": "mdi:alert-circle"
       },

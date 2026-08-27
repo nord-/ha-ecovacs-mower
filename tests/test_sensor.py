@@ -89,6 +89,7 @@ def test_every_description_has_a_translation() -> None:
         EcovacsActivitySensor,
         EcovacsErrorSensor,
         EcovacsMowingProgressSensor,
+        beacon_entity_description,
     )
 
     root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
@@ -101,6 +102,10 @@ def test_every_description_has_a_translation() -> None:
         EcovacsErrorSensor.entity_description,
         EcovacsActivitySensor.entity_description,
         EcovacsMowingProgressSensor.entity_description,
+        # Built per beacon at runtime, so there is no tuple to splat. Every
+        # serial yields the same translation key, which is what these three
+        # tests check.
+        beacon_entity_description("EXAMPLE"),
     )
     for description in descriptions:
         if description.translation_key:
@@ -124,6 +129,7 @@ def test_every_sensor_has_an_icon() -> None:
         EcovacsActivitySensor,
         EcovacsErrorSensor,
         EcovacsMowingProgressSensor,
+        beacon_entity_description,
     )
 
     root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
@@ -136,6 +142,10 @@ def test_every_sensor_has_an_icon() -> None:
         EcovacsErrorSensor.entity_description,
         EcovacsActivitySensor.entity_description,
         EcovacsMowingProgressSensor.entity_description,
+        # Built per beacon at runtime, so there is no tuple to splat. Every
+        # serial yields the same translation key, which is what these three
+        # tests check.
+        beacon_entity_description("EXAMPLE"),
     )
     for description in descriptions:
         if description.translation_key:
@@ -158,6 +168,7 @@ def test_no_stale_sensor_translations_or_icons() -> None:
         EcovacsActivitySensor,
         EcovacsErrorSensor,
         EcovacsMowingProgressSensor,
+        beacon_entity_description,
     )
 
     root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
@@ -170,6 +181,10 @@ def test_no_stale_sensor_translations_or_icons() -> None:
         EcovacsErrorSensor.entity_description,
         EcovacsActivitySensor.entity_description,
         EcovacsMowingProgressSensor.entity_description,
+        # Built per beacon at runtime, so there is no tuple to splat. Every
+        # serial yields the same translation key, which is what these three
+        # tests check.
+        beacon_entity_description("EXAMPLE"),
     )
     keys = {d.translation_key for d in descriptions if d.translation_key}
 
@@ -751,3 +766,197 @@ async def test_a_changed_percentage_is_written() -> None:
 
     assert sensor._attr_native_value == 51
     assert sensor.async_write_ha_state.call_count == 2
+def _beacons(*pairs: tuple[str, float]):
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerBeacon,
+        MowerBeaconsEvent,
+    )
+
+    return MowerBeaconsEvent(
+        beacons=tuple(MowerBeacon(sn=sn, percent=percent) for sn, percent in pairs)
+    )
+
+
+def _beacon_mower(class_: str = "77atlz", did: str = "did-beacon"):
+    """A patched mower class, mocked the way the progress-sensor test mocks one."""
+    from unittest.mock import MagicMock
+
+    from deebot_client.capabilities import DeviceType
+
+    device = MagicMock()
+    device.capabilities.device_type = DeviceType.MOWER
+    device.capabilities.error = None
+    device.capabilities.life_span.types = ()
+    device.device_info = {"did": did, "class": class_}
+    return device
+
+
+async def _set_up_beacons(device):
+    """Run the platform for *device* and return the added list and the callback.
+
+    The beacons are not known at setup time — the count comes out of the first
+    getLifeSpan answer — so what the platform installs is a subscription, and
+    the entities appear when it fires.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from custom_components.ecovacs_mower.deebot_patch.messages import MowerBeaconsEvent
+    from custom_components.ecovacs_mower.sensor import async_setup_entry
+
+    config_entry = MagicMock()
+    config_entry.runtime_data.devices = [device]
+
+    added: list = []
+    with patch(
+        "custom_components.ecovacs_mower.sensor.get_supported_entities",
+        return_value=[],
+    ):
+        await async_setup_entry(MagicMock(), config_entry, added.extend)
+
+    event_type, callback = device.events.subscribe.call_args[0]
+    assert event_type is MowerBeaconsEvent
+    return added, callback
+
+
+def _beacon_sensors(added: list):
+    from custom_components.ecovacs_mower.sensor import EcovacsBeaconSensor
+
+    return [e for e in added if isinstance(e, EcovacsBeaconSensor)]
+
+
+async def test_no_beacon_sensor_exists_before_the_device_has_answered() -> None:
+    """The count is only known from the payload, so setup cannot enumerate them."""
+    added, _ = await _set_up_beacons(_beacon_mower())
+
+    assert _beacon_sensors(added) == []
+
+
+async def test_a_beacon_sensor_appears_for_every_serial_reported() -> None:
+    # The real answer in issue #40 carried four, one of them flat.
+    added, on_beacons = await _set_up_beacons(_beacon_mower())
+
+    await on_beacons(_beacons(("A1", 0.0), ("A2", 83.0), ("A3", 68.0), ("A4", 73.0)))
+
+    assert [s.entity_description.serial for s in _beacon_sensors(added)] == [
+        "A1",
+        "A2",
+        "A3",
+        "A4",
+    ]
+
+
+async def test_a_serial_already_known_does_not_get_a_second_entity() -> None:
+    # getLifeSpan is polled, so the same set arrives over and over.
+    added, on_beacons = await _set_up_beacons(_beacon_mower())
+
+    await on_beacons(_beacons(("A1", 83.0)))
+    await on_beacons(_beacons(("A1", 82.0)))
+
+    assert len(_beacon_sensors(added)) == 1
+
+
+async def test_a_beacon_added_later_gets_its_own_entity() -> None:
+    """A replacement beacon has its own serial and is a new entity."""
+    added, on_beacons = await _set_up_beacons(_beacon_mower())
+
+    await on_beacons(_beacons(("A1", 83.0)))
+    await on_beacons(_beacons(("A1", 83.0), ("A2", 100.0)))
+
+    assert [s.entity_description.serial for s in _beacon_sensors(added)] == ["A1", "A2"]
+
+
+async def test_the_beacon_unique_id_carries_the_serial() -> None:
+    """Four beacons on one device need four ids, and the serial is the only key.
+
+    The payload has no index and no guaranteed order, so numbering them by
+    arrival would reshuffle the entities the day an answer comes back in a
+    different order.
+    """
+    added, on_beacons = await _set_up_beacons(_beacon_mower(did="did-x"))
+
+    await on_beacons(_beacons(("A1", 83.0), ("A2", 68.0)))
+
+    assert [s.unique_id for s in _beacon_sensors(added)] == [
+        "did-x_beacon_A1",
+        "did-x_beacon_A2",
+    ]
+
+
+async def test_beacon_sensors_are_gated_on_supported_classes() -> None:
+    """Same gate as the progress sensor: no patch, no refresh command, no value."""
+    unsupported = _beacon_mower(class_="not-a-real-class", did="did-unsupported")
+
+    from unittest.mock import MagicMock, patch
+
+    from custom_components.ecovacs_mower.sensor import async_setup_entry
+
+    config_entry = MagicMock()
+    config_entry.runtime_data.devices = [unsupported]
+
+    with patch(
+        "custom_components.ecovacs_mower.sensor.get_supported_entities",
+        return_value=[],
+    ):
+        await async_setup_entry(MagicMock(), config_entry, [].extend)
+
+    unsupported.events.subscribe.assert_not_called()
+
+
+def _bare_beacon_sensor(serial: str):
+    """A beacon sensor without HA, for the same reason as the progress one."""
+    from unittest.mock import Mock
+
+    from custom_components.ecovacs_mower.sensor import (
+        EcovacsBeaconSensor,
+        beacon_entity_description,
+    )
+
+    sensor = EcovacsBeaconSensor.__new__(EcovacsBeaconSensor)
+    sensor.entity_description = beacon_entity_description(serial)
+    sensor._device = Mock()
+    sensor.async_write_ha_state = lambda: None
+    return sensor
+
+
+async def test_a_beacon_sensor_reads_only_its_own_serial() -> None:
+    sensor = _bare_beacon_sensor("A2")
+
+    await sensor._on_beacons(_beacons(("A1", 0.0), ("A2", 83.0), ("A3", 68.0)))
+
+    assert sensor._attr_native_value == 83.0
+
+
+async def test_a_beacon_missing_from_a_later_answer_goes_unknown() -> None:
+    """A swapped-out beacon must not sit there showing the dead cell's charge.
+
+    The device simply stops listing it. Keeping the last value would leave a
+    ghost at 0 % that nothing can ever clear, and a low-battery automation
+    firing on a beacon that is no longer on the lawn.
+    """
+    sensor = _bare_beacon_sensor("A2")
+
+    await sensor._on_beacons(_beacons(("A2", 83.0)))
+    await sensor._on_beacons(_beacons(("A1", 68.0)))
+
+    assert sensor._attr_native_value is None
+
+
+def test_a_beacon_sensor_is_a_battery_percentage() -> None:
+    """device_class battery is what buys HA's own low-battery handling."""
+    from homeassistant.components.sensor import SensorDeviceClass
+    from homeassistant.const import PERCENTAGE
+
+    from custom_components.ecovacs_mower.sensor import beacon_entity_description
+
+    description = beacon_entity_description("A1")
+    assert description.device_class is SensorDeviceClass.BATTERY
+    assert description.native_unit_of_measurement == PERCENTAGE
+
+
+def test_a_beacon_sensor_is_named_after_its_serial() -> None:
+    """The serial is the code the app's maintenance page prints next to it."""
+    from custom_components.ecovacs_mower.sensor import beacon_entity_description
+
+    description = beacon_entity_description("A1")
+    assert description.translation_key == "beacon"
+    assert description.key == "beacon_A1"
