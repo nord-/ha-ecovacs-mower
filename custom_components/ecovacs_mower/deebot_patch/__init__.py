@@ -20,13 +20,20 @@ from .authentication import AccountAuthenticator
 from .commands import CleanMower, GetCleanInfoMower
 from .hardware import SUPPORTED_CLASSES, patch_device_info
 from .map_messages import OnArI, OnMapTrack, OnMI, OnSpecialContour
-from .messages import OnChargeInfo, OnPos, OnProtectState, OnScheduleTaskInfo
+from .messages import (
+    OnChargeInfo,
+    OnPos,
+    OnProtectState,
+    OnScheduleTaskInfo,
+    OnStatsMower,
+)
 
 __all__ = [
     "SUPPORTED_CLASSES",
     "AccountAuthenticator",
     "CleanMower",
     "GetCleanInfoMower",
+    "OnStatsMower",
     "PatchContractError",
     "apply",
     "patch_device_info",
@@ -64,6 +71,7 @@ def apply() -> None:
         OnPos,
         OnProtectState,
         OnScheduleTaskInfo,
+        OnStatsMower,
         OnArI,
         OnMapTrack,
         OnMI,

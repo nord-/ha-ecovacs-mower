@@ -20,7 +20,8 @@ does not have at all: the mower pushes ``onProtectState`` when a protection flag
 flips, and nothing had ever asked for the current value (issue #31).
 
 ``GetStatsMower`` is a third kind again: the command works and is answered, the
-library just discards one of the three numbers it answers with (issue #39).
+library just discards one of the three numbers it answers with (issue #39). Its
+counterpart for the unsolicited half, ``OnStatsMower``, is in ``messages.py``.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from deebot_client.commands.json.stats import GetStats
 from deebot_client.message import HandlingResult
 from deebot_client.models import CleanMode
 
-from .messages import MowerStatsEvent, OnProtectState
+from .messages import OnProtectState, notify_mower_stats
 
 if TYPE_CHECKING:
     from deebot_client.event_bus import EventBus
@@ -139,12 +140,9 @@ class GetStatsMower(GetStats):
     ) -> HandlingResult:
         """Handle message->body->data, then publish the mower's own pair.
 
-        Missing keys become ``None`` rather than 0: a firmware that does not
-        report ``mowedArea`` should leave the progress entity unknown, not claim
-        the job has not started.
+        Shared with ``OnStatsMower``, which parses the same payload arriving as
+        a push rather than as an answer.
         """
         result = super()._handle_body_data_dict(event_bus, data)
-        event_bus.notify(
-            MowerStatsEvent(area=data.get("area"), mowed_area=data.get("mowedArea"))
-        )
+        notify_mower_stats(event_bus, data)
         return result

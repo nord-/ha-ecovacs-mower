@@ -600,7 +600,11 @@ async def test_a_stats_answer_before_any_state_is_seen_is_not_trusted() -> None:
 
 
 async def test_the_states_in_between_are_left_alone() -> None:
-    """Only the two transitions are acted on; the rest ride the tick."""
+    """No state asks for a fresh answer except a start; the rest ride the tick.
+
+    Clearing the value is a separate question — see the tests below for the
+    states that end a job away from the dock.
+    """
     from deebot_client.models import State
 
     for state in (State.PAUSED, State.IDLE, State.RETURNING, State.ERROR):
@@ -658,3 +662,90 @@ def test_error_description_prefers_the_library_and_fills_its_gaps(caplog) -> Non
         assert not caplog.text
     finally:
         _UNKNOWN_CODES_REPORTED.discard(9999)
+
+
+async def test_a_job_ending_away_from_the_dock_clears_the_reading() -> None:
+    """Docking is not the only way a job ends (issue #55).
+
+    A mower that faults out on the lawn goes to ERROR and never reaches
+    DOCKED, and one that simply stops pushes an idle. Gating only on DOCKED
+    left the last percentage standing in both cases — on a firmware branch
+    whose stats never zero, indefinitely.
+    """
+    from deebot_client.models import State
+
+    for state in (State.ERROR, State.IDLE):
+        sensor = _bare_progress_sensor()
+        sensor._last_state = State.CLEANING
+        sensor._attr_native_value = 93
+
+        await sensor._on_state(_state_event(state))
+
+        assert sensor._attr_native_value is None, state
+
+
+async def test_a_stats_answer_after_a_job_ended_away_from_the_dock_is_ignored() -> None:
+    # The push keeps arriving for a while after the job stops on some
+    # firmware; without the gate it would refill the value just cleared.
+    from deebot_client.models import State
+
+    for state in (State.ERROR, State.IDLE):
+        sensor = _bare_progress_sensor()
+        sensor._last_state = state
+
+        await sensor._on_stats(_job(1374800, 1374800))
+
+        assert sensor._attr_native_value is None, state
+
+
+async def test_the_states_a_job_runs_in_still_report() -> None:
+    # The gate is inverted; make sure it did not invert too far.
+    from deebot_client.models import State
+
+    for state in (State.CLEANING, State.PAUSED, State.RETURNING):
+        sensor = _bare_progress_sensor()
+        sensor._last_state = state
+
+        await sensor._on_stats(_job(211275, 87825))
+
+        assert sensor._attr_native_value == 42, state
+
+
+async def test_an_unchanged_percentage_is_not_written_again() -> None:
+    """onStats arrives about twice a second; whole percents do not (issue #55).
+
+    On the captured O800 RTK job one percent is 2089 cm2 and a push moves a few
+    hundred, so most pushes round to the number already showing. Writing each
+    one would put roughly five times more rows in the recorder than the entity
+    has values to report.
+    """
+    from unittest.mock import Mock
+
+    from deebot_client.models import State
+
+    sensor = _bare_progress_sensor()
+    sensor._last_state = State.CLEANING
+    sensor.async_write_ha_state = Mock()
+
+    # Three consecutive pushes from the issue #56 log, all 50% of 208900.
+    for mowed in (104500, 104550, 105000):
+        await sensor._on_stats(_job(208900, mowed))
+
+    assert sensor._attr_native_value == 50
+    assert sensor.async_write_ha_state.call_count == 1
+
+
+async def test_a_changed_percentage_is_written() -> None:
+    from unittest.mock import Mock
+
+    from deebot_client.models import State
+
+    sensor = _bare_progress_sensor()
+    sensor._last_state = State.CLEANING
+    sensor.async_write_ha_state = Mock()
+
+    await sensor._on_stats(_job(208900, 104500))
+    await sensor._on_stats(_job(208900, 106589))
+
+    assert sensor._attr_native_value == 51
+    assert sensor.async_write_ha_state.call_count == 2

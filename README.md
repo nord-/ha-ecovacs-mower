@@ -287,17 +287,19 @@ than the lawn.
 
 Two things worth knowing:
 
-- **It is unknown between jobs**, not 0. The device reports zeros when nothing is
-  running, and a 0 there would be indistinguishable from a job that has just
-  started.
-- **It is polled, and the poll follows the job rather than the clock.** The
-  device never pushes this number — `onStats` did not arrive once in 38 hours of
-  logging — so asking is the only way to see it move. One request goes out at
-  startup to sync, and after that only while a run is in progress: the poll
-  starts when the mower starts mowing, ticks every five minutes through the rest
-  of the run, and stops when it parks. A run interrupted by charging needs no
-  special case — the mower docks, the poll stops, and it starts again when the
-  job resumes.
+- **It is unknown between jobs**, not 0. Most firmware reports zeros when
+  nothing is running, and a 0 there would be indistinguishable from a job that
+  has just started. Some firmware never zeroes at all and keeps reporting the
+  finished job's numbers, so the entity also clears itself whenever the mower is
+  not actually out on a job.
+- **It follows the push where there is one, and a poll where there is not.**
+  Some mowers send `onStats` several times a second while cutting; others have
+  been observed not to. Where it arrives, the reading tracks the mower, and a
+  whole percent has to change before the entity writes a new state. Where it
+  does not, a poll fills in: one request at startup to sync, then every five
+  minutes while a run is in progress, stopping when the mower parks. A run
+  interrupted by charging needs no special case — the mower docks, the poll
+  stops, and it starts again when the job resumes.
 
 `paused` is deliberately not a reason to stop asking: it is a normal mid-run
 state (rain, a manual pause), not a sign the job has ended, and the poll keeps

@@ -199,9 +199,10 @@ def test_upstream_get_pos_drops_every_sample_it_calls_invalid() -> None:
 
 async def test_an_exact_message_name_beats_the_legacy_fallback() -> None:
     # OnPos only takes effect because get_message() resolves MESSAGES before it
-    # falls back to the getPos command. Every other handler in this layer names
-    # a message with no legacy counterpart, so onPos is the only one whose
-    # effect depends on that order.
+    # falls back to the getPos command. It is the only handler here whose effect
+    # depends on that order: the rest either name a message with no legacy
+    # counterpart, or — onStats — overwrite an exact upstream entry, which the
+    # fallback is never consulted for.
     from deebot_client.hardware import get_static_device_info
     from deebot_client.messages import get_message
 
@@ -212,3 +213,36 @@ async def test_an_exact_message_name_beats_the_legacy_fallback() -> None:
     assert static is not None
     apply()
     assert get_message("onPos", static) is OnPos
+
+
+def test_upstream_on_stats_is_the_class_we_subclass() -> None:
+    # OnStatsMower inherits the name and calls super() for StatsEvent. A rename
+    # upstream would register our handler under a name nothing publishes on, and
+    # the area and time sensors would stop being fed by the push.
+    from deebot_client.messages.json.stats import OnStats
+
+    assert OnStats.NAME == "onStats"
+    # Whether the live entry is upstream's or ours depends on whether apply()
+    # has run in this session, and MESSAGES is a process-wide mutable dict. What
+    # matters either way is that the slot is filled by something derived from
+    # this class: upstream ships an onStats entry, so apply() has to overwrite
+    # one rather than fill a gap, and apply() verifies its own write took.
+    assert issubclass(MESSAGES["onStats"], OnStats)
+
+
+def test_upstream_on_stats_publishes_the_two_fields_it_keeps() -> None:
+    # The half of the payload our subclass does not touch. If upstream stopped
+    # notifying here, super() would go quiet and only MowerStatsEvent would
+    # survive the push.
+    from unittest.mock import Mock
+
+    from deebot_client.events import StatsEvent
+    from deebot_client.messages.json.stats import OnStats
+
+    event_bus = Mock()
+    OnStats._handle_body_data_dict(
+        event_bus, {"time": 977, "area": 208900, "mowedArea": 105925}
+    )
+    event_bus.notify.assert_called_once_with(
+        StatsEvent(area=208900, time=977, type=None)
+    )

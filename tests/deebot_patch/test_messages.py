@@ -5,22 +5,27 @@ from __future__ import annotations
 import asyncio
 from dataclasses import fields
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 from deebot_client.event_bus import EventBus
-from deebot_client.events import Position, PositionsEvent, StateEvent
+from deebot_client.events import Position, PositionsEvent, StateEvent, StatsEvent
 from deebot_client.message import HandlingState
+from deebot_client.messages.json import MESSAGES
+from deebot_client.messages.json.stats import OnStats
 from deebot_client.models import State
 from deebot_client.rs.map import PositionType
 
+from custom_components.ecovacs_mower.deebot_patch import apply
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     MowerProtectStateEvent,
+    MowerStatsEvent,
     MowerTriggerEvent,
     OnChargeInfo,
     OnPos,
     OnProtectState,
     OnScheduleTaskInfo,
+    OnStatsMower,
 )
 
 
@@ -378,3 +383,56 @@ def test_message_names() -> None:
     assert OnPos.NAME == "onPos"
     assert OnProtectState.NAME == "onProtectState"
     assert OnScheduleTaskInfo.NAME == "onScheduleTaskInfo"
+
+
+# Verbatim from the log attached to issue #56, a GOAT O800 RTK (2px96q) on
+# firmware 1.17.11 mid-job. The push carries the same three numbers getStats
+# answers with, and no mowid — that field is a 77atlz/1.36.208 extra and cannot
+# be relied on as a job identity.
+_PUSHED = {"time": 977, "area": 208900, "mowedArea": 105925}
+
+
+def test_on_stats_mower_listens_on_the_librarys_own_message_name() -> None:
+    # Replacing the parsing of an existing push, not registering a second one.
+    assert OnStatsMower.NAME == OnStats.NAME == "onStats"
+
+
+def test_on_stats_mower_publishes_the_mowed_area_the_library_drops() -> None:
+    # Issue #55. onStats arrives at about 2 Hz on the classes that send it at
+    # all, carrying the one number that moves during a job — while upstream's
+    # OnStats notifies StatsEvent only, so the progress entity never saw it.
+    event_bus = Mock()
+    OnStatsMower._handle_body_data_dict(event_bus, _PUSHED)
+    assert (
+        call(MowerStatsEvent(area=208900, mowed_area=105925))
+        in event_bus.notify.call_args_list
+    )
+
+
+def test_on_stats_mower_still_notifies_the_librarys_own_event() -> None:
+    # The area and time sensors subscribe to StatsEvent and must not notice
+    # that the handler behind the push was swapped.
+    event_bus = Mock()
+    OnStatsMower._handle_body_data_dict(event_bus, _PUSHED)
+    assert (
+        call(StatsEvent(area=208900, time=977, type=None))
+        in event_bus.notify.call_args_list
+    )
+
+
+def test_on_stats_mower_reports_a_missing_field_as_none() -> None:
+    # Same contract as GetStatsMower: absent mowedArea leaves the progress
+    # entity unknown rather than claiming the job has not started.
+    event_bus = Mock()
+    OnStatsMower._handle_body_data_dict(event_bus, {"area": 208900, "time": 977})
+    assert (
+        call(MowerStatsEvent(area=208900, mowed_area=None))
+        in event_bus.notify.call_args_list
+    )
+
+
+def test_on_stats_mower_is_registered_by_apply() -> None:
+    # Without this the push resolves to the library's OnStats and the mowed
+    # area is dropped on the floor, which is the whole of issue #55.
+    apply()
+    assert MESSAGES["onStats"] is OnStatsMower

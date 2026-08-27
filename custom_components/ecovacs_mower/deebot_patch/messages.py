@@ -20,10 +20,11 @@ short, ``"workComplete"`` when it finished, ``"app"`` when someone pressed a
 button. Without it, a run cut short by rain is indistinguishable from one that
 simply finished.
 
-``MowerStatsEvent`` is the other event here with no message of its own. It
-carries ``mowedArea``, a field ``getStats`` answers with and the library's
-``StatsEvent`` drops — the only number that moves while a job runs (issue
-#39). The command that produces it is ``GetStatsMower`` in ``commands.py``.
+``MowerStatsEvent`` carries ``mowedArea``, a field the library's ``StatsEvent``
+drops — the only number that moves while a job runs (issue #39). Two handlers
+produce it from the same three numbers: ``GetStatsMower`` in ``commands.py``
+parses the answer to ``getStats``, and ``OnStatsMower`` below parses the
+``onStats`` push that some classes send and others never do (issue #55).
 
 ``OnPos`` is different in kind from the rest of this module: ``onPos`` is not
 unhandled, it is handled wrongly. See the class for what and why.
@@ -46,6 +47,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from deebot_client.events import Position, PositionsEvent, StateEvent
 from deebot_client.events.base import Event
 from deebot_client.message import HandlingResult, MessageBodyDataDict
+from deebot_client.messages.json.stats import OnStats
 from deebot_client.models import State
 from deebot_client.rs.map import PositionType
 
@@ -103,12 +105,69 @@ class MowerStatsEvent(Event):
     a ratio of the two fields is the fraction of *this* job that is done, and
     the unit cancels.
 
-    Both are cm² and both read 0 between jobs, which is why the entity treats a
-    zero ``area`` as "no job" rather than as zero percent.
+    Both are cm², and on the firmware this was built against both read 0
+    between jobs — which is why a zero ``area`` means "no job" rather than zero
+    percent. That convention is not universal: a G1-800 on 1.36.208 still
+    reported the finished job's numbers six hours later (issue #55), so the
+    entity gates on the mower's state as well and does not rely on this alone.
     """
 
     area: int | None
     mowed_area: int | None
+
+
+def notify_mower_stats(event_bus: EventBus, data: dict[str, Any]) -> None:
+    """Publish the pair a stats payload carries, from wherever it arrived.
+
+    Both entry points parse the same three numbers: ``getStats`` answers with
+    them and ``onStats`` pushes them. A copy in each would drift the day the
+    payload gains a field, and the two cannot be one class — the message
+    registry and the command topic are keyed on ``NAME``, and these two names
+    differ.
+
+    Missing keys become ``None`` rather than 0: a firmware that does not report
+    ``mowedArea`` should leave the progress entity unknown, not claim the job
+    has not started.
+    """
+    event_bus.notify(
+        MowerStatsEvent(area=data.get("area"), mowed_area=data.get("mowedArea"))
+    )
+
+
+class OnStatsMower(OnStats):
+    """``onStats``, keeping the field the library throws away.
+
+    The exact counterpart of ``GetStatsMower`` in ``commands.py``: same three
+    numbers, same dropped one, different entry point. Upstream's ``OnStats``
+    notifies ``StatsEvent`` from ``area`` and ``time`` and never looks at
+    ``mowedArea``, so before this the push was parsed and the only number that
+    moves during a job was discarded.
+
+    #39 built the entity on a poll alone, on the finding that ``onStats`` did
+    not arrive once in 38 hours of logging. It does arrive: a GOAT O800 RTK
+    (``2px96q``, firmware 1.17.11) pushed it about twice a second through an
+    eleven-minute job, carrying the whole curve from ``mowedArea`` 0 to 208900
+    against an ``area`` of 208900, and a GOAT G1-800 (``77atlz``, 1.36.208)
+    sent 441 of them in one job (issue #55). Whether the O1200 the 38-hour
+    window covers is genuinely silent is unsettled — the comment above
+    ``POLL_INTERVAL`` in ``const.py`` records ``onStats`` still arriving there
+    on 2026-08-21, from the same hardware.
+
+    So the poll stays, on the narrower justification that it is what fills the
+    entity in after a restart and the floor under a push that may not come.
+    Where the push does arrive this makes the reading follow the mower rather
+    than the five-minute tick, and covers the same firmware's intermittently
+    unanswered ``getStats`` for free.
+    """
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data, then publish the mower's own pair."""
+        result = super()._handle_body_data_dict(event_bus, data)
+        notify_mower_stats(event_bus, data)
+        return result
 
 
 def handle_clean_info(event_bus: EventBus, data: dict[str, Any]) -> HandlingResult:

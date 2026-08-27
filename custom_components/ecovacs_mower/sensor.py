@@ -13,12 +13,13 @@ The activity sensor exists because HA's ``LawnMowerActivity`` enum cannot say
 protection flags from ``onProtectState`` are deliberately *not* what it reads;
 ``deebot_patch.messages`` explains why.
 
-The progress sensor is the one entity in this platform whose reading depends on
-a poll — ``EcovacsController``'s, not one of its own. The number it reports only
-exists while a job is running and the device never pushes it (issue #39), so
-asking is the only way to see it move. The poll follows the job rather than the
-clock: it starts when the mower starts mowing and stops when it parks, so a
-rainy week costs nothing.
+The progress sensor is the one entity in this platform backed by a poll —
+``EcovacsController``'s, not one of its own. The poll follows the job rather
+than the clock: it starts when the mower starts mowing and stops when it parks,
+so a rainy week costs nothing. On the classes that push ``onStats`` the reading
+follows the mower instead and the poll is the floor rather than the source; on
+the one it was built against, which pushes nothing, it is still the only way to
+see the number move.
 """
 
 from collections.abc import Callable
@@ -512,6 +513,13 @@ class EcovacsActivitySensor(
         self.async_write_ha_state()
 
 
+# The states in which the stats payload describes a job that is actually
+# running. Everything else — docked, idle, error, and not yet known — means the
+# numbers on the wire belong to a job that is over, and on the firmware branch
+# that never zeroes them there is nothing in the payload itself to say so.
+_JOB_STATES = frozenset({State.CLEANING, State.PAUSED, State.RETURNING})
+
+
 def _progress(area: int | None, mowed_area: int | None) -> int | None:
     """Percent of the running job that is done, or None when there is no job.
 
@@ -535,12 +543,15 @@ class EcovacsMowingProgressSensor(
 ):
     """How much of the running job the mower has cut, in percent.
 
-    A calculation on top of one getStats answer, nothing more. The device never
-    pushes that answer — ``onStats`` did not arrive once in 38 hours of logging
-    (issue #39) — so somebody has to ask, and ``EcovacsController`` already does
-    on exactly the trigger and interval this needs. That same answer refreshes
-    ``StatsEvent``, which the area and time sensors are built on, so they stop
-    being frozen too.
+    A calculation on top of two numbers, from wherever they last arrived.
+
+    #39 built this on a poll alone, on the finding that the device never pushes
+    them. It does: an O800 RTK and a G1-800 both send ``onStats`` several times
+    a second while cutting (issue #55). The reading now comes from
+    ``OnStatsMower`` where it is pushed and from ``EcovacsController``'s tick
+    where it is not, and either way the same pair of events is notified —
+    ``StatsEvent`` with them, so the area and time sensors stop being frozen
+    too.
     """
 
     entity_description: SensorEntityDescription = SensorEntityDescription(
@@ -578,10 +589,23 @@ class EcovacsMowingProgressSensor(
         (reported against issue #39). ``_progress()``'s zero check alone would
         read that as a job stuck at 100 %, permanently, for as long as the
         mower sits parked.
+
+        The gate names the states a job runs *in* rather than the states it
+        does not. Naming only ``docked`` left a job that ended away from the
+        dock — a fault out on the lawn, or a plain ``idle`` push — holding the
+        last percentage on that same never-zeroing firmware (issue #55).
+
+        An unchanged percentage is not written again. ``onStats`` arrives about
+        twice a second on the classes that push it, and whole percents do not:
+        one percent of the captured O800 RTK job is 2089 cm² against a few
+        hundred per push, so most pushes round to the number already showing.
         """
-        if self._last_state is None or self._last_state is State.DOCKED:
+        if self._last_state not in _JOB_STATES:
             return
-        self._attr_native_value = _progress(event.area, event.mowed_area)
+        value = _progress(event.area, event.mowed_area)
+        if value == self._attr_native_value:
+            return
+        self._attr_native_value = value
         self.async_write_ha_state()
 
     async def _on_state(self, event: StateEvent) -> None:
@@ -609,6 +633,6 @@ class EcovacsMowingProgressSensor(
 
         if event.state is State.CLEANING:
             self._device.events.request_refresh(MowerStatsEvent)
-        elif event.state is State.DOCKED:
+        elif event.state not in _JOB_STATES:
             self._attr_native_value = None
             self.async_write_ha_state()
