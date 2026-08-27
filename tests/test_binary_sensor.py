@@ -185,10 +185,19 @@ def test_the_fault_sensor_starts_off_and_not_unknown() -> None:
     Without a default the entity would sit at ``unknown`` forever on a mower
     that has never faulted, which on a problem sensor reads as a broken sensor
     rather than a working one with nothing to report.
+
+    Read through an instance, not off the class: HA's ``CachedProperties``
+    metaclass turns ``_attr_is_on`` into a property, so the class attribute is
+    the property object rather than the default it carries.
     """
+    from unittest.mock import Mock
+
     from custom_components.ecovacs_mower.binary_sensor import EcovacsFaultBinarySensor
 
-    assert EcovacsFaultBinarySensor._attr_is_on is False
+    device = Mock()
+    device.device_info = {"did": "test-did"}
+
+    assert EcovacsFaultBinarySensor(device).is_on is False
 
 
 def test_platform_is_forwarded() -> None:
