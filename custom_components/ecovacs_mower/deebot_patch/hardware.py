@@ -17,8 +17,14 @@ from deebot_client.commands.json.charge_state import GetChargeState
 from deebot_client.events import StateEvent, StatsEvent
 from deebot_client.hardware import _DEVICES, get_static_device_info
 
-from .commands import CleanMower, GetCleanInfoMower, GetProtectState, GetStatsMower
-from .messages import MowerProtectStateEvent, MowerStatsEvent
+from .commands import (
+    CleanMower,
+    GetCleanInfoMower,
+    GetLifeSpanMower,
+    GetProtectState,
+    GetStatsMower,
+)
+from .messages import MowerBeaconsEvent, MowerProtectStateEvent, MowerStatsEvent
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,7 +64,7 @@ SUPPORTED_CLASSES = ("2i0fns", "9bts2s", "2px96q", "77atlz", "e4gqia", "xmp9ds")
 async def patch_device_info(class_: str) -> None:
     """Replace the cached device definition with one where the mow bugs are fixed.
 
-    Four corrections:
+    Five corrections:
 
     * ``clean.action.command``: ``CleanV2`` publishes on ``clean_V2``, which
       GOAT firmware ignores. Swapped for ``CleanMower`` on ``clean``.
@@ -68,8 +74,11 @@ async def patch_device_info(class_: str) -> None:
       answer.
     * ``stats.clean``: ``GetStats`` drops ``mowedArea``, the one number that
       moves while a job runs. Swapped for ``GetStatsMower``.
-    * ``MowerProtectStateEvent`` and ``MowerStatsEvent``: given the refresh
-      commands they had none of.
+    * ``life_span.get``: ``GetLifeSpan`` raises on the ``uwbCell`` entries a
+      beacon-guided mower reports, which loses the beacons and every component
+      listed after them. Swapped for ``GetLifeSpanMower``.
+    * ``MowerProtectStateEvent``, ``MowerStatsEvent`` and ``MowerBeaconsEvent``:
+      given the refresh commands they had none of.
 
     The call is idempotent and does nothing for classes outside
     ``SUPPORTED_CLASSES``.
@@ -107,6 +116,16 @@ async def patch_device_info(class_: str) -> None:
             capabilities.stats,
             clean=CapabilityEvent(StatsEvent, [GetStatsMower()]),
         ),
+        # Only the get command is replaced. types decides which lifespan
+        # entities are built and reset is the button behind them; both are the
+        # library's own and are carried through by replace(). The request keeps
+        # the same component list for the same reason the stats request keeps
+        # its name: the device answers with everything it has regardless, so
+        # widening it would buy nothing and diverge further from upstream.
+        life_span=replace(
+            capabilities.life_span,
+            get=[GetLifeSpanMower(capabilities.life_span.types)],
+        ),
     )
     # Neither the protection flags nor the mowing progress is a library
     # capability, so there is no field to hang a CapabilityEvent on and nothing
@@ -141,6 +160,7 @@ async def patch_device_info(class_: str) -> None:
                 **patched._events,
                 MowerProtectStateEvent: [GetProtectState()],
                 MowerStatsEvent: [GetStatsMower()],
+                MowerBeaconsEvent: [GetLifeSpanMower(capabilities.life_span.types)],
             }
         ),
     )

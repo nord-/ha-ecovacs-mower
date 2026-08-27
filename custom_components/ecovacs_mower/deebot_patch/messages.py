@@ -29,6 +29,11 @@ parses the answer to ``getStats``, and ``OnStatsMower`` below parses the
 ``OnPos`` is different in kind from the rest of this module: ``onPos`` is not
 unhandled, it is handled wrongly. See the class for what and why.
 
+``MowerBeaconsEvent`` carries the UWB beacons a beacon-guided GOAT reports
+inside its ``getLifeSpan`` answer, which the library drops on the floor and
+takes the rest of the answer with it (issue #40). Its parser is called from
+``GetLifeSpanMower`` in ``commands.py``.
+
 ``onProtectState`` is a fourth unhandled message. It carries the mower's
 protection flags. ``isRainProtect`` is the rain sensor's reading, not the
 rain-protection setting — see ``MowerProtectStateEvent`` for the two samples
@@ -132,6 +137,82 @@ def notify_mower_stats(event_bus: EventBus, data: dict[str, Any]) -> None:
     event_bus.notify(
         MowerStatsEvent(area=data.get("area"), mowed_area=data.get("mowedArea"))
     )
+
+
+@dataclass(frozen=True)
+class MowerBeacon:
+    """One UWB beacon's serial and how much of its dry cell is left.
+
+    ``sn`` is the code the app's maintenance page prints next to each beacon,
+    which is the only thing that tells four otherwise identical entries apart —
+    the payload has no index and no guaranteed order.
+    """
+
+    sn: str
+    percent: float
+
+
+@dataclass(frozen=True)
+class MowerBeaconsEvent(Event):
+    """Every beacon the mower reported, in the order the device listed them.
+
+    One event for the whole set rather than one per beacon: the event bus keeps
+    the last event of each type and hands it to whoever subscribes later, so
+    four separate notifications of the same type would leave a late subscriber
+    holding only the fourth.
+    """
+
+    beacons: tuple[MowerBeacon, ...]
+
+
+# The wire type of a beacon's dry cell. Not a LifeSpan member, and cannot become
+# one: the enum has members already, and Python enums are closed once they do.
+BEACON_COMPONENT = "uwbCell"
+
+
+def notify_mower_beacons(event_bus: EventBus, data: list[dict[str, Any]]) -> None:
+    """Publish the beacon entries a life-span answer carries, if it has any.
+
+    Nothing is published when there are none. A mower that navigates without
+    beacons — the O1200 is one — would otherwise report an empty set, which
+    reads as "no charge left" rather than "no beacons".
+
+    An entry that cannot be turned into a reading is dropped on its own instead
+    of taking the others with it. That is the entire failure this class exists
+    to undo, and repeating it one level down would be absurd.
+    """
+    beacons: list[MowerBeacon] = []
+
+    for component in data:
+        if component.get("type") != BEACON_COMPONENT:
+            continue
+
+        sn = component.get("sn")
+        if not isinstance(sn, str) or not sn:
+            # Without a serial the reading cannot be attributed to a beacon,
+            # and attributing it to the wrong one is worse than losing it.
+            _LOGGER.warning("Beacon entry without a serial, dropped: %s", component)
+            continue
+
+        try:
+            left = int(component["left"])
+            total = int(component["total"])
+        except (KeyError, TypeError, ValueError):
+            _LOGGER.warning(
+                "Beacon entry %s is not a pair of numbers: %s", sn, component
+            )
+            continue
+
+        if total <= 0:
+            _LOGGER.warning("Beacon entry %s reports a total of %s, dropped", sn, total)
+            continue
+
+        # Rounded the way the library rounds its own life spans, so a beacon and
+        # a blade cannot disagree about what 51.52 means.
+        beacons.append(MowerBeacon(sn=sn, percent=round((left / total) * 100, 2)))
+
+    if beacons:
+        event_bus.notify(MowerBeaconsEvent(beacons=tuple(beacons)))
 
 
 class OnStatsMower(OnStats):

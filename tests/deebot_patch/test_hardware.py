@@ -3,13 +3,15 @@
 import pytest
 from deebot_client.commands.json.charge_state import GetChargeState
 from deebot_client.commands.json.clean import CleanV2, GetCleanInfo, GetCleanInfoV2
+from deebot_client.commands.json.life_span import GetLifeSpan
 from deebot_client.commands.json.stats import GetStats
-from deebot_client.events import BatteryEvent, StateEvent, StatsEvent
+from deebot_client.events import BatteryEvent, LifeSpanEvent, StateEvent, StatsEvent
 from deebot_client.hardware import _DEVICES, get_static_device_info
 
 from custom_components.ecovacs_mower.deebot_patch.commands import (
     CleanMower,
     GetCleanInfoMower,
+    GetLifeSpanMower,
     GetProtectState,
     GetStatsMower,
 )
@@ -18,6 +20,7 @@ from custom_components.ecovacs_mower.deebot_patch.hardware import (
     patch_device_info,
 )
 from custom_components.ecovacs_mower.deebot_patch.messages import (
+    MowerBeaconsEvent,
     MowerProtectStateEvent,
     MowerStatsEvent,
 )
@@ -386,3 +389,73 @@ async def test_patch_preserves_the_other_stats_capabilities(class_: str) -> None
 
     assert after.capabilities.stats.total == total_before
     assert after.capabilities.stats.report == report_before
+async def test_unpatched_library_asks_with_the_command_that_gives_up() -> None:
+    # Documents the gap issue #40 asks about: upstream's GetLifeSpan raises on
+    # the first uwbCell entry, which loses every component listed after it as
+    # well as the beacons themselves.
+    info = await get_static_device_info(O1200)
+    commands = info.capabilities.get_refresh_commands(LifeSpanEvent)
+    assert [type(c) for c in commands] == [GetLifeSpan]
+
+
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_patch_swaps_in_the_life_span_command_that_survives_a_beacon(
+    class_: str,
+) -> None:
+    await patch_device_info(class_)
+    info = await get_static_device_info(class_)
+    commands = info.capabilities.get_refresh_commands(LifeSpanEvent)
+    # Exact type, not isinstance: GetLifeSpanMower inherits from GetLifeSpan, so
+    # isinstance() would pass on the unpatched definition too.
+    assert [type(c) for c in commands] == [GetLifeSpanMower]
+
+
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_patch_asks_for_the_same_components_as_the_library(class_: str) -> None:
+    # Only the parsing is replaced. The device answers with every component it
+    # has whatever the request lists, so widening the request would change
+    # nothing except how far this diverges from upstream.
+    before = await get_static_device_info(class_)
+    args_before = [
+        c._args for c in before.capabilities.get_refresh_commands(LifeSpanEvent)
+    ]
+    _DEVICES.pop(class_, None)
+
+    await patch_device_info(class_)
+    after = await get_static_device_info(class_)
+
+    assert [
+        c._args for c in after.capabilities.get_refresh_commands(LifeSpanEvent)
+    ] == args_before
+
+
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_patch_wires_a_refresh_command_for_the_beacons(class_: str) -> None:
+    # Same trap as the protection flags (issue #31) and the mowing progress
+    # (#39): MowerBeaconsEvent is not a library capability, so without an entry
+    # in the events mapping the bus finds no command when a beacon entity
+    # subscribes. There is no unsolicited onLifeSpan on this firmware to fall
+    # back on either, so the poll is the only way the value ever arrives.
+    await patch_device_info(class_)
+    info = await get_static_device_info(class_)
+    commands = info.capabilities.get_refresh_commands(MowerBeaconsEvent)
+    assert [type(c) for c in commands] == [GetLifeSpanMower]
+
+
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_patch_preserves_the_other_life_span_capabilities(class_: str) -> None:
+    # Only the get command is replaced; types drives which lifespan entities are
+    # built and reset is the button behind them. Rebuilding CapabilityLifeSpan
+    # from scratch instead would silently drop them.
+    before = await get_static_device_info(class_)
+    types_before = before.capabilities.life_span.types
+    reset_before = before.capabilities.life_span.reset
+    event_before = before.capabilities.life_span.event
+    _DEVICES.pop(class_, None)
+
+    await patch_device_info(class_)
+    after = await get_static_device_info(class_)
+
+    assert after.capabilities.life_span.types == types_before
+    assert after.capabilities.life_span.reset is reset_before
+    assert after.capabilities.life_span.event is event_before
