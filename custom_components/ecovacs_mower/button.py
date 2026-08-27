@@ -23,7 +23,13 @@ upstream.
 from dataclasses import dataclass
 from typing import override
 
-from deebot_client.capabilities import CapabilityExecute, CapabilityLifeSpan
+from deebot_client.capabilities import (
+    Capabilities,
+    CapabilityExecute,
+    CapabilityLifeSpan,
+    DeviceType,
+)
+from deebot_client.device import Device
 from deebot_client.events import LifeSpan
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
@@ -38,6 +44,7 @@ from .entity import (
     EcovacsDescriptionEntity,
     EcovacsEntity,
 )
+from .fault import FaultLatch
 from .util import get_supported_entities
 
 
@@ -101,6 +108,13 @@ async def async_setup_entry(
         for description in LIFESPAN_ENTITY_DESCRIPTIONS
         if description.component in device.capabilities.life_span.types
     )
+    entities.extend(
+        EcovacsClearFaultButtonEntity(device, latch)
+        for device in controller.devices
+        if device.capabilities.device_type is DeviceType.MOWER
+        and (latch := controller.fault_latches.get(device.device_info["did"]))
+        is not None
+    )
     async_add_entities(entities)
 
 
@@ -132,3 +146,40 @@ class EcovacsResetLifespanButtonEntity(
         await self._execute_command(
             self._capability.reset(self.entity_description.component)
         )
+
+
+class EcovacsClearFaultButtonEntity(
+    EcovacsEntity[Capabilities],
+    ButtonEntity,
+):
+    """Release the latched fault on ``binary_sensor.<device>_fault``.
+
+    Issue #53. The only button here that sends nothing to the mower: the latch
+    is ours, and the device has no notion of an acknowledged fault. That is
+    also why it exists at all — docking and starting a job are the device's
+    signals, and if some firmware never reports either, this is what keeps the
+    latch from being permanently stuck. It needs no cooperation from the mower.
+
+    ``_always_available`` for the same reason: the latch is local state, so
+    clearing it must work while the mower is unreachable — which is exactly
+    when a stale fault is most likely to be the thing bothering someone.
+    """
+
+    _always_available = True
+    entity_description = ButtonEntityDescription(
+        key="clear_fault",
+        translation_key="clear_fault",
+        # Not diagnostic and not config: it is an action taken in response to
+        # the fault entity, and belongs next to the controls, for the same
+        # reason play_sound does above.
+    )
+
+    def __init__(self, device: Device, latch: FaultLatch) -> None:
+        """Initialize entity."""
+        super().__init__(device, device.capabilities)
+        self._latch = latch
+
+    @override
+    async def async_press(self) -> None:
+        """Press the button."""
+        self._latch.clear_by_request()

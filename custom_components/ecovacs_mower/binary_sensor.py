@@ -29,19 +29,21 @@ from dataclasses import dataclass
 from typing import override
 
 from deebot_client.capabilities import Capabilities, DeviceType
+from deebot_client.device import Device
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.const import EntityCategory
+from homeassistant.const import ATTR_CODE, CONF_DESCRIPTION, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EcovacsMowerConfigEntry
 from .deebot_patch.messages import MowerProtectStateEvent
-from .entity import EcovacsDescriptionEntity
+from .entity import EcovacsDescriptionEntity, EcovacsEntity
+from .fault import MowerFaultEvent
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -116,12 +118,18 @@ async def async_setup_entry(
 ) -> None:
     """Add entities for passed config_entry in HA."""
     controller = config_entry.runtime_data
-    async_add_entities(
+    entities: list[EcovacsEntity] = [
         EcovacsProtectStateBinarySensor(device, device.capabilities, description)
         for device in controller.devices
         if device.capabilities.device_type is DeviceType.MOWER
         for description in ENTITY_DESCRIPTIONS
+    ]
+    entities.extend(
+        EcovacsFaultBinarySensor(device)
+        for device in controller.devices
+        if device.capabilities.device_type is DeviceType.MOWER
     )
+    async_add_entities(entities)
 
 
 class EcovacsProtectStateBinarySensor(
@@ -142,3 +150,60 @@ class EcovacsProtectStateBinarySensor(
             self.async_write_ha_state()
 
         self._subscribe(MowerProtectStateEvent, on_event)
+
+
+class EcovacsFaultBinarySensor(
+    EcovacsEntity[Capabilities],
+    BinarySensorEntity,
+):
+    """Whether the mower has a fault nobody has dealt with yet.
+
+    Issue #53. The distinction from ``sensor.<device>_error`` is the whole
+    point: that sensor answers "what did the device last say", which on
+    firmware 1.36.208 was ``0`` for the 38 minutes a jammed mower sat on the
+    lawn. This one answers "is there an unresolved fault", and only something
+    that cannot coexist with one clears it. The code and its text ride along as
+    attributes so a notification can name the fault without reading the other
+    entity — and so an automation can trigger on ``attribute: code`` when a
+    second, different fault arrives while this is already on.
+
+    Enabled by default, and not diagnostic: this is the entity the issue asked
+    for, and one nobody finds is one nobody is warned by. The state machine is
+    in ``fault.py`` and lives on the controller, so disabling this entity stops
+    the reporting, never the latching.
+    """
+
+    # Off, not unknown, before the first event. The latch publishes only when
+    # it changes, so a mower that has never faulted publishes nothing at all —
+    # and "unknown" on a problem sensor reads as "something is wrong with the
+    # sensor" when the truth is that nothing is wrong with the mower.
+    _attr_is_on = False
+
+    # The description is static text derived from the code, so recording it
+    # every time the fault changes buys nothing. Same reasoning as on the error
+    # sensor. The code itself is recorded — that is the history worth keeping.
+    _unrecorded_attributes = frozenset({CONF_DESCRIPTION})
+    entity_description = BinarySensorEntityDescription(
+        key="fault",
+        translation_key="fault",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+    )
+
+    def __init__(self, device: Device) -> None:
+        """Initialize entity."""
+        super().__init__(device, device.capabilities)
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listeners now that hass is ready."""
+        await super().async_added_to_hass()
+
+        async def on_event(event: MowerFaultEvent) -> None:
+            self._attr_is_on = event.code is not None
+            self._attr_extra_state_attributes = {
+                ATTR_CODE: event.code,
+                CONF_DESCRIPTION: event.description,
+            }
+            self.async_write_ha_state()
+
+        self._subscribe(MowerFaultEvent, on_event)

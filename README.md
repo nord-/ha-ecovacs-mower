@@ -164,17 +164,17 @@ stored, and the entry stops asking. There is no need to delete and re-add it.
 
 ## What you get
 
-Thirty-eight entities on the mower's device page, across eight platforms —
+Forty entities on the mower's device page, across eight platforms —
 plus one per UWB beacon on the models that use them:
 
 | Platform | Count | What |
 |---|---|---|
 | `lawn_mower` | 1 | Real state (`mowing`, `paused`, `returning`, `docked`, `error`) that updates within seconds, plus working `start_mowing`, `pause`, and `dock` |
 | `sensor` | 16 + one per beacon | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowing progress (see below), mowed area, mowing time, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name, and on a beacon-guided mower one battery percentage per UWB beacon (see below) |
-| `binary_sensor` | 5 | Rain sensor, rain delay, emergency stop, locked, animal protection — the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
+| `binary_sensor` | 6 | Fault — a latched problem that stays on until the mower recovers or you clear it (see below) — plus rain sensor, rain delay, emergency stop, locked, animal protection: the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
 | `switch` | 7 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
 | `number` | 2 | Notification volume, cutting direction |
-| `button` | 5 | Reset each of the four consumable lifespans, plus "Locate mower" (plays a sound on the device) |
+| `button` | 6 | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), and "Clear fault" (releases the latched fault; see below) |
 | `event` | 1 | Last mowing job (finished / finished with warnings / manually stopped) |
 | `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, and `onMapTrace` on firmware 1.17); the format is documented in `docs/superpowers/specs/2026-08-10-mower-map-design.md`. Geometry survives restarts; the position track is live-only |
 
@@ -358,7 +358,7 @@ Two things this does not do yet:
 
 ### Entities disabled by default
 
-**17 of the 38 entities** ship with `entity_registry_enabled_default=False`,
+**17 of the 40 entities** ship with `entity_registry_enabled_default=False`,
 all inherited unchanged from upstream Home Assistant core's `ecovacs`
 integration — they're advanced settings or diagnostics, off by default
 there too. They appear in the mower's entity list right after setup, but
@@ -371,7 +371,7 @@ a bug: if one of these looks blank or "unavailable," this is why.
 | `switch` | 7 of 7 | all of them: advanced mode, TrueDetect, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
 | `number` | 2 of 2 | both: volume, cutting direction |
 | `sensor` | 4 of the 16 fixed ones | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code**. The per-beacon sensors are enabled |
-| `button` | 4 of 5 | the four consumable-lifespan resets (blade, lens brush, trimmer brush, weed rope) — "Locate mower" is enabled by default |
+| `button` | 4 of 6 | the four consumable-lifespan resets (blade, lens brush, trimmer brush, weed rope) — "Locate mower" and "Clear fault" are enabled by default |
 
 **If you're planning anything on the error sensor** — an alarm, a
 notification, a dashboard card — note that it does not exist as an
@@ -380,6 +380,63 @@ and reports nothing until you enable it by hand, same as the other 16
 above. This is the one entity in this list someone is likely to go
 looking for by name, so it's worth repeating here rather than only in the
 table.
+
+For an alarm, though, **`binary_sensor.<device>_fault` is the one you
+want** — it is enabled by default and, unlike the error sensor, it does
+not go back to "fine" on its own. See the next section.
+
+### A fault that stays until something actually clears it
+
+`sensor.<device>_error` reports the last code the mower sent. On firmware
+1.36.208 that turned out to be useless for alarming
+([#53](https://github.com/nord-/ha-ecovacs-mower/issues/53)): a blade-disc
+jam pushed `code:[406]` exactly once and was followed **89 milliseconds
+later** by `code:[0]` — and then by another 3076 zeros over the 38 minutes
+the mower sat stuck on the lawn draining its battery. The error sensor read
+`0` the whole time, and `lawn_mower` read `paused`, which is
+indistinguishable from a pause by hand. Nothing an automation could fire on
+existed for longer than a tenth of a second.
+
+The zeros are not the mower saying it recovered — they keep arriving at
+about 1.4 per second whatever the machine is doing. So
+`binary_sensor.<device>_fault` ignores them entirely. It goes `on` for any
+non-zero code and goes `off` only when something says the fault is really
+over:
+
+- the mower **docks**, or
+- the mower **starts mowing** again, or
+- you press **Clear fault**.
+
+The code and its text ride along as attributes, so a notification can name
+the fault without reading the error sensor:
+
+```yaml
+automation:
+  - alias: Mower is stuck
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.goat_fault
+        to: "on"
+    actions:
+      - action: notify.mobile_app_phone
+        data:
+          message: >
+            Mower fault {{ state_attr('binary_sensor.goat_fault', 'code') }}:
+            {{ state_attr('binary_sensor.goat_fault', 'description') }}
+```
+
+There is deliberately **no timer and no counter** here — no "clear after
+five minutes of no error", no "clear after ten zeros in a row". The zero
+flood is unbounded: it lasted exactly as long as it took the owner to walk
+out to the mower, so no threshold can tell recovery from a heartbeat. If
+you want a delay, put it in your own automation with `for:`, where you can
+tune it.
+
+**Clear fault** needs nothing from the mower — it releases local state — so
+it works while the machine is unreachable, and it is what guarantees the
+fault cannot get stuck if some firmware never reports docking or mowing.
+Every latch and release is logged at INFO with the reason, which is the
+evidence to attach to an issue if it ever behaves oddly.
 
 ### Error codes without a description
 

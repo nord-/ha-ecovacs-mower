@@ -52,11 +52,13 @@
     "binary_sensor": {
       "animal_protect": { "name": "Animal protection" },
       "emergency_stop": { "name": "Emergency stop" },
+      "fault": { "name": "Fault" },
       "locked": { "name": "Locked" },
       "rain_delay": { "name": "Rain delay" },
       "rain_protect": { "name": "Rain sensor" }
     },
     "button": {
+      "clear_fault": { "name": "Clear fault" },
       "play_sound": { "name": "Locate mower" },
       "reset_lifespan_blade": { "name": "Reset blades" },
       "reset_lifespan_lens_brush": { "name": "Reset lens brush" },

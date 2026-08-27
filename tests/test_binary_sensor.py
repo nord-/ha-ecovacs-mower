@@ -134,14 +134,61 @@ def test_every_binary_sensor_has_an_icon() -> None:
 
 def test_no_stale_binary_sensor_translations_or_icons() -> None:
     """Every key in strings.json/icons.json must belong to a real entity."""
-    from custom_components.ecovacs_mower.binary_sensor import ENTITY_DESCRIPTIONS
+    from custom_components.ecovacs_mower.binary_sensor import (
+        ENTITY_DESCRIPTIONS,
+        EcovacsFaultBinarySensor,
+    )
 
     strings = json.loads((ROOT / "strings.json").read_text(encoding="utf-8"))
     icons = json.loads((ROOT / "icons.json").read_text(encoding="utf-8"))
-    keys = {d.translation_key for d in ENTITY_DESCRIPTIONS if d.translation_key}
+    keys = {d.translation_key for d in ENTITY_DESCRIPTIONS if d.translation_key} | {
+        EcovacsFaultBinarySensor.entity_description.translation_key
+    }
 
     assert set(strings["entity"]["binary_sensor"]) <= keys
     assert set(icons["entity"]["binary_sensor"]) <= keys
+
+
+def test_the_fault_sensor_has_a_translation_and_an_icon() -> None:
+    """Not in ENTITY_DESCRIPTIONS, so the loops above never reach it."""
+    from custom_components.ecovacs_mower.binary_sensor import EcovacsFaultBinarySensor
+
+    key = EcovacsFaultBinarySensor.entity_description.translation_key
+    strings = json.loads((ROOT / "strings.json").read_text(encoding="utf-8"))
+    icons = json.loads((ROOT / "icons.json").read_text(encoding="utf-8"))
+
+    assert key in strings["entity"]["binary_sensor"]
+    assert key in icons["entity"]["binary_sensor"]
+
+
+def test_the_fault_sensor_is_a_problem_the_user_can_see() -> None:
+    """Issue #53 asked for something to automate on.
+
+    Enabled by default and not diagnostic, unlike ``sensor.<device>_error``:
+    the fault this entity reports is the one the raw error sensor was reading
+    ``0`` for while a jammed mower sat on the lawn for 38 minutes. An entity
+    nobody finds warns nobody.
+    """
+    from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+
+    from custom_components.ecovacs_mower.binary_sensor import EcovacsFaultBinarySensor
+
+    description = EcovacsFaultBinarySensor.entity_description
+    assert description.device_class is BinarySensorDeviceClass.PROBLEM
+    assert description.entity_registry_enabled_default is True
+    assert description.entity_category is None
+
+
+def test_the_fault_sensor_starts_off_and_not_unknown() -> None:
+    """The latch publishes only on a change, so a healthy mower publishes nothing.
+
+    Without a default the entity would sit at ``unknown`` forever on a mower
+    that has never faulted, which on a problem sensor reads as a broken sensor
+    rather than a working one with nothing to report.
+    """
+    from custom_components.ecovacs_mower.binary_sensor import EcovacsFaultBinarySensor
+
+    assert EcovacsFaultBinarySensor._attr_is_on is False
 
 
 def test_platform_is_forwarded() -> None:

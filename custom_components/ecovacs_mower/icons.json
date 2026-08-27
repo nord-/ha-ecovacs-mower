@@ -7,6 +7,12 @@
       "emergency_stop": {
         "default": "mdi:alert-octagon"
       },
+      "fault": {
+        "default": "mdi:alert-circle",
+        "state": {
+          "off": "mdi:check-circle-outline"
+        }
+      },
       "locked": {
         "default": "mdi:lock"
       },
@@ -21,6 +27,9 @@
       }
     },
     "button": {
+      "clear_fault": {
+        "default": "mdi:alert-circle-check-outline"
+      },
       "play_sound": {
         "default": "mdi:map-marker-radius"
       },

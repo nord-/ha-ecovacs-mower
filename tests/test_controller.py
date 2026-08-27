@@ -534,6 +534,42 @@ async def test_setup_polling_starts_on_leaving_and_stops_on_docking() -> None:
         assert track.call_count == 2
 
 
+async def test_setup_fault_latch_subscribes_and_is_reachable_by_did() -> None:
+    """Issue #53. The latch is controller state, not entity state.
+
+    Same reason as the polling above: the binary sensor and the clear button
+    can each be disabled in the entity registry, and the fault must keep being
+    held regardless. Eager, too — ``EventBus.notify`` drops an event nobody is
+    subscribed to, so a fault raised before the entities existed would be lost.
+    """
+    from unittest.mock import MagicMock
+
+    from deebot_client.events import ErrorEvent, StateEvent
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller.fault_latches = {}
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1"}
+    subscribed: dict[type, object] = {}
+    device.events.subscribe = lambda event_type, callback: subscribed.__setitem__(
+        event_type, callback
+    )
+
+    controller._setup_fault_latch(device)
+
+    assert set(subscribed) == {ErrorEvent, StateEvent}
+
+    # The clear button looks the latch up by did, so a wrong key means a mower
+    # whose fault can never be released by hand.
+    latch = controller.fault_latches["did-1"]
+    assert latch.code is None
+    await subscribed[ErrorEvent](ErrorEvent(406, None))
+    assert latch.code == 406
+
+
 async def test_start_polling_is_idempotent() -> None:
     """lawn_mower.py calls this directly on a self-initiated start command."""
     from unittest.mock import MagicMock, patch

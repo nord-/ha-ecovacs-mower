@@ -70,6 +70,7 @@ from .deebot_patch.map_messages import (
     MowerNoGoZonesEvent,
     MowerObstaclesEvent,
 )
+from .fault import FaultLatch
 from .map import MowerMap
 
 _LOGGER = logging.getLogger(__name__)
@@ -107,6 +108,7 @@ class EcovacsController:
         self._hass = hass
         self._devices: list[Device] = []
         self.maps: dict[str, MowerMap] = {}
+        self.fault_latches: dict[str, FaultLatch] = {}
         self._map_stores: dict[str, Store[dict[str, Any]]] = {}
         self._unsub_polls: dict[str, CALLBACK_TYPE] = {}
         rest_url = config.get(CONF_OVERRIDE_REST_URL)
@@ -213,6 +215,7 @@ class EcovacsController:
                         self._devices.append(device)
                         if device.capabilities.device_type is DeviceType.MOWER:
                             self._setup_polling(device)
+                            self._setup_fault_latch(device)
                             # Map data is best effort; mower control is sacred.
                             # A failure here must not fail the TaskGroup and
                             # take mower control down with it.
@@ -315,6 +318,19 @@ class EcovacsController:
         device.events.subscribe(MowerCoveredAreaEvent, on_covered)
         device.events.subscribe(MowerNoGoZonesEvent, on_nogo)
         device.events.subscribe(PositionsEvent, on_positions)
+
+    def _setup_fault_latch(self, device: Device) -> None:
+        """Hold this mower's faults until something explicitly clears them.
+
+        Controller-owned for the same reason as the polling below, and eager
+        for the same reason as the map subscriptions above: ``EventBus.notify``
+        drops an event nobody is subscribed to, so a fault raised before the
+        binary sensor was added would be lost. See ``fault.py`` for why the
+        device's own ``code:[0]`` cannot be trusted to clear anything.
+        """
+        latch = FaultLatch(device)
+        latch.subscribe()
+        self.fault_latches[device.device_info["did"]] = latch
 
     def _setup_polling(self, device: Device) -> None:
         """Poll the mower's state and stats while it is out, not while docked.
