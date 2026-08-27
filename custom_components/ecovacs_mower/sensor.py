@@ -380,6 +380,7 @@ class EcovacsLifespanSensor(
 # the code with the Ecovacs app's own wording for it.
 _MOWER_ERROR_CODES = {
     422: "Weak signal. Return to the station.",
+    406: "Blade-disc blocked! Blade-disc cannot rotate.",
 }
 
 _REPORT_URL = "https://github.com/nord-/ha-ecovacs-mower/issues/37"

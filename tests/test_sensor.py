@@ -645,6 +645,7 @@ def test_error_description_prefers_the_library_and_fills_its_gaps(caplog) -> Non
     assert not set(_MOWER_ERROR_CODES) & set(ERROR_CODES)
 
     assert _error_description(422, None) == _MOWER_ERROR_CODES[422]
+    assert _error_description(406, None) == _MOWER_ERROR_CODES[406]
 
     try:
         _UNKNOWN_CODES_REPORTED.discard(9999)

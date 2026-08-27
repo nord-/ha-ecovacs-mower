@@ -344,6 +344,7 @@ fills the gaps it knows about:
 | Code | Description | Ecovacs app also suggests |
 |---|---|---|
 | 422 | Weak signal. Return to the station. | clean the panoramic camera, the AI front camera and the ToF sensor; mow in daylight, not in heavy rain |
+| 406 | Blade-disc blocked! Blade-disc cannot rotate. | — |
 
 A code in neither table leaves the attribute empty and logs a warning naming
 the code, once per code per restart. **That warning is the ask:** report the
