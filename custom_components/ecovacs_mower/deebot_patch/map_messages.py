@@ -152,7 +152,9 @@ class OnMI(_MapMessage):
 
 
 class OnArI(_MapMessage):
-    """Area info: zones, obstacles, boundary, corridors."""
+    """Area info: zones, obstacles, boundary, corridors — plus no-go zones
+    from firmware 1.17 on.
+    """
 
     NAME = "onArI"
 

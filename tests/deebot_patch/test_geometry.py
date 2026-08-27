@@ -267,6 +267,58 @@ def test_parse_area_info_v117_bare_ids_mean_no_update() -> None:
     assert len(area.obstacles) == 3
 
 
+def test_parse_area_info_v117_all_ids_only_is_still_detected() -> None:
+    # Same shape as on_ari_v117_ids_only, but section 3 is also ids-only —
+    # nothing in the blob has a ";" for the coordinate scan to key off, so
+    # detection must fall back to the 2-element ["mid","section"] entries.
+    # Misdetecting this as 1.13 routes it through the chain parser, which
+    # reads zone id "1" as a stray flag "1" and reports zones=[] instead of
+    # None — wiping the stored lawn on what is really a no-op heartbeat.
+    blob = json.dumps(
+        [
+            ["1", "1", "1", "2", "3"],
+            ["1", "2"],
+            ["1", "3", "100", "101", "102"],
+            ["1", "4"],
+        ]
+    ).encode()
+    area = parse_area_info(blob)
+    assert area.map_info.zones is None
+    assert area.obstacles is None
+    assert area.nogo == []  # section 2 present, no items: no no-go zones
+
+
+def test_parse_area_info_v113_obstacles_only_still_chain_parsed() -> None:
+    # A 1.13 blob never has a 2-element entry (the flag at index 2 is
+    # mandatory), so it must not trip the new v117 length-2 signal.
+    area = parse_area_info(_blob("on_ari_obstacles_only"))
+    assert area.map_info.zones is None
+    assert len(area.obstacles) == 14
+
+
+def test_parse_area_info_v117_trailing_separator_is_not_geometry() -> None:
+    # "1;" is an id with a trailing separator and no points — same as a
+    # bare id, not geometry. Counting it as a point would mark the section
+    # updated (with empty polygons) instead of unchanged.
+    blob = json.dumps([["m", "1", "1;", "2;"]]).encode()
+    area = parse_area_info(blob)
+    assert area.map_info.zones is None
+
+
+def test_parse_area_info_v117_empty_section_1_is_no_update(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # No capture has an empty section 1 — every lawn has at least one zone
+    # — so an empty section 1 is treated as "no update", not "zero zones",
+    # unlike sections 2/3 where "no items" is a confirmed empty set.
+    blob = json.dumps([["m", "1"]]).encode()
+    with caplog.at_level("DEBUG"):
+        area = parse_area_info(blob)
+    assert area.map_info.zones is None
+    assert area.nogo is None  # section 2 not sent at all: no update either
+    assert "no items" in caplog.text
+
+
 def test_parse_map_trace_single_ring() -> None:
     covered = parse_map_trace(_blob("on_map_trace_v117_single"))
     assert len(covered.areas) == 1

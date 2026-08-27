@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from custom_components.ecovacs_mower.map import MowerMap
 from custom_components.ecovacs_mower.map_svg import render
 
@@ -67,8 +69,10 @@ def test_covered_area_renders_with_holes_punched_out() -> None:
         line for line in svg.splitlines() if 'class="covered"' in line
     )
     assert 'fill-rule="evenodd"' in covered
-    # Outer ring and hole are subpaths of the same path element.
-    assert covered.count("M") == 2
+    # Outer ring and hole are subpaths of the same path element. Match "M"
+    # only where it starts a moveto (followed by a coordinate digit/sign),
+    # not wherever it happens to occur — e.g. inside a colour hex.
+    assert len(re.findall(r"M[\d.-]", covered)) == 2
 
 
 def test_covered_area_alone_is_not_the_placeholder() -> None:

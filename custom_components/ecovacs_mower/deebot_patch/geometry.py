@@ -188,11 +188,19 @@ def _polygons(items: list[str]) -> list[Polygon]:
 def _is_point_list_dialect(entries: list[list[str]]) -> bool:
     """True for the 1.17 dialect, which sends point lists, not chain codes.
 
-    An item is ``<id>;<x,y>;<chain code>`` up to firmware 1.13 and
-    ``<id>;<x,y>;<x,y>;…`` from 1.17 on, so the third field decides.
+    A 2-element entry — ``[<mid>, <section>]``, no items — is conclusive on
+    its own: 1.13 entries always carry a flag at index 2, so they are never
+    shorter than 3. This catches a 1.17 blob where every section is either
+    empty or ids-only, which otherwise carries no ";" anywhere for the
+    coordinate scan below to find.
+
+    Past that, an item is ``<id>;<x,y>;<chain code>`` up to firmware 1.13
+    and ``<id>;<x,y>;<x,y>;…`` from 1.17 on, so the third field decides.
     Scanning from index 2 covers both layouts: 1.13's section flag sits
     there but holds no ";", so it never matches.
     """
+    if any(len(entry) == 2 for entry in entries):
+        return True
     for entry in entries:
         for item in entry[2:]:
             fields = item.split(";")
@@ -209,6 +217,12 @@ def parse_area_info(blob: bytes) -> AreaInfo:
     return _parse_area_info_chain(entries)
 
 
+# Section 4 is unused in every capture this parser was written from; the
+# DEBUG line below asks about it once per process instead of once per blob
+# (it repeats every heartbeat once a firmware does populate it).
+_section_4_reported = False
+
+
 def _parse_area_info_v117(entries: list[list[str]]) -> AreaInfo:
     """Parse 1.17 onArI: ``["<mid>","<section>","<id>;<x,y>;<x,y>;…", …]``.
 
@@ -216,7 +230,11 @@ def _parse_area_info_v117(entries: list[list[str]]) -> AreaInfo:
     The per-section update flag is gone; an item is either ``<id>`` alone
     — the id exists, its geometry did not change — or an id followed by
     its points. A section whose items all lack geometry is therefore "no
-    update", while a section with no items at all is "there are none".
+    update", while a section with no items at all is "there are none" —
+    except section 1: no capture has an empty one, since a mapped lawn
+    never legitimately has zero zones, so an empty section 1 is treated
+    as "no update" too rather than risk wiping the lawn on an unconfirmed
+    shape.
 
     Neither the lawn outline nor corridors have a section here: onMI
     still carries the outline, and no capture has shown corridors.
@@ -224,11 +242,20 @@ def _parse_area_info_v117(entries: list[list[str]]) -> AreaInfo:
     sections: dict[str, list[Polygon]] = {}
     for entry in entries:
         items = entry[2:]
-        polygons = [_points(item) for item in items if ";" in item]
+        polygons = [p for p in (_points(item) for item in items) if p]
+        if not items and entry[1] == "1":
+            _LOGGER.debug(
+                "onArI section 1 arrived with no items; treating it as "
+                "no-update rather than zero zones, since no capture has "
+                "confirmed that shape. Please report if this is wrong."
+            )
+            continue
         if items and not polygons:
             continue  # ids only: this section did not change
         sections[entry[1]] = polygons
-    if sections.get("4"):
+    global _section_4_reported
+    if sections.get("4") and not _section_4_reported:
+        _section_4_reported = True
         _LOGGER.debug(
             "onArI section 4 carried %d polygons; it was empty in every "
             "capture this parser was written from",
