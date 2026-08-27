@@ -438,6 +438,10 @@ fault cannot get stuck if some firmware never reports docking or mowing.
 Every latch and release is logged at INFO with the reason, which is the
 evidence to attach to an issue if it ever behaves oddly.
 
+The latch itself lives in memory only: restarting Home Assistant or
+reloading the integration clears it, and it comes back only if the mower
+still reports a non-zero code when the integration starts back up.
+
 ### Error codes without a description
 
 The error sensor's state is the raw code; its `description` attribute is the

@@ -24,6 +24,12 @@ every set and clear is logged with its reason at INFO. That line is the evidence
 the next report will carry, without asking anyone to run ``deebot_client`` at
 DEBUG and keep 3000 lines.
 
+A fault raised while the mower is already charging is a case neither state
+covers: ``EventBus``'s own ``IDLE`` → ``DOCKED`` rewrite only fires when the
+*previous* state was ``DOCKED``, so a poll after an error can keep answering
+``IDLE`` instead of ``DOCKED`` even with the mower sitting on the dock. The
+button is what this case relies on to release the latch.
+
 The latch is owned by ``EcovacsController``, not by an entity, for the reason
 ``_setup_polling`` gives: entities can each be disabled in the entity registry,
 and state that only one of them happened to own must not silently stop existing.
@@ -108,7 +114,7 @@ class FaultLatch:
     async def _on_error(self, event: ErrorEvent) -> None:
         """Latch a non-zero code. A zero is not evidence of anything."""
         if event.code:
-            self._latch(event.code)
+            self._latch(event.code, event.description)
 
     async def _on_state(self, event: StateEvent) -> None:
         """Clear on a state that cannot coexist with an unresolved fault."""
@@ -119,7 +125,7 @@ class FaultLatch:
         """Clear on the user's say-so, from the clear button."""
         self._clear("cleared by request")
 
-    def _latch(self, code: int) -> None:
+    def _latch(self, code: int, description: str | None) -> None:
         """Hold *code*, replacing any earlier one.
 
         The newest non-zero code is the current diagnosis, so it wins. Nothing
@@ -128,7 +134,7 @@ class FaultLatch:
         if code == self._code:
             return
 
-        description = error_description(code)
+        description = error_description(code, description)
         _LOGGER.info(
             "Fault latched for %s: code %s (%s). It stays until the mower "
             "docks, starts mowing, or the fault is cleared by hand",

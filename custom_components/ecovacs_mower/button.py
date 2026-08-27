@@ -109,11 +109,11 @@ async def async_setup_entry(
         if description.component in device.capabilities.life_span.types
     )
     entities.extend(
-        EcovacsClearFaultButtonEntity(device, latch)
+        EcovacsClearFaultButtonEntity(
+            device, controller.fault_latches[device.device_info["did"]]
+        )
         for device in controller.devices
         if device.capabilities.device_type is DeviceType.MOWER
-        and (latch := controller.fault_latches.get(device.device_info["did"]))
-        is not None
     )
     async_add_entities(entities)
 

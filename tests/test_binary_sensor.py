@@ -200,6 +200,65 @@ def test_the_fault_sensor_starts_off_and_not_unknown() -> None:
     assert EcovacsFaultBinarySensor(device).is_on is False
 
 
+async def _fault_event_callback(device):
+    """Run async_added_to_hass and return the MowerFaultEvent callback it installed."""
+    from custom_components.ecovacs_mower.binary_sensor import EcovacsFaultBinarySensor
+    from custom_components.ecovacs_mower.fault import MowerFaultEvent
+
+    entity = EcovacsFaultBinarySensor(device)
+    entity.async_write_ha_state = lambda: None
+    await entity.async_added_to_hass()
+
+    for call in device.events.subscribe.call_args_list:
+        event_type, callback = call.args
+        if event_type is MowerFaultEvent:
+            return entity, callback
+    raise AssertionError("EcovacsFaultBinarySensor never subscribed to MowerFaultEvent")
+
+
+async def test_the_fault_sensor_turns_on_for_a_latched_fault() -> None:
+    """A latch published by fault.py must reach the entity's state and attributes."""
+    from unittest.mock import Mock
+
+    from homeassistant.const import ATTR_CODE, CONF_DESCRIPTION
+
+    from custom_components.ecovacs_mower.fault import MowerFaultEvent
+
+    device = Mock()
+    device.device_info = {"did": "test-did"}
+    entity, callback = await _fault_event_callback(device)
+
+    await callback(MowerFaultEvent(code=406, description="Blade-disc blocked!"))
+
+    assert entity.is_on is True
+    assert entity.extra_state_attributes == {
+        ATTR_CODE: 406,
+        CONF_DESCRIPTION: "Blade-disc blocked!",
+    }
+
+
+async def test_the_fault_sensor_turns_off_on_release() -> None:
+    """A release published by fault.py must clear the state, not just the code."""
+    from unittest.mock import Mock
+
+    from homeassistant.const import ATTR_CODE, CONF_DESCRIPTION
+
+    from custom_components.ecovacs_mower.fault import MowerFaultEvent
+
+    device = Mock()
+    device.device_info = {"did": "test-did"}
+    entity, callback = await _fault_event_callback(device)
+
+    await callback(MowerFaultEvent(code=406, description="Blade-disc blocked!"))
+    await callback(MowerFaultEvent(code=None, description=None))
+
+    assert entity.is_on is False
+    assert entity.extra_state_attributes == {
+        ATTR_CODE: None,
+        CONF_DESCRIPTION: None,
+    }
+
+
 def test_platform_is_forwarded() -> None:
     """A platform file that is not in PLATFORMS is never loaded at all."""
     from homeassistant.const import Platform
