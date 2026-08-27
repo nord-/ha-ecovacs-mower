@@ -33,7 +33,6 @@ __all__ = [
     "AccountAuthenticator",
     "CleanMower",
     "GetCleanInfoMower",
-    "OnStatsMower",
     "PatchContractError",
     "apply",
     "patch_device_info",

@@ -18,8 +18,8 @@ The progress sensor is the one entity in this platform backed by a poll —
 than the clock: it starts when the mower starts mowing and stops when it parks,
 so a rainy week costs nothing. On the classes that push ``onStats`` the reading
 follows the mower instead and the poll is the floor rather than the source; on
-the one it was built against, which pushes nothing, it is still the only way to
-see the number move.
+the one it was built against, not known to push it, the poll is still the only
+way to see the number move.
 """
 
 from collections.abc import Callable
@@ -524,9 +524,13 @@ def _progress(area: int | None, mowed_area: int | None) -> int | None:
     """Percent of the running job that is done, or None when there is no job.
 
     A zero ``area`` is the absence of a job, not a job that is zero percent
-    done: the device reports ``{"area": 0, "time": 0, "mowedArea": 0}`` whenever
-    nothing is running. Reporting 0 there would make every automation that waits
-    for 100 look, between jobs, exactly like one that has just started.
+    done: on the firmware this was built against, the device reports
+    ``{"area": 0, "time": 0, "mowedArea": 0}`` whenever nothing is running.
+    Reporting 0 there would make every automation that waits for 100 look,
+    between jobs, exactly like one that has just started. That convention is
+    not universal — see ``EcovacsMowingProgressSensor._on_stats`` for the
+    firmware branch that never zeroes the stats at all, which is why the state
+    gate exists and this check is not relied on alone.
 
     Capping at 100 has not been needed on the verified hardware — a completed run
     reports ``mowedArea`` exactly equal to its target — but a percentage above
@@ -595,10 +599,14 @@ class EcovacsMowingProgressSensor(
         dock — a fault out on the lawn, or a plain ``idle`` push — holding the
         last percentage on that same never-zeroing firmware (issue #55).
 
-        An unchanged percentage is not written again. ``onStats`` arrives about
-        twice a second on the classes that push it, and whole percents do not:
-        one percent of the captured O800 RTK job is 2089 cm² against a few
-        hundred per push, so most pushes round to the number already showing.
+        An unchanged percentage is not written again. HA's state machine already
+        short-circuits an unchanged state — no ``state_changed`` event, just a
+        bumped ``last_reported`` — so this guard is not saving recorder rows; it
+        saves the state-machine round trip and that timestamp bump at the ~2 Hz
+        ``onStats`` arrives at on the classes that push it. Whole percents do
+        not change nearly that often: one percent of the captured O800 RTK job
+        is 2089 cm² against a few hundred per push, so most pushes would
+        otherwise round to the number already showing.
         """
         if self._last_state not in _JOB_STATES:
             return

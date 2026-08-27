@@ -164,10 +164,16 @@ class OnStatsMower(OnStats):
     def _handle_body_data_dict(
         cls, event_bus: EventBus, data: dict[str, Any]
     ) -> HandlingResult:
-        """Handle message->body->data, then publish the mower's own pair."""
-        result = super()._handle_body_data_dict(event_bus, data)
+        """Publish the mower's own pair, then defer to upstream's parsing.
+
+        In that order and not the reverse: upstream indexes ``data["area"]``
+        and ``data["time"]`` directly and raises ``KeyError`` when a push omits
+        either, which would otherwise take ``notify_mower_stats`` down with it.
+        No observed firmware sends such a push, but there is no reason to make
+        this handler less robust than its own fallback.
+        """
         notify_mower_stats(event_bus, data)
-        return result
+        return super()._handle_body_data_dict(event_bus, data)
 
 
 def handle_clean_info(event_bus: EventBus, data: dict[str, Any]) -> HandlingResult:

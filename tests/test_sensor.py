@@ -715,9 +715,10 @@ async def test_an_unchanged_percentage_is_not_written_again() -> None:
     """onStats arrives about twice a second; whole percents do not (issue #55).
 
     On the captured O800 RTK job one percent is 2089 cm2 and a push moves a few
-    hundred, so most pushes round to the number already showing. Writing each
-    one would put roughly five times more rows in the recorder than the entity
-    has values to report.
+    hundred, so most pushes round to the number already showing. HA's state
+    machine already short-circuits an unchanged write with no recorder row, so
+    the guard is not about rows — it saves the state-machine round trip itself,
+    roughly five times a second the entity has nothing new to report.
     """
     from unittest.mock import Mock
 

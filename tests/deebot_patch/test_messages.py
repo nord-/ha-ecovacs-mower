@@ -431,6 +431,19 @@ def test_on_stats_mower_reports_a_missing_field_as_none() -> None:
     )
 
 
+def test_on_stats_mower_survives_upstream_raising_on_a_missing_field() -> None:
+    # Upstream's OnStats indexes data["area"]/data["time"] directly and raises
+    # KeyError when a push omits either. The mower event must not be lost with
+    # it, so notify_mower_stats has to run before super() gets the chance.
+    event_bus = Mock()
+    with pytest.raises(KeyError):
+        OnStatsMower._handle_body_data_dict(event_bus, {"time": 977, "mowedArea": 5})
+    assert (
+        call(MowerStatsEvent(area=None, mowed_area=5))
+        in event_bus.notify.call_args_list
+    )
+
+
 def test_on_stats_mower_is_registered_by_apply() -> None:
     # Without this the push resolves to the library's OnStats and the mowed
     # area is dropped on the floor, which is the whole of issue #55.
