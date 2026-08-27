@@ -647,34 +647,36 @@ def test_error_description_prefers_the_library_and_fills_its_gaps(caplog) -> Non
 
     from deebot_client.const import ERROR_CODES
 
-    from custom_components.ecovacs_mower.sensor import (
-        _MOWER_ERROR_CODES,
+    # In errors.py rather than sensor.py since issue #53: the fault latch reads
+    # the same table, so it moved out to a module that imports no HA.
+    from custom_components.ecovacs_mower.errors import (
+        MOWER_ERROR_CODES,
         _UNKNOWN_CODES_REPORTED,
-        _error_description,
+        error_description,
     )
 
-    caplog.set_level(logging.WARNING, logger="custom_components.ecovacs_mower.sensor")
+    caplog.set_level(logging.WARNING, logger="custom_components.ecovacs_mower.errors")
 
     # A code the library knows keeps the library's wording, even if this table
     # were ever to grow an entry for it.
-    assert _error_description(101, ERROR_CODES[101]) == ERROR_CODES[101]
+    assert error_description(101, ERROR_CODES[101]) == ERROR_CODES[101]
 
     # No overlap: an entry here that the library also has is a disagreement
     # nobody would notice, since the branch above means it is never read.
-    assert not set(_MOWER_ERROR_CODES) & set(ERROR_CODES)
+    assert not set(MOWER_ERROR_CODES) & set(ERROR_CODES)
 
-    assert _error_description(422, None) == _MOWER_ERROR_CODES[422]
-    assert _error_description(406, None) == _MOWER_ERROR_CODES[406]
+    assert error_description(422, None) == MOWER_ERROR_CODES[422]
+    assert error_description(406, None) == MOWER_ERROR_CODES[406]
 
     try:
         _UNKNOWN_CODES_REPORTED.discard(9999)
-        assert _error_description(9999, None) is None
+        assert error_description(9999, None) is None
         assert "9999" in caplog.text
         assert "issues/37" in caplog.text
 
         # Asked once, not on every push for as long as the condition lasts.
         caplog.clear()
-        assert _error_description(9999, None) is None
+        assert error_description(9999, None) is None
         assert not caplog.text
     finally:
         _UNKNOWN_CODES_REPORTED.discard(9999)
