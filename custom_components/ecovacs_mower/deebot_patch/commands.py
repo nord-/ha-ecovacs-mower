@@ -22,23 +22,41 @@ flips, and nothing had ever asked for the current value (issue #31).
 ``GetStatsMower`` is a third kind again: the command works and is answered, the
 library just discards one of the three numbers it answers with (issue #39). Its
 counterpart for the unsolicited half, ``OnStatsMower``, is in ``messages.py``.
+
+``GetLifeSpanMower`` is a fourth: the command works, is answered in full, and
+one component of the answer makes the library abandon the rest of it (issue
+#40).
 """
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from deebot_client.commands.json.clean import Clean, GetCleanInfo
 from deebot_client.commands.json.common import JsonCommandWithMessageHandling
+from deebot_client.commands.json.life_span import GetLifeSpan
 from deebot_client.commands.json.stats import GetStats
+from deebot_client.events import LifeSpan
 from deebot_client.message import HandlingResult
 from deebot_client.models import CleanMode
 
-from .messages import OnProtectState, notify_mower_stats
+from .messages import (
+    BEACON_COMPONENT,
+    OnProtectState,
+    notify_mower_beacons,
+    notify_mower_stats,
+)
 
 if TYPE_CHECKING:
     from deebot_client.event_bus import EventBus
     from deebot_client.models import CleanAction
+
+_LOGGER = logging.getLogger(__name__)
+
+# Every component string the library has an enum member for. Anything else in an
+# answer is dropped rather than parsed, so the entry cannot abort the message.
+_KNOWN_COMPONENTS = frozenset(member.value for member in LifeSpan)
 
 
 class CleanMower(Clean):
@@ -146,3 +164,56 @@ class GetStatsMower(GetStats):
         result = super()._handle_body_data_dict(event_bus, data)
         notify_mower_stats(event_bus, data)
         return result
+
+
+class GetLifeSpanMower(GetLifeSpan):
+    """``getLifeSpan``, without the component that makes the library give up.
+
+    A beacon-guided GOAT reports one ``uwbCell`` entry per UWB beacon, keyed by
+    the serial the app prints on its maintenance page, alongside the blade and
+    the lens brush. ``LifeSpan`` has no member for it and no ``_missing_`` hook,
+    so upstream's ``LifeSpan(component["type"])`` raises on the first beacon.
+    ``Message.handle`` catches that and logs "Could not parse getLifeSpan", but
+    the loop notifies as it goes: everything before the first beacon is
+    published and everything after it is lost. On a G1-800 the order is blade,
+    four beacons, lens brush — so the blade sensor works, the lens brush reads
+    a value from before the beacons were paired and never moves again, and the
+    beacons themselves are invisible (issue #40).
+
+    ``NAME`` is inherited on purpose, as in ``GetStatsMower``: the request is
+    unchanged. The device answers with every component it has whatever the
+    request lists — ``9bts2s`` and its siblings ask for ``blade`` and
+    ``lensBrush`` only, and the beacons come back regardless — so there is
+    nothing to add to the query, only something to stop dropping.
+    """
+
+    @classmethod
+    def _handle_body_data_list(
+        cls, event_bus: EventBus, data: list[dict[str, Any]]
+    ) -> HandlingResult:
+        """Publish the beacons, then let upstream parse what it recognises.
+
+        Beacons first for the same reason ``OnStatsMower`` publishes first: the
+        components handed to ``super()`` are parsed with upstream's own
+        arithmetic, which raises on a non-positive total, and a beacon reading
+        should not be lost to a blade entry the library cannot divide.
+        """
+        notify_mower_beacons(event_bus, data)
+
+        reported = {component.get("type") for component in data}
+        if unhandled := reported - _KNOWN_COMPONENTS - {BEACON_COMPONENT}:
+            # Debug rather than a warning: this would fire on every poll for as
+            # long as the firmware keeps sending the component, and the users
+            # asked for a component string are the ones already running debug
+            # logging. The reading is lost either way — but silently, and the
+            # rest of the answer arrives, which is the whole point.
+            _LOGGER.debug("Life span components without a handler: %s", unhandled)
+
+        return super()._handle_body_data_list(
+            event_bus,
+            [
+                component
+                for component in data
+                if component.get("type") in _KNOWN_COMPONENTS
+            ],
+        )

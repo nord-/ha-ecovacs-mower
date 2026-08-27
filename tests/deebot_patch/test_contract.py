@@ -246,3 +246,20 @@ def test_upstream_on_stats_publishes_the_two_fields_it_keeps() -> None:
     event_bus.notify.assert_called_once_with(
         StatsEvent(area=208900, time=977, type=None)
     )
+def test_life_span_enum_has_no_member_for_the_beacon_cells() -> None:
+    # The whole reason GetLifeSpanMower exists: "uwbCell" is not in the enum,
+    # and LifeSpan is a StrEnum with no _missing_ hook, so the library raises on
+    # it instead of skipping it. If upstream adds a member, the beacons become
+    # ordinary LifeSpanEvents and our own branch is dead code.
+    from deebot_client.events import LifeSpan
+
+    assert "uwbCell" not in {member.value for member in LifeSpan}
+
+
+def test_get_life_span_parses_the_answer_as_a_list() -> None:
+    # GetLifeSpanMower overrides _handle_body_data_list, so the answer has to
+    # keep arriving as body->data list rather than a dict.
+    from deebot_client.commands.json.life_span import GetLifeSpan
+    from deebot_client.message import MessageBodyDataList
+
+    assert issubclass(GetLifeSpan, MessageBodyDataList)

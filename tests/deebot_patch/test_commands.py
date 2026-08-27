@@ -2,19 +2,24 @@
 
 from unittest.mock import Mock, call
 
+import pytest
 from deebot_client.commands.json.clean import Clean, CleanV2, GetCleanInfo
+from deebot_client.commands.json.life_span import GetLifeSpan
 from deebot_client.commands.json.stats import GetStats
-from deebot_client.events import StateEvent, StatsEvent
+from deebot_client.events import LifeSpan, LifeSpanEvent, StateEvent, StatsEvent
 from deebot_client.message import HandlingState
 from deebot_client.models import CleanAction, State
 
 from custom_components.ecovacs_mower.deebot_patch.commands import (
     CleanMower,
     GetCleanInfoMower,
+    GetLifeSpanMower,
     GetProtectState,
     GetStatsMower,
 )
 from custom_components.ecovacs_mower.deebot_patch.messages import (
+    MowerBeacon,
+    MowerBeaconsEvent,
     MowerProtectStateEvent,
     MowerStatsEvent,
     OnProtectState,
@@ -200,3 +205,149 @@ def test_an_alert_wins_over_the_dropped_idle() -> None:
     )
 
     assert event_bus.notify.call_args_list == [call(StateEvent(State.ERROR))]
+# A real answer to getLifeSpan from a GOAT G1-800 with four UWB beacons, one of
+# them flat, captured while the app was showing the low-beacon banner (issue
+# #40). The serials are placeholders; the reporter redacted the real ones. The
+# order is the device's own, and it is what makes the abort visible: lensBrush
+# comes after the beacons.
+_LIFE_SPANS_WITH_BEACONS = [
+    {"type": "blade", "left": 2473, "total": 4800},
+    {"type": "uwbCell", "sn": "BEACON-1", "left": 0, "total": 100},
+    {"type": "uwbCell", "sn": "BEACON-2", "left": 83, "total": 100},
+    {"type": "uwbCell", "sn": "BEACON-3", "left": 68, "total": 100},
+    {"type": "uwbCell", "sn": "BEACON-4", "left": 73, "total": 100},
+    {"type": "lensBrush", "left": 1000, "total": 1000},
+]
+
+
+def test_get_life_span_mower_asks_the_same_command_as_the_library() -> None:
+    # Issue #40. The device answers with every component it has whatever the
+    # request lists, so only the parsing is replaced.
+    assert GetLifeSpanMower.NAME == GetLifeSpan.NAME == "getLifeSpan"
+
+
+def test_the_librarys_own_command_aborts_on_the_first_beacon() -> None:
+    """Documents the bug and its blast radius.
+
+    LifeSpan is a StrEnum without a _missing_ hook, so LifeSpan("uwbCell")
+    raises. Message.handle catches it and logs "Could not parse getLifeSpan",
+    but the components before the raise have already been notified and the ones
+    after it never are: blade gets through, lensBrush does not. That is why the
+    lens brush entity on a beacon-guided mower reads a value that never moves.
+    """
+    event_bus = Mock()
+    with pytest.raises(ValueError, match="uwbCell"):
+        GetLifeSpan._handle_body_data_list(event_bus, _LIFE_SPANS_WITH_BEACONS)
+
+    assert event_bus.notify.call_args_list == [
+        call(LifeSpanEvent(LifeSpan.BLADE, 51.52, 2473))
+    ]
+
+
+def test_get_life_span_mower_publishes_the_beacons_the_enum_has_no_member_for() -> None:
+    event_bus = Mock()
+    GetLifeSpanMower._handle_body_data_list(event_bus, _LIFE_SPANS_WITH_BEACONS)
+
+    assert (
+        call(
+            MowerBeaconsEvent(
+                beacons=(
+                    MowerBeacon(sn="BEACON-1", percent=0.0),
+                    MowerBeacon(sn="BEACON-2", percent=83.0),
+                    MowerBeacon(sn="BEACON-3", percent=68.0),
+                    MowerBeacon(sn="BEACON-4", percent=73.0),
+                )
+            )
+        )
+        in event_bus.notify.call_args_list
+    )
+
+
+def test_get_life_span_mower_still_publishes_the_component_after_the_beacons() -> None:
+    # The half of the fix that is not about beacons at all: with the abort gone,
+    # lensBrush is reported for the first time on this hardware.
+    event_bus = Mock()
+    GetLifeSpanMower._handle_body_data_list(event_bus, _LIFE_SPANS_WITH_BEACONS)
+
+    assert (
+        call(LifeSpanEvent(LifeSpan.LENS_BRUSH, 100.0, 1000))
+        in event_bus.notify.call_args_list
+    )
+
+
+def test_get_life_span_mower_still_publishes_the_component_before_them() -> None:
+    event_bus = Mock()
+    GetLifeSpanMower._handle_body_data_list(event_bus, _LIFE_SPANS_WITH_BEACONS)
+
+    assert (
+        call(LifeSpanEvent(LifeSpan.BLADE, 51.52, 2473))
+        in event_bus.notify.call_args_list
+    )
+
+
+def test_get_life_span_mower_says_nothing_about_beacons_when_there_are_none() -> None:
+    # The O1200 navigates without beacons. An empty set would be a claim that it
+    # has none left, not that it has none.
+    event_bus = Mock()
+    GetLifeSpanMower._handle_body_data_list(
+        event_bus, [{"type": "blade", "left": 2473, "total": 4800}]
+    )
+
+    assert not any(
+        isinstance(notified.args[0], MowerBeaconsEvent)
+        for notified in event_bus.notify.call_args_list
+    )
+
+
+def test_get_life_span_mower_drops_a_beacon_it_cannot_divide() -> None:
+    # A zero total is a ZeroDivisionError. Losing the one entry is the point of
+    # this class: the rest of the answer still arrives.
+    event_bus = Mock()
+    GetLifeSpanMower._handle_body_data_list(
+        event_bus,
+        [
+            {"type": "uwbCell", "sn": "BEACON-1", "left": 0, "total": 0},
+            {"type": "uwbCell", "sn": "BEACON-2", "left": 50, "total": 100},
+        ],
+    )
+
+    assert (
+        call(MowerBeaconsEvent(beacons=(MowerBeacon(sn="BEACON-2", percent=50.0),)))
+        in event_bus.notify.call_args_list
+    )
+
+
+def test_get_life_span_mower_drops_a_beacon_with_no_serial() -> None:
+    # The serial is what tells four beacons apart. An entry without one cannot
+    # be attributed to a beacon and must not be attributed to the wrong one.
+    event_bus = Mock()
+    GetLifeSpanMower._handle_body_data_list(
+        event_bus,
+        [
+            {"type": "uwbCell", "left": 20, "total": 100},
+            {"type": "uwbCell", "sn": "BEACON-2", "left": 50, "total": 100},
+        ],
+    )
+
+    assert (
+        call(MowerBeaconsEvent(beacons=(MowerBeacon(sn="BEACON-2", percent=50.0),)))
+        in event_bus.notify.call_args_list
+    )
+
+
+def test_get_life_span_mower_survives_a_component_it_has_never_heard_of() -> None:
+    # uwbCell is the one unknown component this firmware sends. A later one must
+    # not take the whole answer down the way uwbCell does today.
+    event_bus = Mock()
+    GetLifeSpanMower._handle_body_data_list(
+        event_bus,
+        [
+            {"type": "somethingNew", "left": 1, "total": 2},
+            {"type": "blade", "left": 2473, "total": 4800},
+        ],
+    )
+
+    assert (
+        call(LifeSpanEvent(LifeSpan.BLADE, 51.52, 2473))
+        in event_bus.notify.call_args_list
+    )
