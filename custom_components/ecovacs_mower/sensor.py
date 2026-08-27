@@ -63,7 +63,11 @@ from homeassistant.helpers.typing import StateType
 from . import EcovacsMowerConfigEntry
 from .const import SUPPORTED_LIFESPANS
 from .deebot_patch import SUPPORTED_CLASSES
-from .deebot_patch.messages import MowerStatsEvent, MowerTriggerEvent
+from .deebot_patch.messages import (
+    MowerBeaconsEvent,
+    MowerStatsEvent,
+    MowerTriggerEvent,
+)
 from .entity import (
     EcovacsCapabilityEntityDescription,
     EcovacsDescriptionEntity,
@@ -221,6 +225,43 @@ LIFESPAN_ENTITY_DESCRIPTIONS = tuple(
 )
 
 
+@dataclass(kw_only=True, frozen=True)
+class EcovacsBeaconSensorEntityDescription(SensorEntityDescription):
+    """Ecovacs beacon sensor entity description."""
+
+    serial: str
+
+
+@callback
+def beacon_entity_description(serial: str) -> EcovacsBeaconSensorEntityDescription:
+    """Describe the sensor for the beacon with *serial*.
+
+    A factory rather than an entry in a tuple, which is the one place this
+    platform departs from the declarative pattern: how many beacons a mower has
+    — and what they are called — is not knowable until it has answered
+    ``getLifeSpan`` at least once.
+
+    The serial keys the entity because it is the only stable identifier the
+    payload carries. There is no index and no guaranteed order, so numbering
+    the beacons by arrival would reshuffle four entities the day an answer came
+    back in a different order. It is also the code the app's own maintenance
+    page prints next to each beacon, so the entity and the app agree on which
+    one is which.
+    """
+    return EcovacsBeaconSensorEntityDescription(
+        serial=serial,
+        key=f"beacon_{serial}",
+        translation_key="beacon",
+        # Not just a unit: device_class is what makes HA treat the reading as a
+        # battery, which is where the "warn me before it dies" behaviour the
+        # request asked for comes from without anyone writing a template.
+        device_class=SensorDeviceClass.BATTERY,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    )
+
+
 # The lawn_mower entity can only ever report HA's five LawnMowerActivity
 # members, so "paused because it started raining" is indistinguishable there
 # from "paused by hand", and a run cut short by rain ends up looking exactly
@@ -302,7 +343,49 @@ async def async_setup_entry(
         and device.device_info["class"] in SUPPORTED_CLASSES
     )
 
+    for device in controller.devices:
+        if device.capabilities.device_type is not DeviceType.MOWER:
+            continue
+        # The same gate as the progress sensor above, for the same reason: the
+        # refresh command behind MowerBeaconsEvent only exists for the classes
+        # deebot_patch has patched, and an unpatched one would never answer.
+        if device.device_info["class"] not in SUPPORTED_CLASSES:
+            continue
+        _async_setup_beacons(device, config_entry, async_add_entities)
+
     async_add_entities(entities)
+
+
+@callback
+def _async_setup_beacons(
+    device: Device,
+    config_entry: EcovacsMowerConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    """Add a sensor for each beacon as the mower first reports it.
+
+    Every other entity in this integration is known at setup time. These are
+    not: the beacons arrive in the ``getLifeSpan`` answer, and until one comes
+    back there is nothing to say how many there are. Subscribing here is also
+    what asks for that answer — the event bus refreshes an event type for its
+    first subscriber, and this is it. The entities that follow subscribe in
+    turn and are handed the same last event straight away.
+
+    A beacon is only ever added, never removed. A serial that stops being
+    reported leaves an entity behind that reads unknown (see ``_on_beacons``);
+    deleting it is the user's call in the entity registry, because a beacon
+    missing from one answer on a firmware whose polls fail intermittently
+    (issue #42) is not proof that it is gone.
+    """
+    known: set[str] = set()
+
+    async def on_beacons(event: MowerBeaconsEvent) -> None:
+        if not (new := [b.sn for b in event.beacons if b.sn not in known]):
+            return
+        known.update(new)
+        async_add_entities(EcovacsBeaconSensor(device, serial) for serial in new)
+
+    config_entry.async_on_unload(device.events.subscribe(MowerBeaconsEvent, on_beacons))
 
 
 class EcovacsSensor(
@@ -369,6 +452,63 @@ class EcovacsLifespanSensor(
                 self.async_write_ha_state()
 
         self._subscribe(self._capability.event, on_event)
+
+
+class EcovacsBeaconSensor(
+    EcovacsDescriptionEntity[CapabilityLifeSpan],
+    SensorEntity,
+):
+    """What is left of one UWB beacon's dry cell.
+
+    The device reports these as ``uwbCell`` entries inside the same
+    ``getLifeSpan`` answer that carries the blade and the lens brush, which is
+    why the capability behind this entity is the life-span one — but not as a
+    ``LifeSpanEvent``: the library's enum has no member for the component and
+    raises on it, so ``deebot_patch`` parses them out into their own event.
+    """
+
+    entity_description: EcovacsBeaconSensorEntityDescription
+
+    def __init__(self, device: Device, serial: str) -> None:
+        """Initialize entity."""
+        super().__init__(
+            device, device.capabilities.life_span, beacon_entity_description(serial)
+        )
+        # The name is "Beacon <serial>"; strings.json holds the shape and this
+        # fills in the one part that differs between the four of them.
+        self._attr_translation_placeholders = {"serial": serial}
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listeners now that hass is ready."""
+        await super().async_added_to_hass()
+
+        # Not the capability's own event: that one is LifeSpanEvent, which
+        # cannot describe a beacon at all. Both come out of the same answer.
+        self._subscribe(MowerBeaconsEvent, self._on_beacons)
+
+    async def _on_beacons(self, event: MowerBeaconsEvent) -> None:
+        """Take this beacon's reading out of the set, or clear it.
+
+        An answer that lists other beacons but not this one means the device
+        has stopped reporting it — a swapped cell, a beacon taken off the lawn.
+        The reading becomes unknown rather than keeping the last value, which
+        would leave a ghost at 0 % that nothing can clear and a low-battery
+        automation firing on a beacon that is no longer there.
+
+        An answer with no beacons at all never reaches this handler: the parser
+        publishes nothing in that case, so a mower that stops reporting the
+        whole set does not silently blank all four.
+        """
+        self._attr_native_value = next(
+            (
+                beacon.percent
+                for beacon in event.beacons
+                if beacon.sn == self.entity_description.serial
+            ),
+            None,
+        )
+        self.async_write_ha_state()
 
 
 # Error codes the mower reports that deebot-client has no text for. Its
