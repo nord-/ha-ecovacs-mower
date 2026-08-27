@@ -1,9 +1,15 @@
 """Map message handlers deebot-client lacks for lawn mowers.
 
-GOAT reports its map via four unsolicited MQTT messages — onMI, onArI,
-onMapTrack, onSpecialContour — none of which exist in the library (the
-vacuum world uses getMapTrace/getMajorMap instead). The wire format is
-documented in docs/superpowers/specs/2026-08-10-mower-map-design.md.
+GOAT reports its map via unsolicited MQTT messages — onMI, onArI,
+onMapTrack, onSpecialContour and, from firmware 1.17 on, onMapTrace —
+none of which exist in the library (the vacuum world uses
+getMapTrace/getMajorMap instead). The wire format is documented in
+docs/superpowers/specs/2026-08-10-mower-map-design.md.
+
+Firmware 1.17 kept the transport and changed the payloads: point lists
+instead of chain codes, no-go zones inside onArI instead of
+onSpecialContour, and onMapTrace instead of onMapTrack (issue #41). The
+dialect is decided per blob in geometry.py, so one build serves both.
 
 Map data is best effort: a broken payload logs at DEBUG and is dropped,
 it never raises and never touches the control path.
@@ -25,6 +31,7 @@ from .geometry import (
     Segment,
     parse_area_info,
     parse_map_info,
+    parse_map_trace,
     parse_map_track,
     parse_special_contour,
 )
@@ -56,6 +63,18 @@ class MowerCoverageEvent(Event):
     """Mowed lane spans keyed (zone, row); an empty list clears the row."""
 
     lanes: dict[tuple[str, int], list[Segment]]
+
+
+@dataclass(frozen=True)
+class MowerCoveredAreaEvent(Event):
+    """Mowed area as outlines and the unmowed islands inside them.
+
+    Firmware 1.17's coverage shape; both lists are the complete current
+    set, never an increment.
+    """
+
+    areas: list[Polygon]
+    holes: list[Polygon]
 
 
 @dataclass(frozen=True)
@@ -155,6 +174,10 @@ class OnArI(_MapMessage):
             )
         if area.obstacles is not None:
             event_bus.notify(MowerObstaclesEvent(obstacles=area.obstacles))
+        if area.nogo is not None:
+            # 1.17 only: up to 1.13 the no-go zones come in their own
+            # onSpecialContour message and this stays None.
+            event_bus.notify(MowerNoGoZonesEvent(zones=area.nogo))
         return HandlingResult.success()
 
 
@@ -168,6 +191,20 @@ class OnMapTrack(_MapMessage):
         track = parse_map_track(blob)
         if track.lanes:
             event_bus.notify(MowerCoverageEvent(lanes=track.lanes))
+        return HandlingResult.success()
+
+
+class OnMapTrace(_MapMessage):
+    """Coverage on firmware 1.17: the mowed area as filled outlines."""
+
+    NAME = "onMapTrace"
+
+    @classmethod
+    def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
+        covered = parse_map_trace(blob)
+        event_bus.notify(
+            MowerCoveredAreaEvent(areas=covered.areas, holes=covered.holes)
+        )
         return HandlingResult.success()
 
 

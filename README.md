@@ -80,7 +80,7 @@ merely that the class string was seen:
 | --- | --- | --- |
 | **Ecovacs GOAT O1200 LiDAR Pro** | `2i0fns` | the author's own hardware |
 | **Ecovacs GOAT O800 RTK** | `9bts2s` | a user, firmware 1.13.8 ([#8](https://github.com/nord-/ha-ecovacs-mower/issues/8)) |
-| **Ecovacs GOAT O800 RTK** | `2px96q` | a user, controls only — start/pause confirmed ([#24](https://github.com/nord-/ha-ecovacs-mower/issues/24)), but the map stays empty on firmware 1.17.8 ([#41](https://github.com/nord-/ha-ecovacs-mower/issues/41)) |
+| **Ecovacs GOAT O800 RTK** | `2px96q` | a user, controls only — start/pause confirmed ([#24](https://github.com/nord-/ha-ecovacs-mower/issues/24)). Firmware 1.17 speaks a second map dialect, decoded from two users' logs but not yet confirmed on hardware ([#41](https://github.com/nord-/ha-ecovacs-mower/issues/41)) |
 | **Ecovacs GOAT G1-800** | `77atlz` | patched, controls **not** confirmed — the protection-flag sensors work on firmware 1.36.208 ([#30](https://github.com/nord-/ha-ecovacs-mower/issues/30)); that firmware leaves `getCleanInfo` unanswered where the 1.13.x branch answers it, so the state poll never completes and commands go unacknowledged ([#42](https://github.com/nord-/ha-ecovacs-mower/issues/42)) |
 | **Ecovacs GOAT A1600 LiDAR Pro** | `e4gqia` | a user, firmware 1.11.31 ([#29](https://github.com/nord-/ha-ecovacs-mower/pull/29)) |
 | **Ecovacs GOAT A1600 RTK** | `xmp9ds` | reported, patch not yet confirmed — firmware 1.17.9 ([#43](https://github.com/nord-/ha-ecovacs-mower/issues/43)) |
@@ -175,7 +175,7 @@ Thirty-eight entities on the mower's device page, across eight platforms:
 | `number` | 2 | Notification volume, cutting direction |
 | `button` | 5 | Reset each of the four consumable lifespans, plus "Locate mower" (plays a sound on the device) |
 | `event` | 1 | Last mowing job (finished / finished with warnings / manually stopped) |
-| `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`); the format is documented in `docs/superpowers/specs/2026-08-10-mower-map-design.md`. Geometry survives restarts; the position track is live-only |
+| `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, and `onMapTrace` on firmware 1.17); the format is documented in `docs/superpowers/specs/2026-08-10-mower-map-design.md`. Geometry survives restarts; the position track is live-only |
 
 Not included yet: **RTK diagnostics** (position and satellite data) and
 zone control. RTK is planned for the next release; the other has no
@@ -392,7 +392,9 @@ To get a usable log:
 
 For anything about the map, `deebot_client` at debug level is the only thing
 that shows whether the mower sends `onMI`/`onArI`/`onMapTrack`/
-`onSpecialContour` at all — that is the log to attach to a map issue.
+`onSpecialContour` — or `onMapTrace`, which firmware 1.17 sends instead of
+`onMapTrack` — at all. That is the log to attach to a map issue, and the
+`info` fields have to be left intact: they are the map geometry itself.
 
 ## Current status
 

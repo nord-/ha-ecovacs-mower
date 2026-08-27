@@ -46,6 +46,20 @@ def decompress(info: str) -> bytes:
     return lzma.LZMADecompressor(lzma.FORMAT_ALONE).decompress(bytes(raw))
 
 
+def _points(spec: str) -> Polygon:
+    """Decode a plain ``x,y;x,y;…`` list into mm points.
+
+    Parts without a comma are skipped: a leading id or kind marker, and
+    the empty field a trailing ";" leaves behind.
+    """
+    points: Polygon = []
+    for part in spec.split(";"):
+        if "," in part:
+            x, y = part.split(",")
+            points.append((int(x), int(y)))
+    return points
+
+
 def chain_to_points(spec: str) -> Polygon:
     """Decode ``"x,y;<chain code>"`` into absolute mm points.
 
@@ -118,6 +132,9 @@ class AreaInfo:
 
     map_info: MapInfo
     obstacles: list[Polygon] | None
+    # No-go zones ride in onArI from firmware 1.17 on; up to 1.13 they
+    # arrive in onSpecialContour and this stays None.
+    nogo: list[Polygon] | None = None
 
 
 @dataclass(frozen=True)
@@ -127,15 +144,33 @@ class MapTrack:
     lanes: dict[tuple[str, int], list[Segment]]
 
 
-def parse_map_info(blob: bytes) -> MapInfo:
-    """Parse onMI: ``[["1","s1;1;<x,y>;<chain>"],["2","1"]]``.
+@dataclass(frozen=True)
+class CoveredArea:
+    """Decoded onMapTrace: the mowed area, and the holes left in it."""
 
-    The idle variant ``s1;0;`` carries no geometry and yields all-None.
+    areas: list[Polygon]
+    holes: list[Polygon]
+
+
+def parse_map_info(blob: bytes) -> MapInfo:
+    """Parse onMI, in either dialect:
+
+    ``[["1","s1;1;<x,y>;<chain code>"],["2","1"]]`` up to firmware 1.13,
+    ``[["1","s1;<x,y>;<x,y>;…"],["2"]]`` from 1.17 on.
+
+    Both have an idle variant carrying no geometry — ``s1;0;`` and a bare
+    ``1`` respectively — which yields all-None.
     """
     boundary: Polygon | None = None
     for entry in json.loads(blob):
+        if entry[0] != "1" or len(entry) < 2:
+            continue
         fields = entry[1].split(";")
-        if entry[0] == "1" and fields[0] == "s1" and fields[1] == "1":
+        if fields[0] != "s1" or len(fields) < 2:
+            continue
+        if "," in fields[1]:
+            boundary = _points(entry[1])
+        elif fields[1] == "1":
             boundary = chain_to_points(";".join(fields[2:]))
     return MapInfo(boundary=boundary)
 
@@ -150,15 +185,71 @@ def _polygons(items: list[str]) -> list[Polygon]:
     return result
 
 
+def _is_point_list_dialect(entries: list[list[str]]) -> bool:
+    """True for the 1.17 dialect, which sends point lists, not chain codes.
+
+    An item is ``<id>;<x,y>;<chain code>`` up to firmware 1.13 and
+    ``<id>;<x,y>;<x,y>;…`` from 1.17 on, so the third field decides.
+    Scanning from index 2 covers both layouts: 1.13's section flag sits
+    there but holds no ";", so it never matches.
+    """
+    for entry in entries:
+        for item in entry[2:]:
+            fields = item.split(";")
+            if len(fields) > 2 and "," in fields[2]:
+                return True
+    return False
+
+
 def parse_area_info(blob: bytes) -> AreaInfo:
-    """Parse onArI sections: 1/2 zones, 3 obstacles, 5 boundary, 6 corridors.
+    """Parse onArI, in whichever dialect the firmware speaks."""
+    entries = json.loads(blob)
+    if _is_point_list_dialect(entries):
+        return _parse_area_info_v117(entries)
+    return _parse_area_info_chain(entries)
+
+
+def _parse_area_info_v117(entries: list[list[str]]) -> AreaInfo:
+    """Parse 1.17 onArI: ``["<mid>","<section>","<id>;<x,y>;<x,y>;…", …]``.
+
+    Sections are 1 mowing zones, 2 no-go zones, 3 obstacles, 4 unused.
+    The per-section update flag is gone; an item is either ``<id>`` alone
+    — the id exists, its geometry did not change — or an id followed by
+    its points. A section whose items all lack geometry is therefore "no
+    update", while a section with no items at all is "there are none".
+
+    Neither the lawn outline nor corridors have a section here: onMI
+    still carries the outline, and no capture has shown corridors.
+    """
+    sections: dict[str, list[Polygon]] = {}
+    for entry in entries:
+        items = entry[2:]
+        polygons = [_points(item) for item in items if ";" in item]
+        if items and not polygons:
+            continue  # ids only: this section did not change
+        sections[entry[1]] = polygons
+    if sections.get("4"):
+        _LOGGER.debug(
+            "onArI section 4 carried %d polygons; it was empty in every "
+            "capture this parser was written from",
+            len(sections["4"]),
+        )
+    return AreaInfo(
+        map_info=MapInfo(zones=sections.get("1")),
+        obstacles=sections.get("3"),
+        nogo=sections.get("2"),
+    )
+
+
+def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
+    """Parse onArI up to 1.13: 1/2 zones, 3 obstacles, 5 boundary, 6 corridors.
 
     Entry format: ``["<mid>", "<section>", "<flag>", *items]`` where flag
     "0" means "no update" for that section — represented as None so stored
     geometry is never wiped by a heartbeat.
     """
     sections: dict[str, list[str]] = {}
-    for entry in json.loads(blob):
+    for entry in entries:
         if len(entry) > 2 and entry[2] == "1":
             sections[entry[1]] = entry[3:]
 
@@ -216,15 +307,22 @@ def parse_map_track(blob: bytes) -> MapTrack:
     return MapTrack(lanes=lanes)
 
 
+def parse_map_trace(blob: bytes) -> CoveredArea:
+    """Parse onMapTrace: ``[["1","0;<x,y>;…"],["2","0;<x,y>;…", …],["3"]]``.
+
+    Firmware 1.17's replacement for onMapTrack, and a different shape:
+    section 1 is the outline of what has been mowed and section 2 the
+    unmowed islands inside it, where onMapTrack sent spans per row.
+    Section 3 was empty in all 3660 blobs of the issue-41 captures. Every
+    blob is a complete snapshot, never an increment.
+    """
+    sections: dict[str, list[Polygon]] = {"1": [], "2": []}
+    for entry in json.loads(blob):
+        if (section := sections.get(entry[0])) is not None:
+            section.extend(_points(record) for record in entry[1:])
+    return CoveredArea(areas=sections["1"], holes=sections["2"])
+
+
 def parse_special_contour(blob: bytes) -> list[Polygon]:
     """Parse onSpecialContour no-go zones: plain ``x,y;x,y;…;`` polygons."""
-    result: list[Polygon] = []
-    for entry in json.loads(blob):
-        result.append(
-            [
-                tuple(int(value) for value in part.split(","))
-                for part in entry[4].rstrip(";").split(";")
-                if part
-            ]
-        )
-    return result
+    return [_points(entry[4]) for entry in json.loads(blob)]

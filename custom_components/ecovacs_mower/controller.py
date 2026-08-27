@@ -65,6 +65,7 @@ from .deebot_patch import (
 from .deebot_patch.hardware import SUPPORTED_CLASSES, patch_device_info
 from .deebot_patch.map_messages import (
     MowerCoverageEvent,
+    MowerCoveredAreaEvent,
     MowerMapInfoEvent,
     MowerNoGoZonesEvent,
     MowerObstaclesEvent,
@@ -288,6 +289,10 @@ class EcovacsController:
             mower_map.update_coverage(event.lanes)
             save()
 
+        async def on_covered(event: MowerCoveredAreaEvent) -> None:
+            mower_map.update_covered(event.areas, event.holes)
+            save()
+
         async def on_nogo(event: MowerNoGoZonesEvent) -> None:
             mower_map.update_nogo(event.zones)
             save()
@@ -307,6 +312,7 @@ class EcovacsController:
         device.events.subscribe(MowerMapInfoEvent, on_map_info)
         device.events.subscribe(MowerObstaclesEvent, on_obstacles)
         device.events.subscribe(MowerCoverageEvent, on_coverage)
+        device.events.subscribe(MowerCoveredAreaEvent, on_covered)
         device.events.subscribe(MowerNoGoZonesEvent, on_nogo)
         device.events.subscribe(PositionsEvent, on_positions)
 

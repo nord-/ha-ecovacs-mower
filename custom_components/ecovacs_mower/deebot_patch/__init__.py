@@ -19,7 +19,13 @@ from deebot_client.messages.json import MESSAGES
 from .authentication import AccountAuthenticator
 from .commands import CleanMower, GetCleanInfoMower
 from .hardware import SUPPORTED_CLASSES, patch_device_info
-from .map_messages import OnArI, OnMapTrack, OnMI, OnSpecialContour
+from .map_messages import (
+    OnArI,
+    OnMapTrace,
+    OnMapTrack,
+    OnMI,
+    OnSpecialContour,
+)
 from .messages import (
     OnChargeInfo,
     OnPos,
@@ -72,6 +78,7 @@ def apply() -> None:
         OnScheduleTaskInfo,
         OnStatsMower,
         OnArI,
+        OnMapTrace,
         OnMapTrack,
         OnMI,
         OnSpecialContour,

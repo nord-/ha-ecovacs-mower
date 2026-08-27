@@ -98,3 +98,29 @@ def test_is_empty_false_for_corridors_only() -> None:
     mower_map = MowerMap()
     mower_map.update_map_info(None, None, [[(0, 0)]])
     assert not mower_map.is_empty
+
+
+def test_covered_area_replaces_the_previous_snapshot() -> None:
+    # Every onMapTrace blob is a complete snapshot of the mowed area, not
+    # an increment: the ring is re-simplified and can lose points.
+    mower_map = MowerMap()
+    mower_map.update_covered([[(0, 0), (100, 0), (100, 100)]], [[(10, 10)]])
+    mower_map.update_covered([[(0, 0), (200, 0)]], [])
+    assert mower_map.covered == [[(0, 0), (200, 0)]]
+    assert mower_map.covered_holes == []
+
+
+def test_is_empty_false_for_covered_area_only() -> None:
+    mower_map = MowerMap()
+    mower_map.update_covered([[(0, 0), (100, 0), (100, 100)]], [])
+    assert not mower_map.is_empty
+
+
+def test_round_trip_keeps_the_covered_area() -> None:
+    import json
+
+    mower_map = MowerMap()
+    mower_map.update_covered([[(0, 0), (100, 0)]], [[(10, 10), (20, 20)]])
+    restored = MowerMap.from_dict(json.loads(json.dumps(mower_map.as_dict())))
+    assert restored.covered == [[(0, 0), (100, 0)]]
+    assert restored.covered_holes == [[(10, 10), (20, 20)]]

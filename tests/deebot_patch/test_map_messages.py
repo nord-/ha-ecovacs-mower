@@ -13,10 +13,12 @@ from unittest.mock import Mock, patch
 
 from custom_components.ecovacs_mower.deebot_patch.map_messages import (
     MowerCoverageEvent,
+    MowerCoveredAreaEvent,
     MowerMapInfoEvent,
     MowerNoGoZonesEvent,
     MowerObstaclesEvent,
     OnArI,
+    OnMapTrace,
     OnMapTrack,
     OnMI,
     OnSpecialContour,
@@ -29,6 +31,7 @@ FIXTURES: dict[str, list[Any]] = json.loads(
 
 _MAP_EVENTS = (
     MowerCoverageEvent,
+    MowerCoveredAreaEvent,
     MowerMapInfoEvent,
     MowerNoGoZonesEvent,
     MowerObstaclesEvent,
@@ -158,4 +161,42 @@ def test_apply_registers_the_map_messages() -> None:
     assert MESSAGES["onMI"] is OnMI
     assert MESSAGES["onArI"] is OnArI
     assert MESSAGES["onMapTrack"] is OnMapTrack
+    assert MESSAGES["onMapTrace"] is OnMapTrace
     assert MESSAGES["onSpecialContour"] is OnSpecialContour
+
+
+def test_on_mi_v117_notifies_boundary() -> None:
+    events = _notified(OnMI, "on_mi_full_v117")
+    assert len(events) == 1
+    assert isinstance(events[0], MowerMapInfoEvent)
+    assert events[0].boundary[0] == (-10800, 7900)
+
+
+def test_on_mi_v117_idle_notifies_nothing() -> None:
+    assert _notified(OnMI, "on_mi_idle_v117") == []
+
+
+def test_on_ari_v117_notifies_zones_obstacles_and_nogo() -> None:
+    events = _notified(OnArI, "on_ari_v117_nogo_zones")
+    map_info = next(e for e in events if isinstance(e, MowerMapInfoEvent))
+    obstacles = next(e for e in events if isinstance(e, MowerObstaclesEvent))
+    nogo = next(e for e in events if isinstance(e, MowerNoGoZonesEvent))
+    assert len(map_info.zones) == 4
+    assert map_info.boundary is None  # 1.17 sends the outline via onMI
+    assert len(obstacles.obstacles) == 29
+    # No onSpecialContour on 1.17: the no-go zones ride in onArI instead.
+    assert len(nogo.zones) == 4
+
+
+def test_on_ari_v117_bare_ids_notify_no_map_info() -> None:
+    events = _notified(OnArI, "on_ari_v117_ids_only")
+    assert not [e for e in events if isinstance(e, MowerMapInfoEvent)]
+    assert len(next(e for e in events if isinstance(e, MowerObstaclesEvent)).obstacles) == 3
+
+
+def test_on_map_trace_notifies_covered_area() -> None:
+    events = _notified(OnMapTrace, "on_map_trace_v117_multipart")
+    assert len(events) == 1
+    assert isinstance(events[0], MowerCoveredAreaEvent)
+    assert len(events[0].areas) == 1
+    assert len(events[0].holes) == 6

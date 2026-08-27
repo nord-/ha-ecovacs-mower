@@ -25,6 +25,11 @@ class MowerMap:
         self.obstacles: list[Polygon] = []
         self.nogo_zones: list[Polygon] = []
         self.lanes: dict[tuple[str, int], list[Segment]] = {}
+        # Firmware 1.17 reports coverage as outlines with holes instead of
+        # lanes. A device speaks one dialect, so only one of the two is
+        # ever populated.
+        self.covered: list[Polygon] = []
+        self.covered_holes: list[Polygon] = []
         self.track: list[Point] = []
         self.position: Point | None = None
         self.heading: int = 0
@@ -41,6 +46,7 @@ class MowerMap:
             self.boundary is None
             and not self.zones
             and not self.lanes
+            and not self.covered
             and not self.nogo_zones
             and not self.obstacles
             and not self.corridors
@@ -74,6 +80,13 @@ class MowerMap:
         """Merge lane rows; a resent row replaces its previous extent."""
         self.lanes.update(lanes)
 
+    def update_covered(
+        self, areas: list[Polygon], holes: list[Polygon]
+    ) -> None:
+        """Replace the mowed area (every onMapTrace blob is a snapshot)."""
+        self.covered = areas
+        self.covered_holes = holes
+
     def update_position(self, x: int, y: int, a: int) -> None:
         """Move the marker and extend the track."""
         self.position = (x, y)
@@ -97,6 +110,8 @@ class MowerMap:
                 [zone, row, segments]
                 for (zone, row), segments in self.lanes.items()
             ],
+            "covered": self.covered,
+            "covered_holes": self.covered_holes,
         }
 
     @classmethod
@@ -114,6 +129,10 @@ class MowerMap:
         mower_map.obstacles = [polygon(p) for p in data.get("obstacles", [])]
         mower_map.nogo_zones = [
             polygon(p) for p in data.get("nogo_zones", [])
+        ]
+        mower_map.covered = [polygon(p) for p in data.get("covered", [])]
+        mower_map.covered_holes = [
+            polygon(p) for p in data.get("covered_holes", [])
         ]
         mower_map.lanes = {
             (str(zone), int(row)): [

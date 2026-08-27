@@ -48,7 +48,7 @@ def render(mower_map: MowerMap) -> str:
         [mower_map.boundary] if mower_map.boundary else []
     ) + mower_map.zones + mower_map.corridors + mower_map.obstacles + (
         mower_map.nogo_zones
-    ):
+    ) + mower_map.covered:
         points.extend(polygon)
     for segments in mower_map.lanes.values():
         for start, end in segments:
@@ -82,6 +82,18 @@ def render(mower_map: MowerMap) -> str:
         parts.append(
             f'<path class="boundary" d="{path(mower_map.boundary)}" '
             f'fill="{_LAWN_FILL}" stroke="{_LAWN_EDGE}" stroke-width="1.5"/>'
+        )
+    if mower_map.covered:
+        # One path, even-odd fill: the holes are subpaths that cut the
+        # mowed area away wherever they overlap it. Every hole a 1.17
+        # mower has sent sits inside one of the outlines.
+        rings = " ".join(
+            path(polygon)
+            for polygon in mower_map.covered + mower_map.covered_holes
+        )
+        parts.append(
+            f'<path class="covered" d="{rings}" fill="{_LANE}" '
+            'fill-rule="evenodd" opacity="0.9"/>'
         )
     for segments in mower_map.lanes.values():
         for start, end in segments:

@@ -1,8 +1,10 @@
 """Tests for the pure map-format decoding.
 
 Fixtures are real payloads captured 2026-08-10 from a GOAT O1200 (2i0fns,
-fw 1.11.31) and verified against the official app's map. No deebot-client
-or Home Assistant needed — this file runs on Windows.
+fw 1.11.31) and verified against the official app's map; the ``_v117`` ones
+were captured 2026-08-26 from two GOAT O800 RTK (2px96q) on firmware 1.17.8
+and 1.17.11 (issue #41). No deebot-client or Home Assistant needed — this
+file runs on Windows.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from custom_components.ecovacs_mower.deebot_patch.geometry import (
     decompress,
     parse_area_info,
     parse_map_info,
+    parse_map_trace,
     parse_map_track,
     parse_special_contour,
 )
@@ -210,3 +213,70 @@ def test_parse_special_contour() -> None:
     assert polygons[0] == [
         (-29233, 1843), (-28568, 2576), (-27815, 1891), (-28481, 1158)
     ]
+
+
+# Firmware 1.17 (issue #41) sends the same blobs in a different dialect:
+# explicit point lists instead of chain codes, no per-section update flag,
+# and onMapTrace in place of onMapTrack. Fixtures suffixed _v117 are real
+# payloads captured 2026-08-26 from two GOAT O800 RTK (2px96q), one on
+# 1.17.8 and one on 1.17.11.
+
+
+def test_parse_map_info_v117_reads_the_point_list_boundary() -> None:
+    info = parse_map_info(_blob("on_mi_full_v117"))
+    assert info.boundary is not None
+    assert info.boundary[0] == (-10800, 7900)
+    assert len(info.boundary) == 1117
+    assert info.zones is None and info.corridors is None
+
+
+def test_parse_map_info_v117_idle_carries_nothing() -> None:
+    # The idle snapshot is a bare ["1","1"]. The 1.13 parser indexed past
+    # the end of it, so the blob was dropped as undecodable (#41).
+    info = parse_map_info(_blob("on_mi_idle_v117"))
+    assert info.boundary is None
+    assert info.zones is None and info.corridors is None
+
+
+def test_parse_area_info_v117_zones_obstacles_and_empty_nogo() -> None:
+    area = parse_area_info(_blob("on_ari_v117_multipart"))
+    assert [len(zone) for zone in area.map_info.zones] == [326, 462, 479]
+    assert area.map_info.zones[0][0] == (-10800, 7900)
+    assert len(area.obstacles) == 3
+    # Section 2 with no items at all: this lawn has no no-go zones.
+    assert area.nogo == []
+    # 1.17 has no boundary or corridor section; onMI carries the outline.
+    assert area.map_info.boundary is None
+    assert area.map_info.corridors is None
+
+
+def test_parse_area_info_v117_reads_nogo_zones() -> None:
+    # Confirmed by the reporter: four no-go zones in the app, four rings
+    # in section 2, each inside one of the four section 1 mowing zones.
+    area = parse_area_info(_blob("on_ari_v117_nogo_zones"))
+    assert len(area.map_info.zones) == 4
+    assert [len(zone) for zone in area.nogo] == [166, 87, 91, 127]
+    assert len(area.obstacles) == 29
+
+
+def test_parse_area_info_v117_bare_ids_mean_no_update() -> None:
+    # ["1","1","1","2","3"]: the three zone ids exist, none of them sent
+    # geometry. Reading that as "no zones" would wipe the stored lawn.
+    area = parse_area_info(_blob("on_ari_v117_ids_only"))
+    assert area.map_info.zones is None
+    assert len(area.obstacles) == 3
+
+
+def test_parse_map_trace_single_ring() -> None:
+    covered = parse_map_trace(_blob("on_map_trace_v117_single"))
+    assert len(covered.areas) == 1
+    assert covered.areas[0][0] == (-4800, -3900)
+    assert len(covered.areas[0]) == 14
+    assert covered.holes == []
+
+
+def test_parse_map_trace_multipart_carries_holes() -> None:
+    covered = parse_map_trace(_blob("on_map_trace_v117_multipart"))
+    assert len(covered.areas) == 1
+    assert len(covered.areas[0]) == 257
+    assert [len(hole) for hole in covered.holes] == [8, 14, 24, 8, 8, 8]

@@ -23,6 +23,7 @@ from homeassistant.util import dt as dt_util
 from . import EcovacsMowerConfigEntry
 from .deebot_patch.map_messages import (
     MowerCoverageEvent,
+    MowerCoveredAreaEvent,
     MowerMapInfoEvent,
     MowerNoGoZonesEvent,
     MowerObstaclesEvent,
@@ -81,6 +82,7 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         self._subscribe(MowerMapInfoEvent, self._on_geometry)
         self._subscribe(MowerObstaclesEvent, self._on_geometry)
         self._subscribe(MowerCoverageEvent, self._on_geometry)
+        self._subscribe(MowerCoveredAreaEvent, self._on_geometry)
         self._subscribe(MowerNoGoZonesEvent, self._on_geometry)
         self._subscribe(PositionsEvent, self._on_positions)
 
@@ -93,6 +95,7 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         event: MowerMapInfoEvent
         | MowerObstaclesEvent
         | MowerCoverageEvent
+        | MowerCoveredAreaEvent
         | MowerNoGoZonesEvent,
     ) -> None:
         self._bump()

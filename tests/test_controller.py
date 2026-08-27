@@ -628,10 +628,10 @@ async def test_setup_map_restores_persisted_geometry() -> None:
     mower_map = controller.maps["did-1"]
     assert mower_map.boundary == [(0, 0), (100, 0), (100, 100)]
     assert mower_map.lanes == {("1", 5): [((0, 0), (0, 100))]}
-    # Eager subscriptions: 4 map events + PositionsEvent. EventBus.notify
+    # Eager subscriptions: 5 map events + PositionsEvent. EventBus.notify
     # drops events nobody subscribes to, so waiting for the entity to
     # subscribe would lose data.
-    assert device.events.subscribe.call_count == 5
+    assert device.events.subscribe.call_count == 6
 
 
 async def test_setup_map_survives_corrupt_store() -> None:
@@ -677,3 +677,42 @@ async def test_async_remove_map_store_deletes_the_right_key() -> None:
         hass, MAP_STORAGE_VERSION, "ecovacs_mower.map_did-1"
     )
     store_cls.return_value.async_remove.assert_awaited_once()
+
+
+async def test_setup_map_feeds_the_covered_area_into_the_map() -> None:
+    """Firmware 1.17 coverage reaches the map and gets persisted."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.map_messages import (
+        MowerCoveredAreaEvent,
+    )
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = MagicMock()
+    controller.maps = {}
+    controller._map_stores = {}
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1"}
+    callbacks: dict[type, object] = {}
+    device.events.subscribe = lambda event_type, callback: callbacks.setdefault(
+        event_type, callback
+    )
+
+    with patch(
+        "custom_components.ecovacs_mower.controller.Store"
+    ) as store_cls:
+        store_cls.return_value.async_load = AsyncMock(return_value=None)
+        await controller._setup_map(device)
+
+        await callbacks[MowerCoveredAreaEvent](
+            MowerCoveredAreaEvent(
+                areas=[[(0, 0), (100, 0), (100, 100)]], holes=[[(10, 10)]]
+            )
+        )
+
+    mower_map = controller.maps["did-1"]
+    assert mower_map.covered == [[(0, 0), (100, 0), (100, 100)]]
+    assert mower_map.covered_holes == [[(10, 10)]]
+    store_cls.return_value.async_delay_save.assert_called_once()

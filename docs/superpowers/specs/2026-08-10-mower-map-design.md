@@ -202,7 +202,7 @@ Everything below was reverse-engineered 2026-08-10 from a live O1200
 
 ### Container format
 
-All four messages carry `body.data` with:
+Every one of these messages carries `body.data` with:
 
 | field | meaning |
 | --- | --- |
@@ -289,6 +289,54 @@ of them on the same smooth path as the surviving ones. The track was rendered
 from a tenth of its points, and after a restart the marker sat in the dock for
 minutes at a time. `deebot_patch.messages.OnPos` now handles the message and
 reads only bit 0 as "no position".
+
+### Firmware 1.17 — the second dialect (issue #41)
+
+Decoded 2026-08-26 from two GOAT O800 RTK (`2px96q`) sessions, one on
+firmware 1.17.8 and one on 1.17.11: 3660 reassembled blobs, every one of
+which decompresses under the container rules above at exactly `infoSize`.
+The transport is unchanged. The payloads are not.
+
+The chain code is gone everywhere: geometry is an explicit list of absolute
+mm points, `x,y;x,y;…`, with steps of about 50 mm that are not snapped to a
+grid.
+
+`onMI` is `[["1","s1;<x,y>;<x,y>;…"],["2"]]`, and its idle variant is a bare
+`[["1","1"],["2"]]`. The 1.13 parser indexed past the end of both and logged
+them as undecodable blobs.
+
+`onArI` entries are `["<mid>","<section>",*items]` — the per-section update
+flag is gone, and so are the boundary and corridor sections; `onMI` still
+carries the outline.
+
+| section | content |
+| --- | --- |
+| 1 | mowing zones, one ring each — 3 rings for a 3-area lawn, 4 for a 4-area one |
+| 2 | **no-go zones** — 4 rings for the reporter with 4 in the app, none for the one with none; each ring falls inside exactly one section 1 zone |
+| 3 | obstacles, ids from 100 up, as on 1.13 |
+| 4 | empty in every capture |
+
+An item is either `<id>` alone — the id exists, its geometry did not change
+— or `<id>;<x,y>;<x,y>;…`. A section whose items all lack geometry is
+therefore "no update", while a section with no items at all means "there are
+none".
+
+`onMapTrack` and `onSpecialContour` are never sent. `onMapTrace` takes over
+the coverage job, and it is not a rename — it reports an area, not lanes:
+`[["1","0;<x,y>;…"],["2","0;<x,y>;…",…],["3"]]`.
+
+| section | content |
+| --- | --- |
+| 1 | 1–3 rings: the outline of the mowed area, growing through the session to 307 points in one capture and 807 in the other, with 50–300 mm steps |
+| 2 | 0–22 small rings: unmowed islands inside section 1. All 966 sampled have their centroid inside a section 1 ring, and none is co-located with an `onArI` obstacle (4–17 m to the nearest one) |
+| 3 | empty in all 3660 blobs |
+
+Every blob is a complete snapshot rather than an increment: the rings are
+re-simplified between blobs and can lose points.
+
+Which dialect a blob speaks is decided from the blob's own shape — the field
+checks in `parse_map_info` and `_is_point_list_dialect` — never from the
+firmware string in the header, so one build serves both.
 
 ### Reference tooling
 

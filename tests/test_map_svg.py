@@ -51,3 +51,29 @@ def test_svg_is_valid_xml() -> None:
 
     ET.fromstring(render(_populated_map()))
     ET.fromstring(render(MowerMap()))
+
+
+def test_covered_area_renders_with_holes_punched_out() -> None:
+    # Firmware 1.17 sends coverage as an outline plus the unmowed islands
+    # inside it. One path, even-odd fill: the holes cut the fill away.
+    mower_map = MowerMap()
+    mower_map.update_map_info(BOUNDARY, None, None)
+    mower_map.update_covered(
+        [[(0, 0), (9000, 0), (9000, 9000), (0, 9000)]],
+        [[(1000, 1000), (2000, 1000), (2000, 2000)]],
+    )
+    svg = render(mower_map)
+    covered = next(
+        line for line in svg.splitlines() if 'class="covered"' in line
+    )
+    assert 'fill-rule="evenodd"' in covered
+    # Outer ring and hole are subpaths of the same path element.
+    assert covered.count("M") == 2
+
+
+def test_covered_area_alone_is_not_the_placeholder() -> None:
+    mower_map = MowerMap()
+    mower_map.update_covered([[(0, 0), (9000, 0), (9000, 9000)]], [])
+    svg = render(mower_map)
+    assert "No map data yet" not in svg
+    assert 'class="covered"' in svg
