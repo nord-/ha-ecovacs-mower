@@ -81,7 +81,7 @@ merely that the class string was seen:
 | **Ecovacs GOAT O1200 LiDAR Pro** | `2i0fns` | the author's own hardware |
 | **Ecovacs GOAT O800 RTK** | `9bts2s` | a user, firmware 1.13.8 ([#8](https://github.com/nord-/ha-ecovacs-mower/issues/8)) |
 | **Ecovacs GOAT O800 RTK** | `2px96q` | a user, controls only — start/pause confirmed ([#24](https://github.com/nord-/ha-ecovacs-mower/issues/24)), but the map stays empty on firmware 1.17.8 ([#41](https://github.com/nord-/ha-ecovacs-mower/issues/41)) |
-| **Ecovacs GOAT G1-800** | `77atlz` | patched, controls **not** confirmed — the protection-flag sensors work on firmware 1.36.208 ([#30](https://github.com/nord-/ha-ecovacs-mower/issues/30)), but start, pause and dock are reported dead ([#42](https://github.com/nord-/ha-ecovacs-mower/issues/42)) |
+| **Ecovacs GOAT G1-800** | `77atlz` | patched, controls **not** confirmed — the protection-flag sensors work on firmware 1.36.208 ([#30](https://github.com/nord-/ha-ecovacs-mower/issues/30)); that firmware leaves `getCleanInfo` unanswered where the 1.13.x branch answers it, so the state poll never completes and commands go unacknowledged ([#42](https://github.com/nord-/ha-ecovacs-mower/issues/42)) |
 | **Ecovacs GOAT A1600 LiDAR Pro** | `e4gqia` | a user, firmware 1.11.31 ([#29](https://github.com/nord-/ha-ecovacs-mower/pull/29)) |
 | **Ecovacs GOAT A1600 RTK** | `xmp9ds` | reported, patch not yet confirmed — firmware 1.17.9 ([#43](https://github.com/nord-/ha-ecovacs-mower/issues/43)) |
 

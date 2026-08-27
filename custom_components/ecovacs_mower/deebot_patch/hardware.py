@@ -32,11 +32,15 @@ _LOGGER = logging.getLogger(__name__)
 #            1.36.208; controls not confirmed). Upstream's 77atlz.py is
 #            byte-identical to 9bts2s.py, docstring included, so the O800 RTK's
 #            patch applies unchanged — but only the protection-flag sensors
-#            were ever confirmed on this model, and issue #42 reports that
-#            start, pause and dock all do nothing. Its firmware (1.36.208) is
-#            on a different branch than 9bts2s's 1.13.8, the data point the
-#            1.13.x quirks were established from, so the patch that fits that
-#            one may not fit this one.
+#            were ever confirmed on this model, and issue #42 has evidence that
+#            its firmware branch inverts the quirk this patch exists for: plain
+#            getCleanInfo is never answered (errno 500, on every poll), while
+#            getCleanInfo_V2 was answered on the same install before the class
+#            was patched. Whether the mow command is inverted too is unknown —
+#            the mower is reported to act on clean anyway, so that half may
+#            well be right here. Nothing conditional is expressible at this
+#            point regardless: firmware arrives in a command response
+#            header, long after get_devices() has frozen these capabilities.
 #   e4gqia — GOAT A1600 LiDAR Pro (confirmed, PR #29, firmware 1.11.31).
 #            Upstream names this A3000 LiDAR Pro; its module is byte-identical
 #            to 9bts2s.py apart from the docstring, so the O800's patch
