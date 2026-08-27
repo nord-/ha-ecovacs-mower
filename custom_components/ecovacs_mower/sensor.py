@@ -232,7 +232,6 @@ class EcovacsBeaconSensorEntityDescription(SensorEntityDescription):
     serial: str
 
 
-@callback
 def beacon_entity_description(serial: str) -> EcovacsBeaconSensorEntityDescription:
     """Describe the sensor for the beacon with *serial*.
 

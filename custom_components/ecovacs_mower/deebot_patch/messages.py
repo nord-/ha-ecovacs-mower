@@ -165,8 +165,10 @@ class MowerBeaconsEvent(Event):
     beacons: tuple[MowerBeacon, ...]
 
 
-# The wire type of a beacon's dry cell. Not a LifeSpan member, and cannot become
-# one: the enum has members already, and Python enums are closed once they do.
+# The wire type of a beacon's dry cell. Not a LifeSpan member, and cannot
+# become one at runtime: it is a closed StrEnum with no `_missing_` hook. A
+# future release of the library could still add a member for it upstream —
+# see test_life_span_enum_has_no_member_for_the_beacon_cells.
 BEACON_COMPONENT = "uwbCell"
 
 
@@ -182,6 +184,7 @@ def notify_mower_beacons(event_bus: EventBus, data: list[dict[str, Any]]) -> Non
     to undo, and repeating it one level down would be absurd.
     """
     beacons: list[MowerBeacon] = []
+    seen: set[str] = set()
 
     for component in data:
         if component.get("type") != BEACON_COMPONENT:
@@ -193,6 +196,14 @@ def notify_mower_beacons(event_bus: EventBus, data: list[dict[str, Any]]) -> Non
             # and attributing it to the wrong one is worse than losing it.
             _LOGGER.warning("Beacon entry without a serial, dropped: %s", component)
             continue
+
+        if sn in seen:
+            # A repeated serial would reach the sensor platform as two
+            # entities sharing one unique_id. Keep the first reading and drop
+            # the rest, the same way a missing serial is dropped above.
+            _LOGGER.warning("Beacon entry %s reported more than once, dropped", sn)
+            continue
+        seen.add(sn)
 
         try:
             left = int(component["left"])

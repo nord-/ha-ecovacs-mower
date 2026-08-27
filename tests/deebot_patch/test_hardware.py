@@ -389,6 +389,8 @@ async def test_patch_preserves_the_other_stats_capabilities(class_: str) -> None
 
     assert after.capabilities.stats.total == total_before
     assert after.capabilities.stats.report == report_before
+
+
 async def test_unpatched_library_asks_with_the_command_that_gives_up() -> None:
     # Documents the gap issue #40 asks about: upstream's GetLifeSpan raises on
     # the first uwbCell entry, which loses every component listed after it as

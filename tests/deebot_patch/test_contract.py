@@ -246,6 +246,8 @@ def test_upstream_on_stats_publishes_the_two_fields_it_keeps() -> None:
     event_bus.notify.assert_called_once_with(
         StatsEvent(area=208900, time=977, type=None)
     )
+
+
 def test_life_span_enum_has_no_member_for_the_beacon_cells() -> None:
     # The whole reason GetLifeSpanMower exists: "uwbCell" is not in the enum,
     # and LifeSpan is a StrEnum with no _missing_ hook, so the library raises on

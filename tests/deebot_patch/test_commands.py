@@ -205,6 +205,8 @@ def test_an_alert_wins_over_the_dropped_idle() -> None:
     )
 
     assert event_bus.notify.call_args_list == [call(StateEvent(State.ERROR))]
+
+
 # A real answer to getLifeSpan from a GOAT G1-800 with four UWB beacons, one of
 # them flat, captured while the app was showing the low-beacon banner (issue
 # #40). The serials are placeholders; the reporter redacted the real ones. The
@@ -331,6 +333,32 @@ def test_get_life_span_mower_drops_a_beacon_with_no_serial() -> None:
 
     assert (
         call(MowerBeaconsEvent(beacons=(MowerBeacon(sn="BEACON-2", percent=50.0),)))
+        in event_bus.notify.call_args_list
+    )
+
+
+def test_get_life_span_mower_drops_a_repeated_serial() -> None:
+    # A repeated sn would otherwise reach the sensor platform as two entities
+    # sharing one unique_id. Keep the first reading, drop the rest.
+    event_bus = Mock()
+    GetLifeSpanMower._handle_body_data_list(
+        event_bus,
+        [
+            {"type": "uwbCell", "sn": "BEACON-1", "left": 20, "total": 100},
+            {"type": "uwbCell", "sn": "BEACON-1", "left": 80, "total": 100},
+            {"type": "uwbCell", "sn": "BEACON-2", "left": 50, "total": 100},
+        ],
+    )
+
+    assert (
+        call(
+            MowerBeaconsEvent(
+                beacons=(
+                    MowerBeacon(sn="BEACON-1", percent=20.0),
+                    MowerBeacon(sn="BEACON-2", percent=50.0),
+                )
+            )
+        )
         in event_bus.notify.call_args_list
     )
 

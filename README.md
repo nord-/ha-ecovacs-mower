@@ -324,6 +324,11 @@ maintenance page, so the two agree on which one is which. They are batteries as
 far as Home Assistant is concerned — `device_class: battery` — which means the
 built-in low-battery handling applies without anyone writing a template.
 
+Issue #40 proposed `sensor.<device>_beacon_<sn>_battery` with the serial as an
+attribute; this drops the `_battery` suffix since `device_class: battery`
+already says what the reading is, and the serial moved into the entity id and
+name since it is already the unique identifier for the sensor.
+
 They appear once the mower has answered `getLifeSpan` for the first time, not
 at setup: the payload is what says how many beacons there are and what they are
 called, and nothing else does. A beacon that stops being reported keeps its

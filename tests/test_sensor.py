@@ -766,6 +766,8 @@ async def test_a_changed_percentage_is_written() -> None:
 
     assert sensor._attr_native_value == 51
     assert sensor.async_write_ha_state.call_count == 2
+
+
 def _beacons(*pairs: tuple[str, float]):
     from custom_components.ecovacs_mower.deebot_patch.messages import (
         MowerBeacon,

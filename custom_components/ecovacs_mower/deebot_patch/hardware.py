@@ -152,6 +152,13 @@ async def patch_device_info(class_: str) -> None:
     # getStats requests instead of one. Accepted: deduping identical commands
     # across event types would mean changing the event bus itself, and the
     # cost is one extra request on a rare transition, not a wrong answer.
+    #
+    # LifeSpanEvent and MowerBeaconsEvent share the same pattern for the same
+    # getLifeSpan command: LifeSpanEvent is first-subscribed by the blade
+    # sensor, MowerBeaconsEvent by the beacon platform setup in sensor.py, so
+    # every mower — beacon-equipped or not — asks twice at startup and on
+    # every reconnect. Both parse the one answer correctly; only the extra
+    # round trip is paid.
     object.__setattr__(
         patched,
         "_events",
