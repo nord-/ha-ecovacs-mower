@@ -445,6 +445,42 @@ def test_on_pos_leaves_docked_alone_for_a_sample_near_the_charger() -> None:
     assert record.docked is True
 
 
+def test_on_pos_measures_from_a_reported_charger_position() -> None:
+    # Never observed on the verified hardware (chargePos there is always
+    # flagged 1, hence the (0, 0) fallback), but a firmware that does report a
+    # valid, non-origin chargePos must not have a deebotPos next to it read as
+    # "clearly away" just because it is far from the unrelated origin.
+    bus = Mock()
+    record = register(bus)
+    record.dock()
+
+    data = {
+        "deebotPos": {"x": 5010, "y": 0, "a": 0, "invalid": 0},
+        "chargePos": [{"x": 5000, "y": 0, "a": 0, "t": 1, "invalid": 0}],
+        "mid": "0",
+    }
+    OnPos._handle_body_data_dict(bus, data)
+
+    assert record.docked is True
+
+
+def test_on_pos_still_clears_docked_far_from_a_valid_charger_position() -> None:
+    bus = Mock()
+    record = register(bus)
+    record.dock()
+    record.suppressed = State.PAUSED
+
+    data = {
+        "deebotPos": {"x": 10000, "y": 0, "a": 0, "invalid": 0},
+        "chargePos": [{"x": 5000, "y": 0, "a": 0, "t": 1, "invalid": 0}],
+        "mid": "0",
+    }
+    OnPos._handle_body_data_dict(bus, data)
+
+    assert record.docked is False
+    assert record.suppressed is None
+
+
 def test_message_names() -> None:
     # The names are the keys in the library's registry and must match exactly.
     assert OnChargeInfo.NAME == "onChargeInfo"

@@ -759,12 +759,25 @@ class OnPos(MessageBodyDataDict):
                 if not entry.get("invalid", 0) & 1
             )
 
+        # Usually the origin — verified hardware sends chargePos with
+        # invalid: 1 on every sample, which the filter above already dropped
+        # — but a firmware that ever reports a valid, non-origin chargePos in
+        # the same payload should be measured from that, not from (0, 0).
+        dock_x, dock_y = next(
+            (
+                (position.x, position.y)
+                for position in positions
+                if position.type is PositionType.CHARGER
+            ),
+            (0, 0),
+        )
+
         if (
             (record := record_for(event_bus)) is not None
             and record.docked
             and any(
                 position.type is PositionType.DEEBOT
-                and (position.x**2 + position.y**2)
+                and (position.x - dock_x) ** 2 + (position.y - dock_y) ** 2
                 >= cls._CLEARLY_AWAY_FROM_DOCK_MM**2
                 for position in positions
             )
