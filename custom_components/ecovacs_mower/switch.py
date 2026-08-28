@@ -217,6 +217,12 @@ class EcovacsRainDetectionSwitch(
         delay is normally known — ``GetRainDelay`` fetches both fields when the
         first of the two entities subscribes — so this is the narrow case of a
         firmware that answers without one.
+
+        ``SetRainDelay``'s docstring claims the device pushes ``onRainDelay`` on
+        its own answer too, but that has not been confirmed against hardware. If
+        it does not, requesting a refresh is what re-reads the state instead of
+        leaving the frontend's optimistic value to flip back once its timeout
+        expires.
         """
         if self._delay is None:
             raise HomeAssistantError(
@@ -226,3 +232,4 @@ class EcovacsRainDetectionSwitch(
             )
 
         await self._execute_command(SetRainDelay(enable=enable, delay=self._delay))
+        self._device.events.request_refresh(MowerRainDelayEvent)

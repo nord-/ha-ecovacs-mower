@@ -276,7 +276,7 @@ The rain *reason* on `sensor.activity` is not restored by a restart, though — 
 comes from `trigger`, which nothing can ask for, so a restart during an active
 rain delay reads as plain `docked` until the mower's next scheduled run.
 
-### The rain sensor's setting, and the three entities named for rain
+### The rain sensor's setting, and the four entities named for rain
 
 `switch.<device>_rain_detection` and `number.<device>_rain_delay_duration` are
 the setting itself: whether the mower listens to its rain sensor at all, and
@@ -296,7 +296,7 @@ command against a GOAT G1.
 
 Both are disabled by default, like every other settings entity here.
 
-That makes three entities with rain in the name, and they are three different
+That makes four entities with rain in the name, and they are four different
 things:
 
 | Entity | Kind | Answers |

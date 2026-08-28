@@ -6,10 +6,24 @@ from tests import requires_ha
 
 pytestmark = requires_ha
 
-# The rain delay is not in ENTITY_DESCRIPTIONS and cannot be: the setting is
-# not a deebot-client capability, so there is no field for capability_fn to
-# read. It still owns a translation key and an icon (issue #54).
-STANDALONE_KEYS = {"rain_delay"}
+
+def _all_translation_keys() -> set[str]:
+    """Every number's translation key, including the standalone rain delay.
+
+    The rain delay is not in ENTITY_DESCRIPTIONS and cannot be: the setting is
+    not a deebot-client capability, so there is no field for capability_fn to
+    read (issue #54). Reading its key off the class instead of a hardcoded
+    literal means a typo there fails these tests instead of merely looking
+    like a permitted extra key.
+    """
+    from custom_components.ecovacs_mower.number import (
+        ENTITY_DESCRIPTIONS,
+        EcovacsRainDelayNumber,
+    )
+
+    return {d.translation_key for d in ENTITY_DESCRIPTIONS} | {
+        EcovacsRainDelayNumber.entity_description.translation_key
+    }
 
 
 def test_expected_number_keys() -> None:
@@ -36,14 +50,12 @@ def test_every_description_has_a_translation() -> None:
     import json
     from pathlib import Path
 
-    from custom_components.ecovacs_mower.number import ENTITY_DESCRIPTIONS
-
     root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
     strings = json.loads((root / "strings.json").read_text(encoding="utf-8"))
     names = strings["entity"]["number"]
 
-    for description in ENTITY_DESCRIPTIONS:
-        assert description.translation_key in names, description.key
+    for key in _all_translation_keys():
+        assert key in names, key
 
 
 def test_every_number_has_an_icon() -> None:
@@ -51,14 +63,12 @@ def test_every_number_has_an_icon() -> None:
     import json
     from pathlib import Path
 
-    from custom_components.ecovacs_mower.number import ENTITY_DESCRIPTIONS
-
     root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
     icons = json.loads((root / "icons.json").read_text(encoding="utf-8"))
     names = icons["entity"]["number"]
 
-    for description in ENTITY_DESCRIPTIONS:
-        assert description.translation_key in names, description.key
+    for key in _all_translation_keys():
+        assert key in names, key
 
 
 def test_no_stale_number_translations_or_icons() -> None:
@@ -71,13 +81,11 @@ def test_no_stale_number_translations_or_icons() -> None:
     import json
     from pathlib import Path
 
-    from custom_components.ecovacs_mower.number import ENTITY_DESCRIPTIONS
-
     root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
     strings = json.loads((root / "strings.json").read_text(encoding="utf-8"))
     icons = json.loads((root / "icons.json").read_text(encoding="utf-8"))
 
-    keys = {d.translation_key for d in ENTITY_DESCRIPTIONS} | STANDALONE_KEYS
+    keys = _all_translation_keys()
     assert set(strings["entity"]["number"]) <= keys
     assert set(icons["entity"]["number"]) <= keys
 
@@ -116,9 +124,14 @@ async def _rain_delay_callback(device):
 
 
 def test_the_rain_delay_is_not_capability_driven() -> None:
-    from custom_components.ecovacs_mower.number import ENTITY_DESCRIPTIONS
+    from custom_components.ecovacs_mower.number import (
+        ENTITY_DESCRIPTIONS,
+        EcovacsRainDelayNumber,
+    )
 
-    assert STANDALONE_KEYS.isdisjoint({d.key for d in ENTITY_DESCRIPTIONS})
+    assert EcovacsRainDelayNumber.entity_description.key not in {
+        d.key for d in ENTITY_DESCRIPTIONS
+    }
 
 
 def test_the_rain_delay_is_a_span_of_minutes() -> None:
@@ -193,6 +206,21 @@ async def test_setting_the_delay_carries_the_sensor_state_along(enabled: bool) -
     (command,) = device.execute_command.call_args.args
     assert isinstance(command, SetRainDelay)
     assert command._args == {"enable": int(enabled), "delay": 90}
+
+
+async def test_the_rain_delay_requests_a_refresh_after_writing() -> None:
+    """Mirror of the switch's post-write refresh — see its test for why."""
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerRainDelayEvent,
+    )
+
+    device = _device()
+    entity, callback = await _rain_delay_callback(device)
+    await callback(MowerRainDelayEvent(enabled=True, delay=180))
+
+    await entity.async_set_native_value(90.0)
+
+    device.events.request_refresh.assert_called_once_with(MowerRainDelayEvent)
 
 
 async def test_the_rain_delay_refuses_to_write_before_it_knows_the_sensor() -> None:

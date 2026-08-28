@@ -195,6 +195,10 @@ class EcovacsRainDelayNumber(
         writing the duration alone would switch the rain sensor to whatever this
         entity assumed. Refusing until the device has said is the only answer
         that cannot silently disable it.
+
+        Requests a refresh afterwards for the same reason the switch does: the
+        device pushing ``onRainDelay`` on its own answer is unconfirmed, and
+        this is the cheap fallback if it does not.
         """
         if self._enabled is None:
             raise HomeAssistantError(
@@ -206,3 +210,4 @@ class EcovacsRainDelayNumber(
         await self._execute_command(
             SetRainDelay(enable=self._enabled, delay=int(value))
         )
+        self._device.events.request_refresh(MowerRainDelayEvent)

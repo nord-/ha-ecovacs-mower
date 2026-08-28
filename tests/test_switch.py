@@ -6,11 +6,24 @@ from tests import requires_ha
 
 pytestmark = requires_ha
 
-# The rain sensor's switch is not in ENTITY_DESCRIPTIONS and cannot be: the
-# setting is not a deebot-client capability, so there is no field for
-# capability_fn to read. It still owns a translation key and an icon, so the
-# completeness tests below have to count it (issue #54).
-STANDALONE_KEYS = {"rain_detection"}
+
+def _all_translation_keys() -> set[str]:
+    """Every switch's translation key, including the standalone rain switch.
+
+    The rain sensor's switch is not in ENTITY_DESCRIPTIONS and cannot be: the
+    setting is not a deebot-client capability, so there is no field for
+    capability_fn to read (issue #54). Reading its key off the class instead of
+    a hardcoded literal means a typo there fails these tests instead of merely
+    looking like a permitted extra key.
+    """
+    from custom_components.ecovacs_mower.switch import (
+        ENTITY_DESCRIPTIONS,
+        EcovacsRainDetectionSwitch,
+    )
+
+    return {d.translation_key for d in ENTITY_DESCRIPTIONS} | {
+        EcovacsRainDetectionSwitch.entity_description.translation_key
+    }
 
 
 def test_expected_switch_keys() -> None:
@@ -43,14 +56,12 @@ def test_every_description_has_a_translation() -> None:
     import json
     from pathlib import Path
 
-    from custom_components.ecovacs_mower.switch import ENTITY_DESCRIPTIONS
-
     root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
     strings = json.loads((root / "strings.json").read_text(encoding="utf-8"))
     names = strings["entity"]["switch"]
 
-    for description in ENTITY_DESCRIPTIONS:
-        assert description.translation_key in names, description.key
+    for key in _all_translation_keys():
+        assert key in names, key
 
 
 def test_every_switch_has_an_icon() -> None:
@@ -58,14 +69,12 @@ def test_every_switch_has_an_icon() -> None:
     import json
     from pathlib import Path
 
-    from custom_components.ecovacs_mower.switch import ENTITY_DESCRIPTIONS
-
     root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
     icons = json.loads((root / "icons.json").read_text(encoding="utf-8"))
     names = icons["entity"]["switch"]
 
-    for description in ENTITY_DESCRIPTIONS:
-        assert description.translation_key in names, description.key
+    for key in _all_translation_keys():
+        assert key in names, key
 
 
 def test_no_stale_switch_translations_or_icons() -> None:
@@ -78,13 +87,11 @@ def test_no_stale_switch_translations_or_icons() -> None:
     import json
     from pathlib import Path
 
-    from custom_components.ecovacs_mower.switch import ENTITY_DESCRIPTIONS
-
     root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
     strings = json.loads((root / "strings.json").read_text(encoding="utf-8"))
     icons = json.loads((root / "icons.json").read_text(encoding="utf-8"))
 
-    keys = {d.translation_key for d in ENTITY_DESCRIPTIONS} | STANDALONE_KEYS
+    keys = _all_translation_keys()
     assert set(strings["entity"]["switch"]) <= keys
     assert set(icons["entity"]["switch"]) <= keys
 
@@ -128,9 +135,14 @@ def test_the_rain_switch_is_not_capability_driven() -> None:
     ``get_supported_entities`` builds an entity only when ``capability_fn``
     returns something, and ``Capabilities`` has no field for this setting.
     """
-    from custom_components.ecovacs_mower.switch import ENTITY_DESCRIPTIONS
+    from custom_components.ecovacs_mower.switch import (
+        ENTITY_DESCRIPTIONS,
+        EcovacsRainDetectionSwitch,
+    )
 
-    assert STANDALONE_KEYS.isdisjoint({d.key for d in ENTITY_DESCRIPTIONS})
+    assert EcovacsRainDetectionSwitch.entity_description.key not in {
+        d.key for d in ENTITY_DESCRIPTIONS
+    }
 
 
 def test_the_rain_switch_is_a_config_entity_disabled_by_default() -> None:
@@ -194,6 +206,26 @@ async def test_the_rain_switch_carries_the_delay_along(
     (command,) = device.execute_command.call_args.args
     assert isinstance(command, SetRainDelay)
     assert command._args == {"enable": expected, "delay": 180}
+
+
+async def test_the_rain_switch_requests_a_refresh_after_writing() -> None:
+    """The device pushing ``onRainDelay`` on its own answer is unconfirmed.
+
+    Asking for a refresh is what re-reads the state if that push never comes,
+    instead of leaving the frontend's optimistic value to flip back once its
+    timeout expires (issue #42).
+    """
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerRainDelayEvent,
+    )
+
+    device = _device()
+    entity, callback = await _rain_switch_callback(device)
+    await callback(MowerRainDelayEvent(enabled=False, delay=180))
+
+    await entity.async_turn_on()
+
+    device.events.request_refresh.assert_called_once_with(MowerRainDelayEvent)
 
 
 async def test_the_rain_switch_refuses_to_write_before_it_knows_the_delay() -> None:

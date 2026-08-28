@@ -34,19 +34,19 @@ inside its ``getLifeSpan`` answer, which the library drops on the floor and
 takes the rest of the answer with it (issue #40). Its parser is called from
 ``GetLifeSpanMower`` in ``commands.py``.
 
-``MowerRainDelayEvent`` carries the rain sensor's *setting* and the hold that
-follows a rain stop, from ``onRainDelay`` — a fifth unhandled message, and the
-last row of the app's Configuration page with no entity behind it (issue #54).
-Its refresh command, ``GetRainDelay``, is in ``commands.py``, and unlike the
-rest of this module it has a write side: ``SetRainDelay`` there sends both
-fields back.
-
 ``onProtectState`` is a fourth unhandled message. It carries the mower's
 protection flags. ``isRainProtect`` is the rain sensor's reading, not the
 rain-protection setting — see ``MowerProtectStateEvent`` for the two samples
 that establish it. Nothing derives the mower's *state* from those flags even
 so: they are exposed raw, and the state's rain handling is built on ``trigger``
 instead, which says why a run stopped and needs no interpretation.
+
+``MowerRainDelayEvent`` carries the rain sensor's *setting* and the hold that
+follows a rain stop, from ``onRainDelay`` — a fifth unhandled message, and the
+last row of the app's Configuration page with no entity behind it (issue #54).
+Its refresh command, ``GetRainDelay``, is in ``commands.py``, and unlike the
+rest of this module it has a write side: ``SetRainDelay`` there sends both
+fields back.
 """
 
 from __future__ import annotations
@@ -520,9 +520,18 @@ class OnRainDelay(MessageBodyDataDict):
         ``bool`` is not accepted as the delay: it is an ``int`` subclass in
         Python, and a ``True`` arriving there is a firmware quirk to drop, not a
         one-minute hold.
+
+        ``enable`` is only accepted as ``bool`` or the ints ``0``/``1``. A bare
+        ``bool(enable)`` would read a string like ``"0"`` as ``True`` — and,
+        same as a missing field, that reading is written back to the device the
+        next time the delay is set. An unexpected value is treated the same way
+        a missing one is: the whole payload is dropped rather than guessed.
         """
-        if (enable := data.get("enable")) is None:
-            _LOGGER.warning("onRainDelay without an enable field: %s", data)
+        enable = data.get("enable")
+        if enable is None or (
+            not isinstance(enable, bool) and enable not in (0, 1)
+        ):
+            _LOGGER.warning("onRainDelay without a usable enable field: %s", data)
             return HandlingResult.analyse()
 
         delay = data.get("delay")

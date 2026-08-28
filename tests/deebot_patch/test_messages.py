@@ -490,6 +490,15 @@ def test_on_rain_delay_ignores_a_delay_that_is_not_a_number() -> None:
     ) == [MowerRainDelayEvent(enabled=True, delay=None)]
 
 
+def test_on_rain_delay_rejects_a_non_0_1_enable() -> None:
+    # A bare bool(enable) would read "0" as truthy, and that reading is what
+    # the next setRainDelay writes back — dropping the whole payload is the
+    # same refusal a missing enable field gets.
+    assert _notified(
+        OnRainDelay, {"enable": "0", "delay": 180}, MowerRainDelayEvent
+    ) == []
+
+
 def test_on_rain_delay_without_enable_is_not_handled() -> None:
     # Same rule as onProtectState's missing flags: defaulting to False would
     # claim the rain sensor is switched off on the strength of a payload that
