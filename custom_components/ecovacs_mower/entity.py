@@ -21,7 +21,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity, EntityDescription
 
 from .const import DOMAIN
-from .deebot_patch import family_name, has_family
+from .deebot_patch import attempted_family_name, has_family
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -110,10 +110,15 @@ class EcovacsEntity[CapabilityEntityT](Entity):
         know whether ``clean`` or ``clean_V2`` was really sent. Only for those
         two, though: naming a family for a command that has none, such as
         ``Charge``, would claim a V2/non-V2 dialect that does not exist for it.
+
+        ``attempted_family_name()`` rather than the plain committed family:
+        on a double failure ``_AdaptiveFamily`` sends both delegates but
+        commits neither, and a warning naming only the family that was
+        current before the attempt would understate what was actually sent.
         """
         if not await self._device.execute_command(command):
             family_suffix = (
-                f" ({family_name(self._device.device_info['did'])} family)"
+                f" ({attempted_family_name(self._device.device_info['did'])} family)"
                 if has_family(command)
                 else ""
             )

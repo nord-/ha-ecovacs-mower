@@ -109,6 +109,36 @@ async def test_an_unconfirmed_command_names_the_family(
     assert str(Family.V2) in message
 
 
+async def test_an_unconfirmed_command_names_both_families_on_a_double_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A double failure sends both delegates but commits neither (issue #42):
+    the warning must not understate that by naming only the family that was
+    current before the attempt.
+    """
+    from deebot_client.models import CleanAction
+
+    from custom_components.ecovacs_mower.deebot_patch.commands import CleanMower
+    from custom_components.ecovacs_mower.deebot_patch.families import (
+        Family,
+        note_attempt,
+        reset,
+    )
+
+    note_attempt("did", Family.NON_V2, Family.V2)
+    try:
+        with caplog.at_level(logging.WARNING):
+            await _entity({})._execute_command(CleanMower(CleanAction.START))
+    finally:
+        reset()
+
+    records = [
+        r for r in caplog.records if r.name.startswith("custom_components.ecovacs_mower")
+    ]
+    assert len(records) == 1
+    assert "non-V2 and V2" in records[0].getMessage()
+
+
 async def test_the_family_is_not_named_for_a_command_without_one(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

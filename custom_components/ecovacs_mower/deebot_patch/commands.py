@@ -56,7 +56,7 @@ from deebot_client.events import LifeSpan, StateEvent
 from deebot_client.message import HandlingResult, HandlingState
 from deebot_client.models import CleanAction, CleanMode, State
 
-from .families import Family, commit, selected
+from .families import Family, commit, note_attempt, selected
 from .messages import (
     BEACON_COMPONENT,
     OnProtectState,
@@ -248,12 +248,14 @@ class _AdaptiveFamily:
             authenticator, device_info, event_bus
         )
         if response.get("errno") != 500:
+            note_attempt(did, current)
             return result, response
 
         other = current.other()
         result, response = await self._delegate(other)._execute(
             authenticator, device_info, event_bus
         )
+        note_attempt(did, current, other)
         if response.get("ret") == "ok":
             commit(did, other)
         return result, response

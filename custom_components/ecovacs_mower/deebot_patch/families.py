@@ -48,6 +48,11 @@ _FAMILIES: dict[str, Family] = {}
 # to it can be told apart from a switch to genuinely new evidence.
 _PREVIOUS: dict[str, Family] = {}
 
+# Every family actually sent on the wire for a did's most recent adaptive
+# command. Separate from _FAMILIES because a double failure leaves nothing
+# committed even though both families went out — see attempted_family_name().
+_LAST_ATTEMPT: dict[str, tuple[Family, ...]] = {}
+
 
 def selected(did: str) -> Family:
     """The family in use for *did*.
@@ -100,6 +105,32 @@ def family_name(did: str) -> str:
     return str(selected(did))
 
 
+def note_attempt(did: str, *families: Family) -> None:
+    """Record which families were actually sent for *did*'s most recent
+    ``_AdaptiveFamily`` command, so a failure log can name what was really
+    tried rather than only the committed one.
+    """
+    _LAST_ATTEMPT[did] = families
+
+
+def attempted_family_name(did: str) -> str:
+    """Every family attempted on *did*'s most recent adaptive command, for a
+    log line.
+
+    A fallback that answers commits and this collapses to a single name, same
+    as ``family_name()``. But when both families fail, nothing commits —
+    ``selected()`` still reports whichever was current before the attempt —
+    even though both went out on the wire, so ``family_name()`` alone would
+    misname a double failure as a single-family one. Falls back to
+    ``family_name()`` when nothing has been attempted yet, which is also
+    correct: it means only the committed family was ever tried.
+    """
+    attempted = _LAST_ATTEMPT.get(did)
+    if not attempted:
+        return family_name(did)
+    return " and ".join(str(family) for family in attempted)
+
+
 def reset() -> None:
     """Forget every choice. Tests only.
 
@@ -109,3 +140,4 @@ def reset() -> None:
     """
     _FAMILIES.clear()
     _PREVIOUS.clear()
+    _LAST_ATTEMPT.clear()

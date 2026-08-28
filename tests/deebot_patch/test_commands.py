@@ -32,6 +32,7 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
 )
 from custom_components.ecovacs_mower.deebot_patch.families import (
     Family,
+    attempted_family_name,
     commit,
     selected,
 )
@@ -689,6 +690,25 @@ async def test_neither_family_answering_is_the_network_not_the_dialect(
     assert sent == ["getCleanInfo", "getCleanInfo_V2"]
     assert selected(_DEVICE_INFO["did"]) is Family.NON_V2
     assert not [r for r in caplog.records if r.levelno == logging.INFO]
+
+
+async def test_a_double_failure_reports_both_families_as_attempted() -> None:
+    # Nothing commits on a double failure, so selected() alone would name
+    # only the family that was current before this call — even though both
+    # went out. entity.py's unconfirmed-command warning reads this instead.
+    fake, _ = _transport(_NO_ANSWER, _NO_ANSWER)
+    with patch.object(Command, "_execute", fake):
+        await GetCleanInfoMower()._execute(AsyncMock(), _DEVICE_INFO, _bus())
+
+    assert attempted_family_name(_DEVICE_INFO["did"]) == "non-V2 and V2"
+
+
+async def test_a_single_answered_attempt_reports_one_family() -> None:
+    fake, _ = _transport(_OK)
+    with patch.object(Command, "_execute", fake):
+        await GetCleanInfoMower()._execute(AsyncMock(), _DEVICE_INFO, _bus())
+
+    assert attempted_family_name(_DEVICE_INFO["did"]) == "non-V2"
 
 
 async def test_an_offline_mower_does_not_change_family() -> None:

@@ -8,8 +8,11 @@ import pytest
 
 from custom_components.ecovacs_mower.deebot_patch.families import (
     Family,
+    attempted_family_name,
     commit,
     family_name,
+    note_attempt,
+    reset,
     selected,
 )
 
@@ -69,3 +72,28 @@ def test_family_name_is_readable_for_a_log_line() -> None:
     assert family_name("did-a") == "non-V2"
     commit("did-a", Family.V2)
     assert family_name("did-a") == "V2"
+
+
+def test_attempted_family_name_falls_back_to_the_committed_one() -> None:
+    # Nothing has called note_attempt yet, e.g. a command with no family at
+    # all — the plain committed name is still correct.
+    assert attempted_family_name("did-a") == "non-V2"
+
+
+def test_attempted_family_name_reports_a_single_successful_attempt() -> None:
+    note_attempt("did-a", Family.NON_V2)
+    assert attempted_family_name("did-a") == "non-V2"
+
+
+def test_attempted_family_name_names_both_on_a_double_failure() -> None:
+    # Issue #42's diagnostic gap: a double failure commits nothing, so
+    # selected()/family_name() alone would understate what was sent.
+    note_attempt("did-a", Family.NON_V2, Family.V2)
+    assert attempted_family_name("did-a") == "non-V2 and V2"
+    assert selected("did-a") is Family.NON_V2
+
+
+def test_reset_clears_the_last_attempt_too() -> None:
+    note_attempt("did-a", Family.NON_V2, Family.V2)
+    reset()
+    assert attempted_family_name("did-a") == "non-V2"

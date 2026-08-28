@@ -18,7 +18,7 @@ from deebot_client.messages.json import MESSAGES
 
 from .authentication import AccountAuthenticator
 from .commands import CleanMower, GetCleanInfoMower, MowerStateRefresh, has_family
-from .families import family_name
+from .families import attempted_family_name
 from .hardware import SUPPORTED_CLASSES, patch_device_info
 from .map_messages import (
     OnArI,
@@ -47,7 +47,7 @@ __all__ = [
     "MowerStateRefresh",
     "PatchContractError",
     "apply",
-    "family_name",
+    "attempted_family_name",
     "has_family",
     "patch_device_info",
     "register_mower_bus",
