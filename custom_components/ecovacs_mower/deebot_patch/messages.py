@@ -315,8 +315,11 @@ def handle_clean_info(event_bus: EventBus, data: dict[str, Any]) -> HandlingResu
 
     # Issue #67. Two orthogonal facts arrive as one enum: the mower is
     # charging, and its plan is paused. A machine sitting on its dock reads as
-    # docked to a user whatever the plan record says, and the plan being
-    # paused is still visible in the progress and job-target sensors.
+    # docked to a user whatever the plan record says; the progress and
+    # job-target sensors clear on DOCKED like any other docking (see
+    # sensor.py's EcovacsMowingProgressSensor). The paused plan itself is kept
+    # here, not on any entity, purely so a later Start can resume it instead
+    # of starting over.
     #
     # The record is written here rather than by subscribing to StateEvent
     # because EventBus.notify drops an event equal to the previous one before
@@ -724,8 +727,9 @@ class OnPos(MessageBodyDataDict):
 
     NAME = "onPos"
 
-    # How far a valid deebotPos sample has to sit from the dock-at-origin
-    # (map.py carries the same assumption) before it counts as "clearly away"
+    # How far a valid deebotPos sample has to sit from the dock — the same
+    # payload's chargePos if it carries one, (0, 0) otherwise, matching
+    # map.py's dock-at-origin assumption — before it counts as "clearly away"
     # rather than dock-adjacent GPS/UWB noise. A guess, not a measurement: no
     # capture pins the actual noise floor near the charger. Only ever a
     # recovery path for a missed departure push (issue #67) — the state
