@@ -48,6 +48,43 @@ def test_marker_defaults_to_dock_without_position() -> None:
     assert 'class="mower"' in svg
 
 
+def _mower_and_heading_endpoint(svg: str) -> tuple[float, float, float, float]:
+    mower_cx, mower_cy = re.search(
+        r'class="mower" cx="([\d.]+)" cy="([\d.]+)"', svg
+    ).groups()
+    line_x2, line_y2 = re.search(
+        r'class="heading"[^>]*x2="([\d.]+)" y2="([\d.]+)"', svg
+    ).groups()
+    return float(mower_cx), float(mower_cy), float(line_x2), float(line_y2)
+
+
+def test_heading_arrow_points_forward_not_backward() -> None:
+    # Regression for issue #41: at heading 0 the arrow pointed to the
+    # mower's back (screen "up" instead of "down") because the assumed
+    # heading convention was never verified against real hardware.
+    mower_map = MowerMap()
+    mower_map.update_map_info(BOUNDARY, None, None)
+    mower_map.update_position(1000, 1000, 0)
+    mower_cx, mower_cy, line_x2, line_y2 = _mower_and_heading_endpoint(
+        render(mower_map)
+    )
+    assert line_x2 == mower_cx
+    assert line_y2 > mower_cy
+
+
+def test_heading_arrow_rotates_with_real_turn_direction() -> None:
+    # Regression for issue #41: a turn that increases the reported
+    # heading rendered as a mirror-image turn on screen.
+    mower_map = MowerMap()
+    mower_map.update_map_info(BOUNDARY, None, None)
+    mower_map.update_position(1000, 1000, 90)
+    mower_cx, mower_cy, line_x2, line_y2 = _mower_and_heading_endpoint(
+        render(mower_map)
+    )
+    assert line_x2 > mower_cx
+    assert line_y2 == mower_cy
+
+
 def test_svg_is_valid_xml() -> None:
     import xml.etree.ElementTree as ET
 

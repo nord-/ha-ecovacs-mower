@@ -140,12 +140,16 @@ def render(mower_map: MowerMap) -> str:
     # shows something, and the first onPos corrects it within seconds.
     marker = mower_map.position or mower_map.dock
     marker_x, marker_y = (float(v) for v in xy(marker).split(","))
-    # Heading convention ASSUMED: 0 degrees = north (up), increasing
-    # clockwise. The capture only proves a=0 at the dock; verify the
-    # arrow against the real mower in Task 9 and flip sin/cos if wrong.
+    # Heading convention: confirmed wrong on both axes against the real
+    # mower (issue #41) — the arrow pointed to the mower's back, and its
+    # rotation was mirrored against real turns. Both symptoms together
+    # mean the true front vector is the assumed one rotated 180 degrees
+    # *and* mirrored, i.e. front(a) = (sin a, -cos a) instead of
+    # (sin a, cos a) — only the y term's sign flips here since the SVG
+    # y axis is itself already flipped when converting to screen space.
     angle = math.radians(mower_map.heading)
     tip_x = marker_x + 10 * math.sin(angle)
-    tip_y = marker_y - 10 * math.cos(angle)
+    tip_y = marker_y + 10 * math.cos(angle)
     parts.append(
         f'<line class="heading" x1="{marker_x:.1f}" y1="{marker_y:.1f}" '
         f'x2="{tip_x:.1f}" y2="{tip_y:.1f}" stroke="{_MOWER}" '
