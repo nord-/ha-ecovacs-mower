@@ -18,8 +18,15 @@ The progress sensor is the one entity in this platform backed by a poll —
 than the clock: it starts when the mower starts mowing and stops when it parks,
 so a rainy week costs nothing. On the classes that push ``onStats`` the reading
 follows the mower instead and the poll is the floor rather than the source; on
-the one it was built against, not known to push it, the poll is still the only
-way to see the number move.
+the one it was built against, not known to push it, the poll is what moves the
+number mid-run.
+
+Neither of them draws the job's boundaries, though. Both only describe whatever
+job the mower happens to be in, and ``State`` reports a finished job and one
+parked to charge identically. Those two edges come from the mower's own task
+bury points instead — a new job clears the reading, a completion finishes it —
+which is why between jobs the last job's figure stands rather than reading
+unknown (issue #73).
 """
 
 from collections.abc import Callable
@@ -65,6 +72,7 @@ from .const import SUPPORTED_LIFESPANS
 from .deebot_patch import SUPPORTED_CLASSES
 from .deebot_patch.messages import (
     MowerBeaconsEvent,
+    MowerJobEdgeEvent,
     MowerStatsEvent,
     MowerTriggerEvent,
 )
@@ -607,14 +615,33 @@ class EcovacsActivitySensor(
         self.async_write_ha_state()
 
 
-# The states in which the stats payload describes a job that is actually
-# running. Everything else — docked, idle, error, and not yet known — means the
-# numbers on the wire belong to a job that is over, and on the firmware branch
-# that never zeroes them there is nothing in the payload itself to say so.
-_JOB_STATES = frozenset({State.CLEANING, State.PAUSED, State.RETURNING})
+# The states in which a stats payload is worth believing. Everything else —
+# docked, idle, error, and not yet known — means the numbers on the wire belong
+# to a job that is over, and on the firmware branch that never zeroes them
+# there is nothing in the payload itself to say so.
+#
+# Not "the states a job runs in", which is what an earlier version of this set
+# named and why RETURNING was in it: on the drive home the firmware has already
+# zeroed the stats, so the tick's getStats answers {"area": 0, "mowedArea": 0}
+# and _progress() reads that as no job at all. Measured on the captured run
+# (issue #73): the completion wrote 100 % at 13:42:30, RETURNING arrived two
+# seconds later, and the poll at 13:43:12 erased it. Nothing is lost by
+# distrusting it — no mowing happens on the way home.
+#
+# PAUSED has the same shape of hazard and it is unquantified: no poll landed in
+# the three seconds the captured run spent paused before turning for the dock,
+# so whether the firmware zeroes there too is unknown. If it does, the fix is
+# to latch "job over" until the next start rather than to widen this set.
+_STATS_TRUSTED_STATES = frozenset({State.CLEANING, State.PAUSED})
+
+# The start triggers that mean a *new* job rather than the same one carrying
+# on. ``reborn`` is the reason this is a whitelist and not "any start": it
+# arrived seven times in twelve minutes on one 2px96q run, each time with a
+# fresh jobId, which is also what rules out job identity as the signal here.
+_NEW_JOB_TRIGGERS = frozenset({"schedule", "app"})
 
 
-def _progress(area: int | None, mowed_area: int | None) -> int | None:
+def _progress(area: float | None, mowed_area: float | None) -> int | None:
     """Percent of the running job that is done, or None when there is no job.
 
     A zero ``area`` is the absence of a job, not a job that is zero percent
@@ -626,9 +653,14 @@ def _progress(area: int | None, mowed_area: int | None) -> int | None:
     firmware branch that never zeroes the stats at all, which is why the state
     gate exists and this check is not relied on alone.
 
-    Capping at 100 has not been needed on the verified hardware — a completed run
-    reports ``mowedArea`` exactly equal to its target — but a percentage above
-    100 in a dashboard is worse than one call to ``min``.
+    Capping at 100 has not been needed on the verified hardware — a completed
+    scheduled run reports ``mowedArea`` exactly equal to its target — but a
+    percentage above 100 in a dashboard is worse than one call to ``min``.
+
+    Floats as well as ints: the same ratio is computed from ``MowerStatsEvent``,
+    which carries square centimetres as ints, and from ``MowerJobEdgeEvent``,
+    which carries square metres as floats. A ratio does not care about the
+    unit, so neither does this.
     """
     if not area or mowed_area is None:
         return None
@@ -639,7 +671,7 @@ class EcovacsMowingProgressSensor(
     EcovacsEntity[CapabilityEvent[StatsEvent]],
     SensorEntity,
 ):
-    """How much of the running job the mower has cut, in percent.
+    """How far the mower's current job got, or its last one, in percent.
 
     A calculation on top of two numbers, from wherever they last arrived.
 
@@ -650,6 +682,12 @@ class EcovacsMowingProgressSensor(
     where it is not, and either way the same pair of events is notified —
     ``StatsEvent`` with them, so the area and time sensors stop being frozen
     too.
+
+    A third source draws the edges neither of those can, since the numbers
+    alone cannot say which job they belong to: the mower's own job bury points
+    clear the reading when a new job starts and write the final percentage when
+    one completes (issue #73). That is what lets the figure survive a charge
+    break instead of going unknown for the length of it.
     """
 
     entity_description: SensorEntityDescription = SensorEntityDescription(
@@ -663,6 +701,16 @@ class EcovacsMowingProgressSensor(
         """Initialize entity."""
         super().__init__(device, device.capabilities.stats.clean)
         self._last_state: State | None = None
+        self._logged_edges: set[tuple[str, str]] = set()
+        # Whether the figure now showing belongs to a job that is over. Set by
+        # a stop bury point, cleared when the next job begins. The state cannot
+        # answer this — that is the whole of issue #73 — and without it the
+        # completion is erasable twice over: while ``_last_state`` is still
+        # CLEANING because the firmware dropped the parking push, and while it
+        # is PAUSED because a stale paused-plan clean-info landed before the
+        # mower reached its dock. Both windows contain the tick's zeroed
+        # getStats.
+        self._job_over = False
 
     @override
     async def async_added_to_hass(self) -> None:
@@ -676,6 +724,7 @@ class EcovacsMowingProgressSensor(
         # subscriber.
         self._subscribe(MowerStatsEvent, self._on_stats)
         self._subscribe(StateEvent, self._on_state)
+        self._subscribe(MowerJobEdgeEvent, self._on_job_edge)
 
     async def _on_stats(self, event: MowerStatsEvent) -> None:
         """Publish the percentage, but only while a job might be running.
@@ -688,10 +737,15 @@ class EcovacsMowingProgressSensor(
         read that as a job stuck at 100 %, permanently, for as long as the
         mower sits parked.
 
-        The gate names the states a job runs *in* rather than the states it
-        does not. Naming only ``docked`` left a job that ended away from the
-        dock — a fault out on the lawn, or a plain ``idle`` push — holding the
-        last percentage on that same never-zeroing firmware (issue #55).
+        The gate names the states whose telemetry is worth believing, not the
+        states a job runs in — the comment above ``_STATS_TRUSTED_STATES`` has
+        why ``RETURNING`` is a job state and excluded anyway. Naming only
+        ``docked`` was the older mistake in the other direction: a job that
+        ended away from the dock — a fault out on the lawn, or a plain ``idle``
+        push — left the payload trusted, so the never-zeroing firmware kept
+        re-asserting the finished job's numbers (issue #55). The figure standing
+        between jobs is deliberate now and belongs to ``_on_job_edge``; what
+        this gate stops is the payload being read again while nothing runs.
 
         An unchanged percentage is not written again. HA's state machine already
         short-circuits an unchanged state — no ``state_changed`` event, just a
@@ -702,7 +756,7 @@ class EcovacsMowingProgressSensor(
         is 2089 cm² against a few hundred per push, so most pushes would
         otherwise round to the number already showing.
         """
-        if self._last_state not in _JOB_STATES:
+        if self._job_over or self._last_state not in _STATS_TRUSTED_STATES:
             return
         value = _progress(event.area, event.mowed_area)
         if value == self._attr_native_value:
@@ -711,30 +765,134 @@ class EcovacsMowingProgressSensor(
         self.async_write_ha_state()
 
     async def _on_state(self, event: StateEvent) -> None:
-        """Take one look when a job starts; clear the reading when it parks.
+        """Take one look when the mower starts cutting, and clear a finished figure.
 
         Starting is worth a look so the first reading of a run does not wait
-        for the next tick. Docking clears the value immediately rather than
-        asking again and waiting for a zeroed answer: whether the stats ever
-        zero out at all is exactly the thing that differs by firmware branch
-        (see _on_stats), so the state is the only signal both branches agree
-        on.
+        for the next tick. Only entering the state counts: a repeated push of
+        the same state (the captured telemetry has two CLEANING pushes 16
+        seconds apart) must not trigger a second, redundant getStats.
 
-        Only entering a state counts either way: a repeated push of the same
-        state (the captured telemetry has two CLEANING pushes 16 seconds
-        apart) must not trigger a second, redundant getStats.
+        Clearing used to live here, on the way *out* of a job state, and that
+        was the bug in issue #73: ``State`` cannot tell a job that has finished
+        from one that has parked to charge and will resume, because both report
+        ``IDLE`` and then ``DOCKED``. A run that needs two batteries therefore
+        spent its charge break at unknown — 74 minutes of it on the captured
+        run — and a finished job cleared before anything could show how far it
+        got.
 
-        Nothing else is acted on. ``paused`` is left alone too: it is a normal
-        mid-run state (rain, a manual pause) rather than a start or dock edge,
-        and the periodic tick already keeps asking while the mower is out
-        regardless of which of those it currently is.
+Clearing on the way *in* on the strength of the state alone would be
+        no better: this handler cannot tell a new job from a resume either, so
+        it would blip to unknown at every rain pause and every charge resume.
+        Nor does the refresh below rescue it — at 09:00:01.757 on the captured
+        run it answered ``{"area": 0, "mowedArea": 0}`` 0.2 s into the job, the
+        event was deduped away, and the first real number arrived five minutes
+        later from the tick.
+
+        What makes the entry edge usable is not the state but ``_job_over``,
+        which a stop bury point sets and a resume never does. The edge is then
+        only the moment to act on something already known, and the mower having
+        announced nothing at all leaves the figure alone.
         """
         if event.state == self._last_state:
             return
         self._last_state = event.state
 
         if event.state is State.CLEANING:
+            # The one clear this handler does, and it is not a guess about
+            # which kind of edge this is: the latch already knows the standing
+            # figure belongs to a finished job. A resume cannot reach it,
+            # because a charge break publishes a pause and a resume, never a
+            # stop. Needed because the start bury point arrives 13 seconds into
+            # a run — and on a class that never sends it, not at all — so
+            # without this a new job opened showing the last one's completion.
+            if self._job_over:
+                self._job_over = False
+                self._attr_native_value = None
+                self.async_write_ha_state()
             self._device.events.request_refresh(MowerStatsEvent)
-        elif event.state not in _JOB_STATES:
-            self._attr_native_value = None
+
+    async def _on_job_edge(self, event: MowerJobEdgeEvent) -> None:
+        """Clear on a new job; publish and latch the final percentage on a completion.
+
+        The mower's own task bury points, which say what ``State`` cannot
+        (issue #73). Neither branch is gated on the state: a bury point is the
+        device announcing this instant, not telemetry that might be stale, and
+        the completion arrives 0.26 s *after* the state edge it belongs to.
+
+        A stop is not necessarily a completion — ``mow-schedule-stop`` carries
+        ``app`` as often as ``workComplete``, meaning someone pressed stop —
+        and a start is not necessarily a new job. Anything this does not act on
+        leaves the reading exactly where it was, and is logged once so a
+        trigger nobody has seen yet surfaces without filling the log.
+
+A stop also latches ``_job_over``, and that latch is what makes both
+        clears safe and what keeps the completion from being erased. Writing
+        the final percentage is not enough on its own: the state can still read
+        CLEANING when it arrives, because this firmware drops parking pushes,
+        and it can read PAUSED before the mower reaches its dock — and the
+        tick's zeroed ``getStats`` lands inside both windows. See ``__init__``
+        and ``_on_stats``.
+
+        The clear is therefore conditional in both places it happens. The start
+        announcement lands 13 seconds into a run, by which time a class pushing
+        ``onStats`` twice a second has already reported the new job's own
+        progress; whichever of the two edges notices the new job first clears,
+        and the other finds the latch already down and does nothing.
+
+        No hard 100 on a completion: a zone's ``workArea`` is the polygon's
+        estimate, and the captured zone job finished at 24.287498 of 32.162498
+        m². That the mower considers itself done after 76 % is information, not
+        an error — and writing 100 anyway would make the scheduled run's exact
+        equality indistinguishable from a fabricated one. What "finished" should
+        be watched on instead is ``lawn_mower.<device>`` going ``mowing`` ->
+        ``paused``; see #74 for the event entity that ought to say it and
+        currently never fires.
+        """
+        # Both phases named explicitly rather than leaning on "not a start
+        # means a stop": registering the pause and resume edges is meant to be
+        # one subclass each, and a pause carrying workComplete would then write
+        # a final value halfway through a job.
+        if event.phase == "start" and event.trigger in _NEW_JOB_TRIGGERS:
+            # Gated on the latch for the same reason the CLEANING edge is, and
+            # it is what keeps the two from fighting: whichever notices the new
+            # job first does the clearing, and the other becomes a no-op. On a
+            # pushing class that means the reading the mower has already sent
+            # for the new job survives the start announcement.
+            if self._job_over:
+                self._job_over = False
+                self._attr_native_value = None
+                self.async_write_ha_state()
+            return
+
+        if event.phase == "stop":
+            # Any stop ends the job, whatever its trigger and whether or not
+            # there is a number to publish.
+            self._job_over = True
+
+        if event.phase == "stop" and event.trigger == "workComplete":
+            # A completion nobody can put a number on is not a job at zero
+            # percent, and clearing the reading here is the one thing this
+            # handler must never do — it is what the old state-edge clearing
+            # did. Every capture so far carries the pair as floats, so this is
+            # a guard rather than an observed case.
+            if (value := _progress(event.work_area, event.mowed_area)) is None:
+                _LOGGER.debug(
+                    "Job completed with unusable areas (%r of %r); "
+                    "leaving the mowing progress at %r",
+                    event.mowed_area,
+                    event.work_area,
+                    self._attr_native_value,
+                )
+                return
+            self._attr_native_value = value
             self.async_write_ha_state()
+            return
+
+        edge = (event.phase, event.trigger)
+        if edge not in self._logged_edges:
+            self._logged_edges.add(edge)
+            _LOGGER.debug(
+                "Job %s with trigger %r leaves the mowing progress alone",
+                event.phase,
+                event.trigger,
+            )

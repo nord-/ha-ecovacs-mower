@@ -22,6 +22,7 @@ from deebot_client.rs.map import PositionType
 from custom_components.ecovacs_mower.deebot_patch import apply
 from custom_components.ecovacs_mower.deebot_patch.commands import GetChargeStateMower
 from custom_components.ecovacs_mower.deebot_patch.messages import (
+    MowerJobEdgeEvent,
     MowerProtectStateEvent,
     MowerRainDelayEvent,
     MowerStatsEvent,
@@ -29,6 +30,10 @@ from custom_components.ecovacs_mower.deebot_patch.messages import (
     OnChargeInfo,
     OnChargeState,
     OnCleanInfo,
+    OnMowScheduleStart,
+    OnMowScheduleStop,
+    OnMowSpotAreaStart,
+    OnMowSpotAreaStop,
     OnPos,
     OnProtectState,
     OnRainDelay,
@@ -906,3 +911,204 @@ async def test_a_fail_coded_push_matches_the_librarys_own_handler() -> None:
     # getChargeState answer — the bug this test guards against left it
     # unreachable here.
     assert record.docked is True
+
+
+# The four task bury points that mark a job's boundaries, captured verbatim.
+# schedule-* from a GOAT O1200 (2i0fns, fw 1.13.10) on 2026-08-28; spotarea-*
+# from a GOAT O800 RTK (2px96q, fw 1.17.8). Issue #73.
+_SCHEDULE_STOP_COMPLETE = {
+    "bid": "4411787917350066",
+    "gid": "G1787394423395",
+    "index": "0000078947",
+    "jobId": "4641787900401334",
+    "mapId": "511702305",
+    "mowType": 1,
+    "mowedArea": 320.567505,
+    "sid": "8651787917350067",
+    "time": 12328.418945,
+    "trigger": "workComplete",
+    "ts": "1787917350067",
+    "workArea": 320.567505,
+    "workType": 18,
+}
+_SPOTAREA_STOP_COMPLETE = {
+    "bid": "8621787752144121",
+    "gid": "G1695142647602",
+    "index": "0000006171",
+    "jobId": "4921787750720504",
+    "mapId": "1782436840",
+    "mowType": 0,
+    "mowedArea": 24.287498,
+    "sid": "1231787752144121",
+    "time": 1351.234253,
+    "trigger": "workComplete",
+    "ts": "1787752144122",
+    "workArea": 32.162498,
+    "workType": 2,
+}
+_SCHEDULE_START = {
+    "bid": "4671787900414387",
+    "gid": "G1787394423395",
+    "index": "0000065374",
+    "jobId": "4641787900401334",
+    "mapId": "511702305",
+    "sid": "6011787900414387",
+    "trigger": "schedule",
+    "ts": "1787900414388",
+    "workType": 18,
+}
+_SPOTAREA_START_APP = {
+    "areaNum": 2,
+    "bid": "2111787728912399",
+    "gid": "G1695142651057",
+    "index": "0000003454",
+    "jobId": "3351787728907186",
+    "mapId": "628175011",
+    "sid": "3681787728912399",
+    "trigger": "app",
+    "ts": "1787728912400",
+}
+
+
+def _notified_edges(message, data: dict[str, Any]) -> list[MowerJobEdgeEvent]:
+    bus = Mock()
+    message._handle_body(bus, data)
+    return [
+        call_.args[0]
+        for call_ in bus.notify.call_args_list
+        if isinstance(call_.args[0], MowerJobEdgeEvent)
+    ]
+
+
+def test_a_completed_schedule_job_publishes_both_areas() -> None:
+    """The completion carries the numbers the progress sensor needs (issue #73)."""
+    (event,) = _notified_edges(OnMowScheduleStop, _SCHEDULE_STOP_COMPLETE)
+
+    assert event.phase == "stop"
+    assert event.trigger == "workComplete"
+    assert event.mowed_area == 320.567505
+    assert event.work_area == 320.567505
+
+
+def test_a_completed_zone_job_publishes_its_own_areas() -> None:
+    """A zone completion is not 100 %: workArea is the polygon's estimate."""
+    (event,) = _notified_edges(OnMowSpotAreaStop, _SPOTAREA_STOP_COMPLETE)
+
+    assert event.phase == "stop"
+    assert event.trigger == "workComplete"
+    assert event.mowed_area == 24.287498
+    assert event.work_area == 32.162498
+
+
+def test_a_start_publishes_no_areas() -> None:
+    """A start says a job began, not how far along it is — the fields are absent."""
+    (event,) = _notified_edges(OnMowScheduleStart, _SCHEDULE_START)
+
+    assert event.phase == "start"
+    assert event.trigger == "schedule"
+    assert event.mowed_area is None
+    assert event.work_area is None
+
+
+def test_an_app_started_zone_job_is_a_start_too() -> None:
+    """The middle topic segment is the job type, not the trigger (issue #73)."""
+    (event,) = _notified_edges(OnMowSpotAreaStart, _SPOTAREA_START_APP)
+
+    assert event.phase == "start"
+    assert event.trigger == "app"
+
+
+def test_the_raw_trigger_is_published_uninterpreted() -> None:
+    """This layer decodes the wire format and nothing else.
+
+    ``reborn`` is a start trigger seen seven times in twelve minutes on a
+    2px96q, each with a fresh jobId. Deciding that it does not begin a new job
+    is the sensor's business, not this handler's — the handler must not filter
+    it out.
+    """
+    (event,) = _notified_edges(
+        OnMowSpotAreaStart, {**_SPOTAREA_START_APP, "trigger": "reborn"}
+    )
+
+    assert event.trigger == "reborn"
+
+
+def test_a_payload_without_a_trigger_is_analysed() -> None:
+    result = OnMowScheduleStop._handle_body(Mock(), {"mowedArea": 1.0})
+
+    assert result.state == HandlingState.ANALYSE
+
+
+async def test_two_identical_starts_both_reach_the_subscriber() -> None:
+    """_seq, not defensiveness: two reborn starts are byte-identical payloads.
+
+    EventBus.notify drops an event equal to the previous one of the same type
+    before any subscriber runs, so without _seq the second start would be
+    swallowed and a new job would keep the previous job's percentage.
+    """
+    bus = _bus()
+    published = _collect(bus, MowerJobEdgeEvent)
+
+    OnMowScheduleStart._handle_body(bus, _SCHEDULE_START)
+    OnMowScheduleStart._handle_body(bus, _SCHEDULE_START)
+    await asyncio.sleep(0)
+
+    assert len(published) == 2
+
+
+def test_the_four_job_edge_names_are_registered() -> None:
+    apply()
+
+    assert MESSAGES["onFwBuryPoint-bd_task-mow-schedule-start"] is OnMowScheduleStart
+    assert MESSAGES["onFwBuryPoint-bd_task-mow-schedule-stop"] is OnMowScheduleStop
+    assert MESSAGES["onFwBuryPoint-bd_task-mow-spotarea-start"] is OnMowSpotAreaStart
+    assert MESSAGES["onFwBuryPoint-bd_task-mow-spotarea-stop"] is OnMowSpotAreaStop
+
+
+def test_the_return_trip_is_not_registered() -> None:
+    """onFwBuryPoint-bd_task-return-normal-stop also carries trigger workComplete.
+
+    There it means the drive home finished, not the job. Registering it would
+    make the sensor write a final value on a docking (issue #73).
+    """
+    apply()
+
+    assert "onFwBuryPoint-bd_task-return-normal-stop" not in MESSAGES
+
+
+def test_a_job_edge_survives_the_whole_message_path() -> None:
+    """Every other test here calls _handle_body directly, which skips the path
+    the wire actually takes.
+
+    handle() -> MessageDictOrJson._handle -> MessageBody._handle_dict -> ours,
+    against the raw bytes as logged, so the header is parsed and the body is
+    forwarded without a ``data`` wrapper. Also the resolution the mqtt client
+    performs: get_message() on the topic's third segment.
+    """
+    apply()
+
+    raw = (
+        b'{"header":{"tzm":120,"ts":"1787917350068470636","fwVer":"1.13.10"},'
+        b'"body":{"bid":"4411787917350066","jobId":"4641787900401334",'
+        b'"mowType":1,"mowedArea":320.567505,"time":12328.418945,'
+        b'"trigger":"workComplete","workArea":320.567505,"workType":18}}'
+    )
+    static = _static_device_info()
+    bus = Mock()
+
+    assert get_message("onFwBuryPoint-bd_task-mow-schedule-stop", static) is (
+        OnMowScheduleStop
+    )
+    assert get_message("onFwBuryPoint-bd_task-return-normal-stop", static) is None
+
+    result = OnMowScheduleStop.handle(bus, raw)
+
+    assert result.state == HandlingState.SUCCESS
+    (event,) = [
+        call_.args[0]
+        for call_ in bus.notify.call_args_list
+        if isinstance(call_.args[0], MowerJobEdgeEvent)
+    ]
+    assert event.phase == "stop"
+    assert event.trigger == "workComplete"
+    assert event.work_area == 320.567505

@@ -44,6 +44,9 @@ SUPPORTED_LIFESPANS = (
 # finished a run, drove home and started charging without sending
 # onChargeInfo, onChargeState, or even the bury-point task events it logs for
 # itself — while onStats, onBattery, onPos and onMapTrack all kept arriving.
+# That missing bury point is also the recorded case of the completion the
+# progress sensor reads its final percentage from going astray (issue #73),
+# which is why nothing downstream of it may depend on its arriving.
 # The entity stayed "mowing" for two hours; one homeassistant.update_entity
 # corrected it in 200 ms, over REST, so the answer was there the whole time
 # and nobody had asked for it.

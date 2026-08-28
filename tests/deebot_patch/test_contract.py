@@ -292,6 +292,86 @@ def test_get_charge_state_publishes_docked_from_the_bypassing_success_path() -> 
     event_bus.notify.assert_called_once_with(StateEvent(State.DOCKED))
 
 
+def test_abc_in_bases_exempts_a_message_from_the_name_requirement() -> None:
+    # _OnMowJobEdge is a deliberately NAME-less base: each of the four
+    # bury-point handlers under it carries its own NAME, and there is no name
+    # the shared parsing could claim. Message.__init_subclass__ runs
+    # verify_required_class_variables_exists on every subclass and demands a
+    # NAME, so the only reason that base defines at all is the helper exempting
+    # classes with ABC directly in __bases__. If upstream drops the exemption
+    # the integration stops importing — not on the first push, at import time,
+    # which takes every other entity down with it — so CI has to be the first
+    # place that says so.
+    from abc import ABC
+
+    import pytest
+    from deebot_client.message import HandlingResult, MessageBody
+
+    class _Exempt(MessageBody, ABC):
+        """No NAME, and survives on the ABC exemption alone."""
+
+        @classmethod
+        def _handle_body(cls, event_bus: object, body: dict) -> HandlingResult:
+            return HandlingResult.success()
+
+    # The exemption reads __bases__ directly, not the MRO: inheriting ABC-ness
+    # from MessageBody is not enough, ABC has to be listed here.
+    assert ABC in _Exempt.__bases__
+    # Message only annotates NAME, so a class that does not set one has no
+    # attribute at all — which is exactly what the check would have rejected.
+    assert not hasattr(_Exempt, "NAME")
+
+    # The other half of the assumption. Without it a rename or a no-op
+    # reimplementation of the helper could pass the half above while checking
+    # nothing, and this test would go green on a contract that no longer holds.
+    with pytest.raises(ValueError):
+
+        class _NotExempt(MessageBody):
+            """Same class without the exemption: rejected for the missing NAME."""
+
+            @classmethod
+            def _handle_body(cls, event_bus: object, body: dict) -> HandlingResult:
+                return HandlingResult.success()
+
+
+def test_message_body_hands_the_raw_body_to_the_handler() -> None:
+    # Why _OnMowJobEdge parses at the MessageBody level instead of the
+    # MessageBodyDataDict level almost every other handler in messages.py uses:
+    # a task bury point carries trigger, mowedArea and workArea directly under
+    # body, with no data wrapper. That works only while _handle_dict forwards
+    # message["body"] to _handle_body unchanged. If upstream starts unwrapping
+    # on the way down, body.get("trigger") comes up empty on every push and the
+    # handler analyses each job edge away instead of publishing a
+    # MowerJobEdgeEvent — silent, since an unparsed message is only a debug
+    # line.
+    from unittest.mock import Mock
+
+    from deebot_client.message import HandlingResult, HandlingState, MessageBody
+
+    # Defined on MessageBody itself, and as a classmethod: the handlers are
+    # registered as classes and never instantiated.
+    assert isinstance(MessageBody.__dict__["_handle_body"], classmethod)
+
+    received: list[dict] = []
+
+    class _Probe(MessageBody):
+        NAME = "test"
+
+        @classmethod
+        def _handle_body(cls, event_bus: object, body: dict) -> HandlingResult:
+            received.append(body)
+            return HandlingResult.success()
+
+    # Shaped like a real bury point, header included: MessageDictOrJson._handle
+    # reads the header before descending, so a payload without one would not
+    # exercise the same path.
+    body = {"trigger": "workComplete", "mowedArea": 105.9251, "workArea": 320.5675}
+    result = _Probe.handle(Mock(), {"header": {"fwVer": "1.36.208"}, "body": body})
+
+    assert result.state is HandlingState.SUCCESS
+    assert received == [body]
+
+
 async def test_the_event_bus_drops_a_repeated_event_before_its_subscribers() -> None:
     # state_precedence writes the record inside the handlers instead of
     # subscribing, because of this. Pinned behaviourally rather than on a

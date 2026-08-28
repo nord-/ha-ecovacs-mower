@@ -333,11 +333,22 @@ than the lawn.
 
 Two things worth knowing:
 
-- **It is unknown between jobs**, not 0. Most firmware reports zeros when
-  nothing is running, and a 0 there would be indistinguishable from a job that
-  has just started. Some firmware never zeroes at all and keeps reporting the
-  finished job's numbers, so the entity also clears itself whenever the mower is
-  not actually out on a job.
+- **Between jobs it holds the last job's figure**, and it is unknown rather than
+  0 before the first one. Most firmware reports zeros when nothing is running,
+  and a 0 there would be indistinguishable from a job that has just started;
+  some firmware never zeroes at all and keeps reporting the finished job's
+  numbers, which is why the entity refuses to read the payload at all while the
+  mower is parked. What clears the reading is the mower announcing that a job
+  ended, acted on when the next one begins — not the mower parking, since a run
+  that docks to charge and resumes is one job and keeping its figure through the
+  break is the point. On a mower that never sends those announcements the figure
+  simply stands until real numbers replace it, so the first minutes of a job can
+  still show the previous one's.
+- **"Finished" is not this entity's job.** A completed run publishes its final
+  figure here, but that figure is not always 100: for a zone the target is the
+  polygon's estimate, and a mower that considers itself done after 24 of 32 m²
+  reports 76 %. An automation that wants "the job is done" should watch
+  `lawn_mower.<device>` going from `mowing` to `paused` instead.
 - **It follows the push where there is one, and a poll where there is not.**
   Some mowers send `onStats` several times a second while cutting; others have
   been observed not to. Where it arrives, the reading tracks the mower, and a
@@ -345,7 +356,10 @@ Two things worth knowing:
   does not, a poll fills in: one request at startup to sync, then every five
   minutes while a run is in progress, stopping when the mower parks. A run
   interrupted by charging needs no special case — the mower docks, the poll
-  stops, and it starts again when the job resumes.
+  stops, and it starts again when the job resumes. The poll is also why the
+  final figure comes from elsewhere: its five-minute cadence rarely lands on the
+  last percent of a run, so the reading is completed from the job-finished
+  message the mower pushes at the same moment.
 
 `paused` is deliberately not a reason to stop asking: it is a normal mid-run
 state (rain, a manual pause), not a sign the job has ended, and the poll keeps

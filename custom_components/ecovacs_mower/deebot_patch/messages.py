@@ -26,6 +26,15 @@ produce it from the same three numbers: ``GetStatsMower`` in ``commands.py``
 parses the answer to ``getStats``, and ``OnStatsMower`` below parses the
 ``onStats`` push that some classes send and others never do (issue #55).
 
+``MowerJobEdgeEvent`` republishes the task bury points that mark a job's own
+boundaries — ``onFwBuryPoint-bd_task-mow-{schedule,spotarea}-{start,stop}``,
+four more messages the library has no handler for. They are the only thing on
+the wire that separates a job which has finished from one parked to charge,
+which ``State`` reports identically (issue #73), and a completion carries the
+two areas its final percentage is computed from. Both job types are registered
+because the middle topic segment is the type, not the trigger: a zone job
+started from the app ends on ``mow-spotarea-stop``.
+
 ``OnPos`` is different in kind from the rest of this module: ``onPos`` is not
 unhandled, it is handled wrongly. See the class for what and why.
 
@@ -53,13 +62,14 @@ from __future__ import annotations
 
 import itertools
 import logging
+from abc import ABC
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from deebot_client.commands.json.clean import GetCleanInfo
 from deebot_client.events import Position, PositionsEvent, StateEvent
 from deebot_client.events.base import Event
-from deebot_client.message import HandlingResult, MessageBodyDataDict
+from deebot_client.message import HandlingResult, MessageBody, MessageBodyDataDict
 from deebot_client.messages.json.stats import OnStats
 from deebot_client.models import State
 from deebot_client.rs.map import PositionType
@@ -91,6 +101,110 @@ class MowerTriggerEvent(Event):
 
     trigger: str
     _seq: int = field(default_factory=itertools.count().__next__, repr=False)
+
+
+@dataclass(frozen=True)
+class MowerJobEdgeEvent(Event):
+    """A job boundary exactly as the device announces it.
+
+    The mower publishes four task bury points per job type —
+    ``mow-schedule-{start,pause,resume,stop}`` and the same set for
+    ``mow-spotarea`` — and the middle segment is the *job type*, not the
+    trigger: a zone job started from the app ends on ``mow-spotarea-stop``.
+    Only the two edges this integration acts on are registered; adding a
+    ``pause`` or ``resume`` is one subclass each (issue #73).
+
+    ``phase`` is ``"start"`` or ``"stop"``. ``trigger`` is the raw string, and
+    what it means is the consumer's business — see ``MowerTriggerEvent`` for
+    the same rule stated at length. The vocabulary observed so far is
+    ``schedule``/``app``/``reborn`` on a start and ``workComplete``/``app`` on
+    a stop; a ``stop`` is therefore not necessarily a completion, and a
+    ``start`` is not necessarily a new job.
+
+    ``mowed_area`` and ``work_area`` are square metres as floats, present on a
+    stop and absent on a start. They are not converted to the centimetre
+    counts ``MowerStatsEvent`` carries: every consumer wants their ratio, and
+    a ratio does not care about the unit.
+
+    ``_seq`` makes every instance compare unequal to the last, for the reason
+    ``MowerTriggerEvent._seq`` documents. It is load-bearing here rather than
+    precautionary: two consecutive ``reborn`` starts are byte-identical
+    payloads, and ``EventBus.notify`` drops an event equal to the previous one
+    of the same type before any subscriber runs.
+    """
+
+    phase: str
+    trigger: str
+    mowed_area: float | None = None
+    work_area: float | None = None
+    _seq: int = field(default_factory=itertools.count().__next__, repr=False)
+
+
+def _as_area(value: Any) -> float | None:
+    """The payload's square metres, or None where the field is absent."""
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+class _OnMowJobEdge(MessageBody, ABC):
+    """One job edge from a task bury point.
+
+    ``MessageBody``, not ``MessageBodyDataDict`` like most of this module: the
+    bury point's fields sit directly under ``body``, with no ``data`` wrapper.
+    ``OnChargeState._handle_body`` overrides at the same level for its own
+    reason.
+
+    ``ABC`` is load-bearing, not decoration: ``Message.__init_subclass__``
+    demands a ``NAME`` on every subclass and exempts only classes with ``ABC``
+    directly in ``__bases__``. Without it this base itself fails to define,
+    at import time. Pinned in ``test_contract.py``.
+    """
+
+    PHASE: ClassVar[str]
+
+    @classmethod
+    def _handle_body(cls, event_bus: EventBus, body: dict[str, Any]) -> HandlingResult:
+        """Handle message->body."""
+        trigger = body.get("trigger")
+        if not isinstance(trigger, str) or not trigger:
+            return HandlingResult.analyse()
+
+        event_bus.notify(
+            MowerJobEdgeEvent(
+                phase=cls.PHASE,
+                trigger=trigger,
+                mowed_area=_as_area(body.get("mowedArea")),
+                work_area=_as_area(body.get("workArea")),
+            )
+        )
+        return HandlingResult.success()
+
+
+class OnMowScheduleStart(_OnMowJobEdge):
+    """A scheduled job begins."""
+
+    NAME = "onFwBuryPoint-bd_task-mow-schedule-start"
+    PHASE = "start"
+
+
+class OnMowScheduleStop(_OnMowJobEdge):
+    """A scheduled job ends, for whatever reason its trigger names."""
+
+    NAME = "onFwBuryPoint-bd_task-mow-schedule-stop"
+    PHASE = "stop"
+
+
+class OnMowSpotAreaStart(_OnMowJobEdge):
+    """A zone job begins."""
+
+    NAME = "onFwBuryPoint-bd_task-mow-spotarea-start"
+    PHASE = "start"
+
+
+class OnMowSpotAreaStop(_OnMowJobEdge):
+    """A zone job ends, for whatever reason its trigger names."""
+
+    NAME = "onFwBuryPoint-bd_task-mow-spotarea-stop"
+    PHASE = "stop"
 
 
 def notify_trigger(event_bus: EventBus, data: dict[str, Any]) -> None:
@@ -315,9 +429,11 @@ def handle_clean_info(event_bus: EventBus, data: dict[str, Any]) -> HandlingResu
 
     # Issue #67. Two orthogonal facts arrive as one enum: the mower is
     # charging, and its plan is paused. A machine sitting on its dock reads as
-    # docked to a user whatever the plan record says; the progress and
-    # job-target sensors clear on DOCKED like any other docking (see
-    # sensor.py's EcovacsMowingProgressSensor). The paused plan itself is kept
+    # docked to a user whatever the plan record says. DOCKED is also what
+    # keeps the progress sensor from re-reading a stale stats payload: it holds
+    # the last job's percentage through the break rather than clearing, since a
+    # plan paused to charge is not a plan that is over (see sensor.py's
+    # EcovacsMowingProgressSensor, issue #73). The paused plan itself is kept
     # here, not on any entity, purely so a later Start can resume it instead
     # of starting over.
     #
