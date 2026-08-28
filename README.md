@@ -164,7 +164,7 @@ stored, and the entry stops asking. There is no need to delete and re-add it.
 
 ## What you get
 
-Forty entities on the mower's device page, across eight platforms —
+Forty-two entities on the mower's device page, across eight platforms —
 plus one per UWB beacon on the models that use them:
 
 | Platform | Count | What |
@@ -172,8 +172,8 @@ plus one per UWB beacon on the models that use them:
 | `lawn_mower` | 1 | Real state (`mowing`, `paused`, `returning`, `docked`, `error`) that updates within seconds, plus working `start_mowing`, `pause`, and `dock` |
 | `sensor` | 16 + one per beacon | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowing progress (see below), mowed area, mowing time, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name, and on a beacon-guided mower one battery percentage per UWB beacon (see below) |
 | `binary_sensor` | 6 | Fault — a latched problem that stays on until the mower recovers or you clear it (see below) — plus rain sensor, rain delay, emergency stop, locked, animal protection: the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
-| `switch` | 7 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
-| `number` | 2 | Notification volume, cutting direction |
+| `switch` | 8 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection, rain detection (see below) |
+| `number` | 3 | Notification volume, cutting direction, rain delay duration (see below) |
 | `button` | 6 | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), and "Clear fault" (releases the latched fault; see below) |
 | `event` | 1 | Last mowing job (finished / finished with warnings / manually stopped) |
 | `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, and `onMapTrace` on firmware 1.17); the format is documented in `docs/superpowers/specs/2026-08-10-mower-map-design.md`. Geometry survives restarts; the position track is live-only |
@@ -253,7 +253,9 @@ grep onProtectState home-assistant.log | tail -5
 
 `isRainDelay` should go to `1` when the run breaks, stay `1` after
 `isRainProtect` has fallen back to `0`, and clear after the configured delay
-rather than when the grass dries.
+rather than when the grass dries. "The configured delay" now has an entity of
+its own to check against — see the next section — but reading the setting is
+not the same as watching the flag follow it, so the theory stands unconfirmed.
 
 The mower's own rain-aware *states* still come from `trigger`, which needs no
 interpretation, not from these flags.
@@ -273,6 +275,49 @@ from every restart.
 The rain *reason* on `sensor.activity` is not restored by a restart, though — it
 comes from `trigger`, which nothing can ask for, so a restart during an active
 rain delay reads as plain `docked` until the mower's next scheduled run.
+
+### The rain sensor's setting, and the three entities named for rain
+
+`switch.<device>_rain_detection` and `number.<device>_rain_delay_duration` are
+the setting itself: whether the mower listens to its rain sensor at all, and
+how many minutes it waits before resuming once a run has been cut short. Both
+come from `onRainDelay`, a message the library has no handler for, which
+carries the pair in one payload:
+
+```
+{"enable": 1, "delay": 180}
+```
+
+Nothing on the wire says what `delay` counts in. Minutes is read off the
+reporter's app, which showed three hours against that 180 (issue #54). The
+entity's ceiling of one day is a generous guess, not a firmware limit; the
+range mirrors [Janverhu/ecovacs-goat-g1][goat-g1], which drives the same
+command against a GOAT G1.
+
+Both are disabled by default, like every other settings entity here.
+
+That makes three entities with rain in the name, and they are three different
+things:
+
+| Entity | Kind | Answers |
+| --- | --- | --- |
+| `switch` **Rain detection** | setting | Is the rain sensor switched on? |
+| `number` **Rain delay duration** | setting | How long a hold does it trigger? |
+| `binary_sensor` **Rain sensor** | reading | Is the sensor wet right now? |
+| `binary_sensor` **Rain delay** | reading | Is the mower holding right now? |
+
+The two settings are read at startup with `getRainDelay` and updated from the
+`onRainDelay` push after that — the same arrangement as the protection flags,
+and for the same reason: the device pushes only when the setting changes, so
+without the command they would read `unknown` until someone opened the app.
+
+Writing either one sends `setRainDelay`, which carries **both** fields. Each
+entity therefore resends the half it does not own, unchanged, from the last
+value the mower reported. If that half has never arrived, the write is refused
+rather than guessed: a default would silently overwrite a hold the owner chose,
+or switch their rain sensor off.
+
+[goat-g1]: https://github.com/Janverhu/ecovacs-goat-g1
 
 ### How far along the mower is
 

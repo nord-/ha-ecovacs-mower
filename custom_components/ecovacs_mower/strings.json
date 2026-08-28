@@ -84,7 +84,8 @@
     },
     "number": {
       "volume": { "name": "Volume" },
-      "cut_direction": { "name": "Cutting direction" }
+      "cut_direction": { "name": "Cutting direction" },
+      "rain_delay": { "name": "Rain delay duration" }
     },
     "sensor": {
       "activity": {
@@ -123,7 +124,8 @@
       "child_lock": { "name": "Child lock" },
       "move_up_warning": { "name": "Lift warning" },
       "cross_map_border_warning": { "name": "Boundary crossing warning" },
-      "safe_protect": { "name": "Safety protection" }
+      "safe_protect": { "name": "Safety protection" },
+      "rain_detection": { "name": "Rain detection" }
     }
   }
 }

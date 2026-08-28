@@ -14,22 +14,36 @@ a ``CapabilityNumber`` (e.g. ``water_amount``, ``mop_auto_wash_frequency`` — m
 features a lawn mower does not have). ``volume`` and ``cut_direction`` are both
 plain ``CapabilitySet``, not ``CapabilityNumber``, so that branch never triggers
 here and has been removed along with the import.
+
+``EcovacsRainDelayNumber`` is an addition rather than a fork: it is the second
+half of the rain sensor's setting, the minutes the mower waits before resuming
+after rain (issue #54). Like the switch that carries the first half, it sits
+outside ``ENTITY_DESCRIPTIONS`` because the setting is not a deebot-client
+capability.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import override
 
-from deebot_client.capabilities import CapabilitySet
+from deebot_client.capabilities import Capabilities, CapabilitySet, DeviceType
+from deebot_client.device import Device
 from deebot_client.events import CutDirectionEvent, VolumeEvent
 from deebot_client.events.base import Event
 
-from homeassistant.components.number import NumberEntity, NumberEntityDescription
-from homeassistant.const import DEGREE, EntityCategory
+from homeassistant.components.number import (
+    NumberEntity,
+    NumberEntityDescription,
+    NumberMode,
+)
+from homeassistant.const import DEGREE, EntityCategory, UnitOfTime
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EcovacsMowerConfigEntry
+from .deebot_patch.commands import SetRainDelay
+from .deebot_patch.messages import MowerRainDelayEvent
 from .entity import (
     EcovacsCapabilityEntityDescription,
     EcovacsDescriptionEntity,
@@ -87,6 +101,11 @@ async def async_setup_entry(
     entities: list[EcovacsEntity] = get_supported_entities(
         controller, EcovacsNumberEntity, ENTITY_DESCRIPTIONS
     )
+    entities.extend(
+        EcovacsRainDelayNumber(device)
+        for device in controller.devices
+        if device.capabilities.device_type is DeviceType.MOWER
+    )
     if entities:
         async_add_entities(entities)
 
@@ -116,3 +135,74 @@ class EcovacsNumberEntity[EventT: Event](
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
         await self._execute_command(self._capability.set(int(value)))
+
+
+class EcovacsRainDelayNumber(
+    EcovacsEntity[Capabilities],
+    NumberEntity,
+):
+    """How long the mower waits before resuming after rain.
+
+    The other half of the rain sensor's setting; the switch that carries the
+    first half is in ``switch.py``. Not the same thing as
+    ``binary_sensor.<device>_rain_delay``, which is the device's own flag for
+    whether it is holding right now — this is the configured length of that
+    hold.
+
+    The unit is minutes: the reporter's app read three hours against a payload
+    of ``"delay": 180``. The range mirrors Janverhu/ecovacs-goat-g1, which
+    drives the same command against a GOAT G1 — a day is a generous ceiling and
+    the firmware's real one is not known. A box rather than a slider follows
+    from the range: a 0-1440 slider cannot be aimed at a particular hour.
+    """
+
+    entity_description = NumberEntityDescription(
+        key="rain_delay",
+        translation_key="rain_delay",
+        entity_registry_enabled_default=False,
+        entity_category=EntityCategory.CONFIG,
+        native_min_value=0,
+        native_max_value=1440,
+        native_step=1,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        mode=NumberMode.BOX,
+    )
+
+    def __init__(self, device: Device) -> None:
+        """Initialize entity."""
+        super().__init__(device, device.capabilities)
+        # The toggle half of the same setting, held for the same reason the
+        # switch holds the delay — see ``async_set_native_value``.
+        self._enabled: bool | None = None
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listeners now that hass is ready."""
+        await super().async_added_to_hass()
+
+        async def on_event(event: MowerRainDelayEvent) -> None:
+            self._attr_native_value = event.delay
+            self._enabled = event.enabled
+            self.async_write_ha_state()
+
+        self._subscribe(MowerRainDelayEvent, on_event)
+
+    @override
+    async def async_set_native_value(self, value: float) -> None:
+        """Send the new delay, with the sensor state the device last reported.
+
+        The mirror image of the switch: ``setRainDelay`` carries both fields, so
+        writing the duration alone would switch the rain sensor to whatever this
+        entity assumed. Refusing until the device has said is the only answer
+        that cannot silently disable it.
+        """
+        if self._enabled is None:
+            raise HomeAssistantError(
+                "The mower has not reported whether its rain sensor is on, so "
+                "the delay cannot be set without risking switching the sensor "
+                "off. Wait for the mower to report its setting"
+            )
+
+        await self._execute_command(
+            SetRainDelay(enable=self._enabled, delay=int(value))
+        )
