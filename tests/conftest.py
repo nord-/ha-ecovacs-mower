@@ -13,6 +13,8 @@ import sys
 
 import pytest
 
+from custom_components.ecovacs_mower.deebot_patch import families, state_precedence
+
 # The guard only prevents the explicit load. The plugin also registers itself as a
 # pytest11 entry point and is auto-loaded by pytest regardless of this file.
 # Locally on Windows the flag is therefore required as well:
@@ -21,6 +23,20 @@ import pytest
 #
 # The flag does not belong in pytest.ini — CI needs the plugin loaded.
 _HA_AVAILABLE = sys.platform != "win32"
+
+
+@pytest.fixture(autouse=True)
+def _reset_deebot_patch_state() -> None:
+    """Clear both command-family and precedence state before every test.
+
+    The two stores have different key types and lifetimes (``did`` vs.
+    ``EventBus``), so a test that reset only one used to leak state into
+    whatever ran next. One fixture for the whole suite removes the need for
+    every test module that touches either store to remember to reset it.
+    """
+    families.reset()
+    state_precedence.reset()
+
 
 if _HA_AVAILABLE:
     pytest_plugins = "pytest_homeassistant_custom_component"

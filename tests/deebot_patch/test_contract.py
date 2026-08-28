@@ -267,3 +267,142 @@ def test_get_life_span_parses_the_answer_as_a_list() -> None:
     from deebot_client.message import MessageBodyDataList
 
     assert issubclass(GetLifeSpan, MessageBodyDataList)
+
+
+def test_get_charge_state_publishes_docked_from_the_bypassing_success_path() -> None:
+    # GetChargeStateMower._handle_body docks the state_precedence record
+    # whenever super()._handle_body returns SUCCESS together with a non-zero
+    # code, on the assumption that upstream's own "fail" branch always means
+    # DOCKED was just published — for "30007" (already charging) and also for
+    # "3"/"5", which it maps to State.ERROR internally but still notifies
+    # DOCKED for, a quirk of its own. If upstream ever splits that branch so a
+    # non-zero-code SUCCESS no longer implies a DOCKED notification, this must
+    # fail loudly rather than let our override silently mis-dock.
+    from unittest.mock import Mock
+
+    from deebot_client.commands.json.charge_state import GetChargeState
+    from deebot_client.events import StateEvent
+    from deebot_client.message import HandlingState
+    from deebot_client.models import State
+
+    event_bus = Mock()
+    result = GetChargeState._handle_body(event_bus, {"msg": "fail", "code": "30007"})
+
+    assert result.state is HandlingState.SUCCESS
+    event_bus.notify.assert_called_once_with(StateEvent(State.DOCKED))
+
+
+async def test_the_event_bus_drops_a_repeated_event_before_its_subscribers() -> None:
+    # state_precedence writes the record inside the handlers instead of
+    # subscribing, because of this. Pinned behaviourally rather than on a
+    # log-string literal: a wording change upstream must not turn CI red for
+    # no behavioural reason, and this still fails if a refactor moves the
+    # dedup to run after dispatch instead of before it.
+    import asyncio
+    from unittest.mock import AsyncMock, Mock
+
+    from deebot_client.event_bus import EventBus
+    from deebot_client.models import State
+
+    bus = EventBus(AsyncMock(), Mock(get_refresh_commands=lambda _event: []))
+    received: list[StateEvent] = []
+
+    async def on_event(event: StateEvent) -> None:
+        received.append(event)
+
+    bus.subscribe(StateEvent, on_event)
+    bus.notify(StateEvent(State.CLEANING))
+    bus.notify(StateEvent(State.CLEANING))
+    await asyncio.sleep(0)
+
+    assert received == [StateEvent(State.CLEANING)]
+
+
+def test_the_event_bus_rewrites_idle_to_docked_after_a_docked() -> None:
+    # Upstream's partial version of the precedence rule. Tests that assert on
+    # what subscribers see have to expect this.
+    import inspect
+
+    from deebot_client.event_bus import EventBus
+
+    source = inspect.getsource(EventBus.notify)
+    assert "State.IDLE" in source
+    assert "StateEvent(State.DOCKED)" in source
+
+
+_DEVICE_INFO = {
+    "did": "test-did",
+    "class": "2i0fns",
+    "resource": "test-resource",
+    "company": "eco-ng",
+    "name": "test-name",
+}
+
+_NO_ANSWER = {"ret": "fail", "errno": 500, "debug": "wait for response timed out"}
+
+
+def _bus() -> "EventBus":
+    from unittest.mock import AsyncMock, Mock
+
+    from deebot_client.event_bus import EventBus
+
+    return EventBus(AsyncMock(), Mock(get_refresh_commands=lambda _event: []))
+
+
+async def test_execute_returns_the_raw_response_alongside_the_result() -> None:
+    # The whole family switch reads response["errno"]. If upstream stops
+    # handing the raw response back, we stop switching silently — which is
+    # exactly what this project's fail-fast stance exists to prevent.
+    from unittest.mock import AsyncMock, patch
+
+    from deebot_client.command import Command
+    from deebot_client.commands.json.charge_state import GetChargeState
+    from deebot_client.message import HandlingResult
+
+    command = GetChargeState()
+    with patch.object(
+        Command, "_execute_api_request", AsyncMock(return_value=_NO_ANSWER)
+    ):
+        result, response = await command._execute(AsyncMock(), _DEVICE_INFO, _bus())
+
+    assert isinstance(result, HandlingResult)
+    assert response["errno"] == 500
+
+
+def test_errno_stays_at_the_top_level_of_the_response() -> None:
+    import inspect
+
+    from deebot_client.command import CommandWithMessageHandling
+
+    source = inspect.getsource(CommandWithMessageHandling._handle_response)
+    assert 'response.get("errno")' in source
+
+
+def test_clean_still_rewrites_the_action_and_our_delegates_still_skip_it() -> None:
+    # Two halves of one assumption. The rewrite has to exist for the bypass to
+    # be meaningful, and the bypass has to reach Command._execute — if upstream
+    # inserts a class between Clean and Command that overrides _execute, the
+    # delegates would silently start second-guessing the wrapper again.
+    #
+    # _NoActionRewrite._execute hardcodes Command._execute, so an override
+    # appearing anywhere between Clean and Command would be silently skipped
+    # by a check that only listed today's classes. Walking the live MRO
+    # instead of a hard-coded tuple means a class upstream inserts between
+    # Clean and Command is checked too, not silently left out.
+    import inspect
+
+    from deebot_client.command import Command
+    from deebot_client.commands.json.clean import Clean
+
+    assert "CleanAction.RESUME" in inspect.getsource(Clean._execute)
+
+    mro = Clean.__mro__
+    for klass in mro[1 : mro.index(Command)]:
+        assert "_execute" not in klass.__dict__
+
+
+def test_the_v2_command_names_are_what_we_fall_back_to() -> None:
+    from deebot_client.commands.json.clean import CleanV2, GetCleanInfoV2
+
+    assert CleanV2.NAME == "clean_V2"
+    assert GetCleanInfoV2.NAME == "getCleanInfo_V2"

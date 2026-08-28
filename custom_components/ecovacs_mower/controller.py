@@ -60,6 +60,7 @@ from .deebot_patch import (
     AccountAuthenticator,
     PatchContractError,
     apply as apply_deebot_patch,
+    register_mower_bus,
     verify_capabilities,
 )
 from .deebot_patch.hardware import SUPPORTED_CLASSES, patch_device_info
@@ -211,6 +212,21 @@ class EcovacsController:
 
                     async def _init(device: Device) -> None:
                         """Initialize MQTT device."""
+                        if device.device_info["class"] in SUPPORTED_CLASSES:
+                            # Before initialize(), not after: __init__ creates
+                            # the event bus and initialize() starts the MQTT
+                            # subscription, so a push arriving in between would
+                            # find no record and be handled as an ordinary
+                            # vacuum's. Unlike the fault latch below, this one
+                            # cannot wait until the device is up.
+                            #
+                            # Keyed on the patched classes rather than on
+                            # DeviceType.MOWER: an unsupported mower runs with
+                            # the library's own capabilities and only gets a
+                            # warning, and this registry means "belongs to a
+                            # patched mower". Registering one would apply the
+                            # gate to a device nothing else in here patched.
+                            register_mower_bus(device.events)
                         await device.initialize(mqtt)
                         self._devices.append(device)
                         if device.capabilities.device_type is DeviceType.MOWER:

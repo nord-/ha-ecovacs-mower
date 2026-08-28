@@ -641,6 +641,76 @@ async def test_the_percentage_follows_the_answer() -> None:
     assert sensor._attr_native_value is None
 
 
+async def test_mowing_progress_is_not_cleared_by_a_paused_plan_on_the_dock() -> None:
+    """Issue #67. _JOB_STATES holds PAUSED and DOCKED clears the reading, so
+    the flap cleared and re-armed the value alternately.
+
+    Reproduced here as one refresh, the same sequencing MowerStateRefresh
+    uses: the charge half answers docked — which legitimately clears the
+    reading, since nothing here yet knows the plan is only paused rather than
+    finished — and the clean half answers a stale paused-plan clean-info left
+    over from before the mower docked.
+
+    Without the gate the second answer moves ``_last_state`` to ``PAUSED`` —
+    a job state — and a stats answer from the same refresh (or a lingering
+    push) is then accepted by ``_on_stats`` and re-arms the reading to a stale
+    percentage, even though the mower is sitting on its charger: cleared by
+    the first answer, wrongly re-armed by the second and third. With the gate
+    the clean half is suppressed, ``_last_state`` stays ``DOCKED``, and the
+    stats answer is correctly rejected.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, Mock
+
+    from deebot_client.event_bus import EventBus
+    from deebot_client.events import StateEvent
+    from deebot_client.models import State
+
+    from custom_components.ecovacs_mower.deebot_patch import register_mower_bus
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        GetChargeStateMower,
+    )
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerStatsEvent,
+        handle_clean_info,
+    )
+
+    bus = EventBus(AsyncMock(), Mock(get_refresh_commands=lambda _event: []))
+    register_mower_bus(bus)
+
+    sensor = _bare_progress_sensor()
+    sensor._device.events = bus
+    sensor._last_state = State.CLEANING
+    sensor._attr_native_value = 42
+
+    bus.subscribe(StateEvent, sensor._on_state)
+    bus.subscribe(MowerStatsEvent, sensor._on_stats)
+
+    # The charge half: legitimately clears the reading.
+    GetChargeStateMower._handle_body_data_dict(bus, {"isCharging": 1})
+    await asyncio.sleep(0)
+    assert sensor._last_state is State.DOCKED
+    assert sensor._attr_native_value is None
+
+    # The clean half: a stale paused-plan answer from the same refresh.
+    handle_clean_info(
+        bus,
+        {
+            "trigger": "none",
+            "state": "clean",
+            "cleanState": {"motionState": "pause"},
+        },
+    )
+    await asyncio.sleep(0)
+
+    # A lingering stats answer from the ended job, in the same refresh.
+    bus.notify(_job(211275, 87825))
+    await asyncio.sleep(0)
+
+    assert sensor._last_state is State.DOCKED
+    assert sensor._attr_native_value is None
+
+
 def test_error_description_prefers_the_library_and_fills_its_gaps(caplog) -> None:
     """The library's text wins; ours only covers what it has no entry for."""
     import logging

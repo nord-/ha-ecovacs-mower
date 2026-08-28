@@ -1,7 +1,6 @@
 """The seeding of the device registry."""
 
 import pytest
-from deebot_client.commands.json.charge_state import GetChargeState
 from deebot_client.commands.json.clean import CleanV2, GetCleanInfo, GetCleanInfoV2
 from deebot_client.commands.json.life_span import GetLifeSpan
 from deebot_client.commands.json.stats import GetStats
@@ -10,11 +9,11 @@ from deebot_client.hardware import _DEVICES, get_static_device_info
 
 from custom_components.ecovacs_mower.deebot_patch.commands import (
     CleanMower,
-    GetCleanInfoMower,
     GetLifeSpanMower,
     GetProtectState,
     GetRainDelay,
     GetStatsMower,
+    MowerStateRefresh,
 )
 from custom_components.ecovacs_mower.deebot_patch.hardware import (
     SUPPORTED_CLASSES,
@@ -106,18 +105,31 @@ async def test_patch_swaps_in_clean_mower(class_: str) -> None:
 
 
 @pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
-async def test_patch_swaps_clean_info_v2_for_the_mower_variant(class_: str) -> None:
+async def test_patch_swaps_in_the_mower_state_refresh_for_every_supported_class(
+    class_: str,
+) -> None:
+    # Was: any(type(c) is GetCleanInfoMower) alongside GetChargeState in the
+    # same list. Issue #67 replaced the concurrent pair with one sequential
+    # command, so the state capability now holds exactly one command, and that
+    # is true for every supported class — not only the O1200 that
+    # test_the_state_capability_holds_one_command below checks.
     await patch_device_info(class_)
     info = await get_static_device_info(class_)
     commands = info.capabilities.get_refresh_commands(StateEvent)
     # Exact type, not isinstance: GetCleanInfoV2 inherits from GetCleanInfo, so
     # isinstance() would pass even without the patch and the test would be
     # meaningless.
-    assert any(type(c) is GetCleanInfoMower for c in commands)
-    assert not any(type(c) is GetCleanInfoV2 for c in commands)
-    # Nor the library's own: it is answered, but with a constant idle (#48).
-    assert not any(type(c) is GetCleanInfo for c in commands)
-    assert any(type(c) is GetChargeState for c in commands)
+    assert [type(c) for c in commands] == [MowerStateRefresh]
+
+
+async def test_the_state_capability_holds_one_command() -> None:
+    # Two commands is the race in issue #67. If a second one reappears here,
+    # verify_capabilities is the thing that must catch it.
+    await patch_device_info("2i0fns")
+    capabilities = _DEVICES["2i0fns"].capabilities
+
+    commands = capabilities.get_refresh_commands(StateEvent)
+    assert [type(command) for command in commands] == [MowerStateRefresh]
 
 
 @pytest.mark.parametrize("class_", SUPPORTED_CLASSES)

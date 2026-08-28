@@ -3,7 +3,7 @@
 Corresponds to DeebotUniverse/client.py PR #1647. GOAT reports its state via
 three unsolicited MQTT messages, but the library only handles one of them:
 
-    onCleanInfo         manual start/pause      handled by the library
+    onCleanInfo         manual start/pause      gated per-bus, see OnCleanInfo
     onScheduleTaskInfo  scheduled run           falls through as unknown
     onChargeInfo        returning / finished    falls through as unknown
 
@@ -56,12 +56,15 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from deebot_client.commands.json.clean import GetCleanInfo
 from deebot_client.events import Position, PositionsEvent, StateEvent
 from deebot_client.events.base import Event
 from deebot_client.message import HandlingResult, MessageBodyDataDict
 from deebot_client.messages.json.stats import OnStats
 from deebot_client.models import State
 from deebot_client.rs.map import PositionType
+
+from .state_precedence import record_for
 
 if TYPE_CHECKING:
     from deebot_client.event_bus import EventBus
@@ -79,10 +82,11 @@ class MowerTriggerEvent(Event):
 
     ``_seq`` makes every instance compare unequal to the last. The event bus
     drops a notification equal to the previous one of the same type, and a
-    resume that follows a rain stop (``onCleanInfo``, owned by the library)
-    never republishes a trigger — so without this, two rain stops in a row
-    with no other trigger in between would have the second one silently
-    dropped, which is exactly the ambiguity this event exists to remove.
+    resume that follows a rain stop (``onCleanInfo``, which deliberately
+    publishes no trigger — see ``OnCleanInfo``) never republishes a trigger —
+    so without this, two rain stops in a row with no other trigger in between
+    would have the second one silently dropped, which is exactly the
+    ambiguity this event exists to remove.
     """
 
     trigger: str
@@ -306,11 +310,32 @@ def handle_clean_info(event_bus: EventBus, data: dict[str, Any]) -> HandlingResu
     elif state == "idle":
         status = State.IDLE
 
-    if status is not None:
-        event_bus.notify(StateEvent(status))
-        return HandlingResult.success()
+    if status is None:
+        return HandlingResult.analyse()
 
-    return HandlingResult.analyse()
+    # Issue #67. Two orthogonal facts arrive as one enum: the mower is
+    # charging, and its plan is paused. A machine sitting on its dock reads as
+    # docked to a user whatever the plan record says, and the plan being
+    # paused is still visible in the progress and job-target sensors.
+    #
+    # The record is written here rather than by subscribing to StateEvent
+    # because EventBus.notify drops an event equal to the previous one before
+    # any subscriber runs, and repeats are ordinary: the captured telemetry has
+    # two CLEANING pushes sixteen seconds apart. See MowerTriggerEvent._seq for
+    # the same hazard met from the other side.
+    record = record_for(event_bus)
+    if record is not None:
+        if status in (State.CLEANING, State.RETURNING):
+            record.move()
+        elif record.docked and status in (State.PAUSED, State.IDLE):
+            # Remembered, not just dropped: the mow command still has to tell
+            # resume from start, and it is the only reader of this.
+            _LOGGER.debug("Withholding %s: mower is on its charger", status)
+            record.suppressed = status
+            return HandlingResult.success()
+
+    event_bus.notify(StateEvent(status))
+    return HandlingResult.success()
 
 
 class OnChargeInfo(MessageBodyDataDict):
@@ -346,8 +371,82 @@ class OnChargeInfo(MessageBodyDataDict):
             case _:
                 return HandlingResult.analyse()
 
+        # A mid-session docking. on_status stops the poll loop on DOCKED, so
+        # nothing asks getChargeState again; without this the record would stay
+        # unset until something restarted polling — one flap per docking.
+        if (record := record_for(event_bus)) is not None:
+            if status is State.DOCKED:
+                record.dock()
+            elif status is State.RETURNING:
+                record.move()
+
         event_bus.notify(StateEvent(status))
         return HandlingResult.success()
+
+
+class OnChargeState(MessageBodyDataDict):
+    """Charge state as the device pushes it.
+
+    Resolves to the library's ``GetChargeState`` through
+    ``get_legacy_message()`` today, which publishes ``DOCKED`` and records
+    nothing. Observed on firmware 1.36.208 in issue #67, four seconds ahead of
+    a paused plan on the same dock.
+    """
+
+    NAME = "onChargeState"
+
+    @classmethod
+    def _handle_body(cls, event_bus: EventBus, body: dict[str, Any]) -> HandlingResult:
+        """Handle message->body.
+
+        Forwarded one level above ``_handle_body_data_dict`` below, not just
+        to it: a fail-shaped body such as ``{"msg": "fail", "code": "30007"}``
+        has no ``data`` key, so it never reaches ``_handle_body_data_dict`` at
+        all — ``GetChargeState._handle_body`` branches on the code before
+        descending into ``body->data``, same as documented on
+        ``GetChargeStateMower._handle_body`` in ``commands.py``. Without this
+        override such a body fell through to the inherited
+        ``MessageBodyData._handle_body``, which for a body with no ``data``
+        key calls the still-abstract ``MessageBody._handle_body`` and returns
+        nothing — surfacing as deebot_client's own "returned no response. This
+        is a bug should not happen" error log, not as a dock recorded or a
+        state published.
+
+        Going through ``GetChargeStateMower`` rather than copying its fail-code
+        branch here also means the dock recording added for that branch (issue
+        #67) is reachable from this push path too, not only from a
+        ``getChargeState`` answer.
+        """
+        # Imported here, not at module level: GetChargeStateMower lives in
+        # commands.py, which already imports from this module, and a top-level
+        # import back the other way would make the two files a cycle.
+        from .commands import GetChargeStateMower
+
+        return GetChargeStateMower._handle_body(event_bus, body)
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data.
+
+        Still required by the ``MessageBodyDataDict`` ABC — the abstract
+        method it mixes in needs a concrete override for this to remain a
+        valid implementation of the protocol — and still exercised by a
+        caller that reaches this class through ``cls`` directly rather than
+        through ``handle()``, as the tests do. Through ``handle()`` the
+        ``_handle_body`` override above is what the normal push path goes
+        through now: it forwards to ``GetChargeStateMower._handle_body``,
+        which resolves the rest of the way down through ``cls`` bound to
+        ``GetChargeStateMower``, not to this class — the same parsing either
+        way, since both classes forward it identically.
+        """
+        # Imported here, not at module level: GetChargeStateMower lives in
+        # commands.py, which already imports from this module, and a top-level
+        # import back the other way would make the two files a cycle.
+        from .commands import GetChargeStateMower
+
+        return GetChargeStateMower._handle_body_data_dict(event_bus, data)
 
 
 class OnScheduleTaskInfo(MessageBodyDataDict):
@@ -366,6 +465,52 @@ class OnScheduleTaskInfo(MessageBodyDataDict):
         own parsing so it stays easy to diff against upstream.
         """
         notify_trigger(event_bus, data)
+        return handle_clean_info(event_bus, data)
+
+
+class OnCleanInfo(MessageBodyDataDict):
+    """Clean-info as the device pushes it, on either spelling.
+
+    ``get_message()`` strips a ``_V2`` suffix before falling back to the legacy
+    lookup, so registering this under ``onCleanInfo`` also catches
+    ``onCleanInfo_V2`` — which is what firmware 1.36 pushes.
+
+    Registering it at all takes ``onCleanInfo`` away from the library's
+    ``GetCleanInfo`` for **every** JSON device on the account, because
+    ``MESSAGES`` is global. An ordinary Deebot vacuum therefore has to come out
+    exactly where it went in: ``handle_clean_info`` is a verbatim copy of the
+    library's parsing except for the ``customArea`` branch it never needed, so
+    it is not a superset of what it would displace. Anything whose event bus is
+    not a registered mower's is handed straight to the library.
+
+    The delegation goes to ``_handle_body_data_dict`` rather than back through
+    ``GetCleanInfo.handle()``: ``Message.handle`` is ``@final`` and so is every
+    step down to this one, and ``MessageDictOrJson._handle`` publishes
+    ``FirmwareEvent`` from the header before descending — re-entering from the
+    top would run the header twice, and be handed ``body.data`` where it
+    expects the whole payload.
+
+    Unlike its sister ``OnScheduleTaskInfo``, this class publishes **no**
+    ``MowerTriggerEvent``. ``notify_trigger`` publishes any non-empty string,
+    and the trigger on this message is ``"none"`` in every captured sample;
+    ``MowerTriggerEvent`` carries a ``_seq`` so none of them would be deduped
+    either. That is an event, a task and a debug line per push, for a consumer
+    that only acts on ``"rain"``. The scheduled-run message is different: its
+    trigger is the point of it.
+    """
+
+    NAME = "onCleanInfo"
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data."""
+        if record_for(event_bus) is None:
+            return GetCleanInfo._handle_body_data_dict(event_bus, data)
+
+        # No notify_trigger here, unlike OnScheduleTaskInfo: see the test for
+        # why. The trigger on this message is "none" in every captured sample.
         return handle_clean_info(event_bus, data)
 
 
@@ -579,6 +724,14 @@ class OnPos(MessageBodyDataDict):
 
     NAME = "onPos"
 
+    # How far a valid deebotPos sample has to sit from the dock-at-origin
+    # (map.py carries the same assumption) before it counts as "clearly away"
+    # rather than dock-adjacent GPS/UWB noise. A guess, not a measurement: no
+    # capture pins the actual noise floor near the charger. Only ever a
+    # recovery path for a missed departure push (issue #67) — the state
+    # commands remain the primary way out of `docked`.
+    _CLEARLY_AWAY_FROM_DOCK_MM = 3000
+
     @classmethod
     def _handle_body_data_dict(
         cls, event_bus: EventBus, data: dict[str, Any]
@@ -601,6 +754,23 @@ class OnPos(MessageBodyDataDict):
                 for entry in entries
                 if not entry.get("invalid", 0) & 1
             )
+
+        if (
+            (record := record_for(event_bus)) is not None
+            and record.docked
+            and any(
+                position.type is PositionType.DEEBOT
+                and (position.x**2 + position.y**2)
+                >= cls._CLEARLY_AWAY_FROM_DOCK_MM**2
+                for position in positions
+            )
+        ):
+            # The mower moved without a state push saying so — firmware
+            # 1.13.10 is known to drop transitions and stop polling while
+            # DOCKED. Clearing here means the next PAUSED or IDLE reaches the
+            # entity instead of being withheld for a mower that is no longer
+            # on its charger.
+            record.move()
 
         if not positions:
             # Upstream returns analyse() here. Nothing consumes the state but

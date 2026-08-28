@@ -752,3 +752,70 @@ async def test_setup_map_feeds_the_covered_area_into_the_map() -> None:
     assert mower_map.covered == [[(0, 0), (100, 0), (100, 100)]]
     assert mower_map.covered_holes == [[(10, 10)]]
     store_cls.return_value.async_delay_save.assert_called_once()
+
+
+async def test_a_docked_mower_does_not_restart_the_poll_loop(hass) -> None:
+    """Issue #67. on_status starts polling for anything that is not DOCKED, so
+    a spurious PAUSED on the dock starts a five-minute loop that nothing stops
+    again — a parked mower polling forever.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+    from deebot_client.event_bus import EventBus
+    from deebot_client.events import StateEvent
+    from deebot_client.models import State
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch import register_mower_bus
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        GetChargeStateMower,
+    )
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        handle_clean_info,
+    )
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = hass
+    controller._unsub_polls = {}
+
+    bus = EventBus(AsyncMock(), Mock(get_refresh_commands=lambda _event: []))
+    register_mower_bus(bus)
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1"}
+    device.events = bus
+
+    with patch(
+        "custom_components.ecovacs_mower.controller.async_track_time_interval"
+    ) as track:
+        controller._setup_polling(device)
+
+        # Out mowing, as it would be after leaving the dock: the poll starts.
+        bus.notify(StateEvent(State.CLEANING))
+        await asyncio.sleep(0)
+        track.assert_called_once()
+
+        # One state refresh, sequential rather than concurrent (that
+        # sequencing is MowerStateRefresh's own fix): the charge half answers
+        # docked first...
+        GetChargeStateMower._handle_body_data_dict(bus, {"isCharging": 1})
+        await asyncio.sleep(0)
+        unsub = track.return_value
+        unsub.assert_called_once()
+
+        # ...then the clean half answers a plan that was paused before the
+        # mower docked. Without the gate this reaches on_status as PAUSED and
+        # restarts the loop.
+        handle_clean_info(
+            bus,
+            {
+                "trigger": "none",
+                "state": "clean",
+                "cleanState": {"motionState": "pause"},
+            },
+        )
+        await asyncio.sleep(0)
+
+        track.assert_called_once()
+        unsub.assert_called_once()

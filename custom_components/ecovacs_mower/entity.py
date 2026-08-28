@@ -21,6 +21,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity, EntityDescription
 
 from .const import DOMAIN
+from .deebot_patch import family_name, has_family
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -101,13 +102,27 @@ class EcovacsEntity[CapabilityEntityT](Entity):
         ``device_reached`` as "responded in time", not "did what it was told", so
         this warns and never raises — a mower that starts mowing but answers too
         late must not surface as a failed service call.
+
+        ``command.NAME`` alone would mislead once a family switch has happened:
+        ``CleanMower`` and ``GetCleanInfoMower`` keep the non-V2 spelling on the
+        wrapper regardless of which delegate actually went out on the wire, so
+        the family is named alongside it — a user asked to send logs needs to
+        know whether ``clean`` or ``clean_V2`` was really sent. Only for those
+        two, though: naming a family for a command that has none, such as
+        ``Charge``, would claim a V2/non-V2 dialect that does not exist for it.
         """
         if not await self._device.execute_command(command):
+            family_suffix = (
+                f" ({family_name(self._device.device_info['did'])} family)"
+                if has_family(command)
+                else ""
+            )
             _LOGGER.warning(
-                "The mower did not confirm command %s. The reason is logged by "
-                "deebot_client; enable debug logging for this integration to see "
-                "the exchange",
+                "The mower did not confirm command %s%s. The reason is logged "
+                "by deebot_client; enable debug logging for this integration "
+                "to see the exchange",
                 command.NAME,
+                family_suffix,
             )
 
     def _subscribe[EventT: Event](

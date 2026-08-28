@@ -13,17 +13,16 @@ import logging
 from types import MappingProxyType
 
 from deebot_client.capabilities import CapabilityEvent
-from deebot_client.commands.json.charge_state import GetChargeState
 from deebot_client.events import StateEvent, StatsEvent
 from deebot_client.hardware import _DEVICES, get_static_device_info
 
 from .commands import (
     CleanMower,
-    GetCleanInfoMower,
     GetLifeSpanMower,
     GetProtectState,
     GetRainDelay,
     GetStatsMower,
+    MowerStateRefresh,
 )
 from .messages import (
     MowerBeaconsEvent,
@@ -40,19 +39,15 @@ _LOGGER = logging.getLogger(__name__)
 #   2px96q — GOAT O800 RTK (user-verified, issue #24). A second class string
 #            for the same hardware: upstream's 2px96q.py is byte-identical to
 #            9bts2s.py.
-#   77atlz — GOAT G1-800 (added on a class-string report, issue #30, firmware
-#            1.36.208; controls not confirmed). Upstream's 77atlz.py is
-#            byte-identical to 9bts2s.py, docstring included, so the O800 RTK's
-#            patch applies unchanged — but only the protection-flag sensors
-#            were ever confirmed on this model, and issue #42 has evidence that
-#            its firmware branch inverts the quirk this patch exists for: plain
-#            getCleanInfo is never answered (errno 500, on every poll), while
-#            getCleanInfo_V2 was answered on the same install before the class
-#            was patched. Whether the mow command is inverted too is unknown —
-#            the mower is reported to act on clean anyway, so that half may
-#            well be right here. Nothing conditional is expressible at this
-#            point regardless: firmware arrives in a command response
-#            header, long after get_devices() has frozen these capabilities.
+#   77atlz — GOAT G1-800 (issue #30, firmware 1.36.208 — controls not
+#            confirmed). Upstream's 77atlz.py is byte-identical to 9bts2s.py,
+#            docstring included, so the O800 RTK's patch applies unchanged —
+#            but this firmware branch inverts the quirk the patch exists for.
+#            Issue #42 has the A/B on one install: patched, getCleanInfo
+#            answers errno 500 on every poll and clean is never acknowledged;
+#            unpatched, getCleanInfo_V2 answers first try and clean_V2 is
+#            acked in 526 ms. The class stays here because the family is now
+#            chosen at runtime rather than by this tuple — see families.py.
 #   e4gqia — GOAT A1600 LiDAR Pro (confirmed, PR #29, firmware 1.11.31).
 #            Upstream names this A3000 LiDAR Pro; its module is byte-identical
 #            to 9bts2s.py apart from the docstring, so the O800's patch
@@ -74,10 +69,16 @@ async def patch_device_info(class_: str) -> None:
 
     * ``clean.action.command``: ``CleanV2`` publishes on ``clean_V2``, which
       GOAT firmware ignores. Swapped for ``CleanMower`` on ``clean``.
-    * ``state``: ``GetCleanInfoV2`` is not answered by GOAT, and plain
-      ``GetCleanInfo`` is answered with a constant ``idle``. Swapped for
-      ``GetCleanInfoMower``, which sends the same command and ignores that one
-      answer.
+    * ``state``: the clean-info answer is a constant ``idle`` regardless of
+      what the mower is actually doing (issue #48), and the library ran the
+      charge and clean-info answers concurrently in one ``TaskGroup`` — a
+      race that let a mower parked on its charger read as docked or as paused
+      depending on which answer landed last (issue #67). Swapped for
+      ``MowerStateRefresh``, one sequential command that awaits the charge
+      half before asking for clean info, so the record is written before the
+      clean-info answer is interpreted; the clean-info half picks its own
+      command name, ``getCleanInfo`` or ``getCleanInfo_V2``, from whichever
+      the mower answers at runtime — see ``families.py``.
     * ``stats.clean``: ``GetStats`` drops ``mowedArea``, the one number that
       moves while a job runs. Swapped for ``GetStatsMower``.
     * ``life_span.get``: ``GetLifeSpan`` raises on the ``uwbCell`` entries a
@@ -115,7 +116,7 @@ async def patch_device_info(class_: str) -> None:
             capabilities.clean,
             action=replace(capabilities.clean.action, command=CleanMower),
         ),
-        state=CapabilityEvent(StateEvent, [GetChargeState(), GetCleanInfoMower()]),
+        state=CapabilityEvent(StateEvent, [MowerStateRefresh()]),
         # Only stats.clean is replaced; total and report are the library's
         # own and are carried through by replace().
         stats=replace(

@@ -22,6 +22,8 @@ from deebot_client.events import ErrorEvent, StateEvent
 from deebot_client.models import State
 import pytest
 
+from custom_components.ecovacs_mower.deebot_patch.messages import handle_clean_info
+from custom_components.ecovacs_mower.deebot_patch.state_precedence import register
 from custom_components.ecovacs_mower.fault import FaultLatch, MowerFaultEvent
 
 # The fault from the issue: pushed exactly once, then overwritten 89 ms later.
@@ -194,3 +196,42 @@ async def test_a_late_subscriber_gets_the_latched_fault() -> None:
     await asyncio.sleep(0)
 
     assert replayed == [MowerFaultEvent(code=_BLOCKED, description=_BLOCKED_TEXT)]
+
+
+async def test_a_latched_fault_survives_a_docked_paused_flap() -> None:
+    """Issue #67 defeats issue #53, and it takes four steps to reproduce —
+    PAUSED alone proves nothing, because PAUSED is not in _RECOVERY_STATES
+    and the latch would survive it with or without the gate.
+
+    The real break needs the second DOCKED:
+        DOCKED -> fault latched -> PAUSED -> DOCKED  (cleared, wrongly)
+    The bus drops an event equal to the previous one, so while the mower sits
+    on its charger a repeated DOCKED is swallowed and a fault latched there
+    survives. The flapping PAUSED breaks that chain: the next DOCKED is a new
+    event, reaches the latch, and clears a fault nobody resolved.
+
+    With the gate the PAUSED is never published, last_event stays DOCKED, and
+    the second DOCKED is deduped. The dedup is part of the fix here, not just
+    the hazard it is elsewhere in this change.
+    """
+    latch, published = _latch()
+    bus = latch._device.events
+    record = register(bus)
+
+    await _push_state(bus, State.DOCKED)
+    # handle_clean_info's gate reads record.docked; OnChargeInfo/
+    # GetChargeStateMower are what set it in production. Setting it directly
+    # keeps this test about the gate, not about those handlers, which are
+    # already covered in tests/deebot_patch/test_messages.py.
+    record.dock()
+
+    await _push_error(bus, _BLOCKED)
+    assert latch.code == _BLOCKED
+
+    handle_clean_info(
+        bus,
+        {"trigger": "none", "state": "clean", "cleanState": {"motionState": "pause"}},
+    )
+    await _push_state(bus, State.DOCKED)
+
+    assert latch.code == _BLOCKED

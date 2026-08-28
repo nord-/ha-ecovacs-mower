@@ -38,9 +38,11 @@ Releases are cut by `.github/workflows/release.yml`, which runs after the test s
 
 `deebot_patch/` is the boundary: **no other module may touch private parts of `deebot_client`** (`_DEVICES`, `MESSAGES`, `_AuthClient`). If the library is swapped for a vendored client, only that folder needs rewriting.
 
-- `commands.py` — `CleanMower`, inherits from `Clean` (topic `clean`) with a V2 payload. Replaces `CleanV2`, which publishes on `clean_V2`, which GOAT firmware ignores.
-- `hardware.py` — `patch_device_info()` seeds the `_DEVICES` cache with corrected `Capabilities` (`CleanMower` + `GetCleanInfo` instead of `GetCleanInfoV2`). Uses the library's own caching mechanism instead of monkeypatching. `SUPPORTED_CLASSES` lists the device classes to patch (`2i0fns` = O1200 LiDAR Pro, `9bts2s` and `2px96q` = O800 RTK, `77atlz` = G1-800, `e4gqia` = A1600 LiDAR Pro, `xmp9ds` = A1600 RTK — the LiDAR Pro and RTK variants are different machines, not two strings for one). Membership means "we patch it", not "someone confirmed it works" — `xmp9ds` and `77atlz` are the entries whose controls nobody has confirmed, and the comment block above the tuple records which is which.
+- `commands.py` — `CleanMower` and `GetCleanInfoMower`, family-adaptive wrappers that send whichever of the V2/non-V2 command pair the mower actually answers on (issue #42), and `MowerStateRefresh`, which replaces the library's two concurrent state commands with one sequential command so the charge half is recorded before the clean-info half is interpreted (issue #67).
+- `hardware.py` — `patch_device_info()` seeds the `_DEVICES` cache with corrected `Capabilities` (`CleanMower` + `capabilities.state = [MowerStateRefresh()]`). Uses the library's own caching mechanism instead of monkeypatching. `SUPPORTED_CLASSES` lists the device classes to patch (`2i0fns` = O1200 LiDAR Pro, `9bts2s` and `2px96q` = O800 RTK, `77atlz` = G1-800, `e4gqia` = A1600 LiDAR Pro, `xmp9ds` = A1600 RTK — the LiDAR Pro and RTK variants are different machines, not two strings for one). Membership means "we patch it", not "someone confirmed it works" — `xmp9ds` and `77atlz` are the entries whose controls nobody has confirmed, and the comment block above the tuple records which is which.
 - `messages.py` — `OnChargeInfo` and `OnScheduleTaskInfo`, the two unsolicited messages the library lacks a handler for.
+- `families.py` — which of the V2/non-V2 command pair a given mower answers on, keyed by `did` and learned at runtime rather than from the class string (issue #42).
+- `state_precedence.py` — per-device record, keyed by `EventBus`, that prefers "docked" over a paused plan and remembers what a suppressed state was (issue #67).
 - `authentication.py` — `AccountAuthenticator`, which renews the session from the `uid`/`accessToken` pair a login or a device verification returns instead of re-posting the password. Backport of the still-open DeebotUniverse/client.py#1743. It wraps two name-mangled privates of `_AuthClient` on the instance; the pair is persisted in `entry.data[CONF_CREDENTIALS]` by the config flow and read back by the controller. Without it, Ecovacs' `1013` answer to the password login sends the entry into an endless reauth loop (issue #21).
 - `__init__.py` — `apply()` (registers the messages, idempotent) and `verify_capabilities()`.
 
@@ -53,6 +55,14 @@ apply() → patch_device_info(each SUPPORTED_CLASS) → get_devices() → verify
 `get_devices()` bakes the capabilities into `DeviceInfo.static`, a frozen dataclass. Patching afterwards means the devices already got the unpatched ones. `verify_capabilities()` therefore checks **the object the device actually received**, not the cache — a cache lookup would look correct regardless.
 
 Failing fast is intentional: if `deebot-client` doesn't look like the patch layer expects, it raises `PatchContractError` → `ConfigEntryError`, and the integration refuses to start rather than silently stop reporting the mower's state. `tests/deebot_patch/test_contract.py` catches the same assumptions in CI.
+
+### State derived from the event stream is written by the handlers, never by a subscription
+
+`EventBus.notify` drops an event equal to the previous one of the same type **before** any subscriber runs, and it dispatches subscribers through `create_task`. So a subscription is neither complete nor synchronous: it misses every repeat, and repeats are ordinary — the captured telemetry has two `CLEANING` pushes sixteen seconds apart.
+
+Anything this integration needs to remember about what the mower reported is therefore written inside the handlers it owns, before they notify. `deebot_patch/state_precedence.py` is the worked example (issue #67), and `MowerTriggerEvent._seq` is the same hazard met from the other side — an event deliberately made unequal to its predecessor so the bus cannot swallow it.
+
+Subscribing is still right for *reacting* to a state — `fault.py` and the entity platforms do exactly that. The rule is about deriving and holding state, not about consuming it.
 
 ### Entity platforms
 

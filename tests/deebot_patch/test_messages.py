@@ -5,30 +5,60 @@ from __future__ import annotations
 import asyncio
 from dataclasses import fields
 from typing import Any
-from unittest.mock import AsyncMock, Mock, call
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
+from deebot_client.commands.json.clean import GetCleanInfo
 from deebot_client.event_bus import EventBus
 from deebot_client.events import Position, PositionsEvent, StateEvent, StatsEvent
-from deebot_client.message import HandlingState
+from deebot_client.events.base import Event
+from deebot_client.message import HandlingResult, HandlingState
+from deebot_client.messages import get_message
 from deebot_client.messages.json import MESSAGES
 from deebot_client.messages.json.stats import OnStats
-from deebot_client.models import State
+from deebot_client.models import State, StaticDeviceInfo
 from deebot_client.rs.map import PositionType
 
 from custom_components.ecovacs_mower.deebot_patch import apply
+from custom_components.ecovacs_mower.deebot_patch.commands import GetChargeStateMower
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     MowerProtectStateEvent,
     MowerRainDelayEvent,
     MowerStatsEvent,
     MowerTriggerEvent,
     OnChargeInfo,
+    OnChargeState,
+    OnCleanInfo,
     OnPos,
     OnProtectState,
     OnRainDelay,
     OnScheduleTaskInfo,
     OnStatsMower,
+    handle_clean_info,
 )
+from custom_components.ecovacs_mower.deebot_patch.state_precedence import register
+
+
+def _bus() -> EventBus:
+    return EventBus(AsyncMock(), Mock(get_refresh_commands=lambda _event: []))
+
+
+def _collect[EventT: Event](bus: EventBus, event_type: type[EventT]) -> list[EventT]:
+    """Subscribe to *event_type* and return the growing list of what arrives."""
+    received: list[EventT] = []
+
+    async def on_event(event: EventT) -> None:
+        received.append(event)
+
+    bus.subscribe(event_type, on_event)
+    return received
+
+
+def _static_device_info() -> StaticDeviceInfo:
+    """The minimum get_message() reads: a data type and a map capability flag."""
+    from deebot_client.const import DataType
+
+    return StaticDeviceInfo(DataType.JSON, Mock(map=None))
 
 
 def _wrap(data: dict[str, Any]) -> dict[str, Any]:
@@ -379,6 +409,42 @@ def test_on_pos_accepts_a_single_charger_position_as_a_dict() -> None:
     assert Position(type=PositionType.CHARGER, x=10, y=20, a=0) in _positions(data)
 
 
+def test_on_pos_clears_docked_when_far_from_the_charger() -> None:
+    # Issue #67's gate has no recovery path if the departure push itself is
+    # the one firmware 1.13.10 drops. A deebotPos sample clearly away from the
+    # dock-at-origin is evidence enough to stop withholding PAUSED/IDLE, even
+    # with no state push having arrived at all.
+    bus = Mock()
+    record = register(bus)
+    record.dock()
+    record.suppressed = State.PAUSED
+
+    data = {
+        "deebotPos": {"x": 5000, "y": 0, "a": 0, "invalid": 0},
+        "chargePos": _CHARGER_UNKNOWN,
+        "mid": "0",
+    }
+    OnPos._handle_body_data_dict(bus, data)
+
+    assert record.docked is False
+    assert record.suppressed is None
+
+
+def test_on_pos_leaves_docked_alone_for_a_sample_near_the_charger() -> None:
+    bus = Mock()
+    record = register(bus)
+    record.dock()
+
+    data = {
+        "deebotPos": {"x": 10, "y": -10, "a": 0, "invalid": 0},
+        "chargePos": _CHARGER_UNKNOWN,
+        "mid": "0",
+    }
+    OnPos._handle_body_data_dict(bus, data)
+
+    assert record.docked is True
+
+
 def test_message_names() -> None:
     # The names are the keys in the library's registry and must match exactly.
     assert OnChargeInfo.NAME == "onChargeInfo"
@@ -526,3 +592,281 @@ def test_on_rain_delay_is_registered_by_apply() -> None:
     # something else asks (issue #54).
     apply()
     assert MESSAGES["onRainDelay"] is OnRainDelay
+async def test_a_paused_plan_is_suppressed_while_docked() -> None:
+    # Issue #67: charging and plan-paused are both true, and the entity must
+    # read docked. 133.37 of 137.51 m2 done, plan paused, mower on the charger.
+    bus = _bus()
+    record = register(bus)
+    record.dock()
+    published = _collect(bus, StateEvent)
+
+    handle_clean_info(
+        bus,
+        {"trigger": "none", "state": "clean", "cleanState": {"motionState": "pause"}},
+    )
+    await asyncio.sleep(0)
+
+    assert published == []
+    # Kept, so the mow command can still tell resume from start.
+    assert record.suppressed is State.PAUSED
+
+
+async def test_the_same_payload_publishes_when_not_docked() -> None:
+    # A pause halfway across a lawn is a real paused: manual, or rain.
+    bus = _bus()
+    register(bus)
+    published = _collect(bus, StateEvent)
+
+    handle_clean_info(
+        bus,
+        {"trigger": "none", "state": "clean", "cleanState": {"motionState": "pause"}},
+    )
+    await asyncio.sleep(0)
+
+    assert [event.state for event in published] == [State.PAUSED]
+
+
+async def test_working_passes_and_clears_the_dock() -> None:
+    bus = _bus()
+    record = register(bus)
+    record.dock()
+    record.suppressed = State.PAUSED
+    published = _collect(bus, StateEvent)
+
+    handle_clean_info(
+        bus,
+        {"trigger": "none", "state": "clean", "cleanState": {"motionState": "working"}},
+    )
+    await asyncio.sleep(0)
+
+    assert [event.state for event in published] == [State.CLEANING]
+    assert record.docked is False
+    assert record.suppressed is None
+
+
+async def test_a_repeated_working_push_clears_the_dock_both_times() -> None:
+    # The captured telemetry has two CLEANING pushes sixteen seconds apart. The
+    # bus drops the second StateEvent as equal to the first, which is why the
+    # record is written by the handler and not by a subscription to the bus.
+    bus = _bus()
+    record = register(bus)
+    payload = {
+        "trigger": "none",
+        "state": "clean",
+        "cleanState": {"motionState": "working"},
+    }
+
+    handle_clean_info(bus, payload)
+    record.dock()
+    handle_clean_info(bus, payload)
+
+    assert record.docked is False
+
+
+async def test_go_charging_passes_and_clears_the_dock() -> None:
+    bus = _bus()
+    record = register(bus)
+    record.dock()
+    published = _collect(bus, StateEvent)
+
+    handle_clean_info(bus, {"trigger": "none", "state": "goCharging"})
+    await asyncio.sleep(0)
+
+    assert [event.state for event in published] == [State.RETURNING]
+    assert record.docked is False
+
+
+async def test_an_alert_is_never_suppressed() -> None:
+    # An error on the dock is real, and the fault latch (#53) must see it.
+    bus = _bus()
+    register(bus).dock()
+    published = _collect(bus, StateEvent)
+
+    handle_clean_info(
+        bus,
+        {"trigger": "alert", "state": "clean", "cleanState": {"motionState": "pause"}},
+    )
+    await asyncio.sleep(0)
+
+    assert [event.state for event in published] == [State.ERROR]
+
+
+async def test_an_unregistered_bus_is_never_gated() -> None:
+    # A Deebot vacuum on the same account: no record, so nothing is withheld.
+    bus = _bus()
+    published = _collect(bus, StateEvent)
+
+    handle_clean_info(
+        bus,
+        {"trigger": "none", "state": "clean", "cleanState": {"motionState": "pause"}},
+    )
+    await asyncio.sleep(0)
+
+    assert [event.state for event in published] == [State.PAUSED]
+
+
+async def test_a_suppressed_idle_replaces_an_earlier_suppressed_pause() -> None:
+    # Last suppressed value wins: a plan that finished on the dock must not
+    # leave a PAUSED behind for the mow command to resume against.
+    bus = _bus()
+    record = register(bus)
+    record.dock()
+    record.suppressed = State.PAUSED
+
+    handle_clean_info(bus, {"trigger": "none", "state": "idle"})
+
+    assert record.suppressed is State.IDLE
+
+
+async def test_on_clean_info_is_reached_for_both_names() -> None:
+    # get_message applies removesuffix("_V2") before the legacy fallback, so
+    # one registration catches onCleanInfo and onCleanInfo_V2 both. The 1.36
+    # firmware pushes the second spelling.
+    apply()
+    static = _static_device_info()
+
+    assert get_message("onCleanInfo", static) is OnCleanInfo
+    assert get_message("onCleanInfo_V2", static) is OnCleanInfo
+
+
+async def test_a_vacuums_clean_info_goes_to_the_library_handler() -> None:
+    # MESSAGES is global, so this handler is reached for every JSON device.
+    # An unregistered bus must come out exactly where it would have without us:
+    # handle_clean_info does not carry the library's customArea branch, so
+    # "not a superset" is a real difference, not a formality.
+    bus = _bus()
+    published = _collect(bus, StateEvent)
+    payload = {
+        "state": "clean",
+        "cleanState": {
+            "motionState": "working",
+            "content": {"type": "customArea", "value": "1,2,3,4"},
+        },
+    }
+
+    with patch.object(
+        GetCleanInfo, "_handle_body_data_dict", return_value=HandlingResult.success()
+    ) as library_handler:
+        OnCleanInfo._handle_body_data_dict(bus, payload)
+
+    library_handler.assert_called_once_with(bus, payload)
+    assert published == []
+
+
+async def test_a_registered_mowers_clean_info_is_gated() -> None:
+    bus = _bus()
+    register(bus).dock()
+    published = _collect(bus, StateEvent)
+
+    OnCleanInfo._handle_body_data_dict(
+        bus,
+        {"trigger": "none", "state": "clean", "cleanState": {"motionState": "pause"}},
+    )
+    await asyncio.sleep(0)
+
+    assert published == []
+
+
+@pytest.mark.parametrize("trigger", ["none", "rain"])
+async def test_on_clean_info_does_not_publish_a_trigger(trigger: str) -> None:
+    # Unlike OnScheduleTaskInfo. notify_trigger publishes any non-empty string,
+    # and onCleanInfo carries "trigger": "none" in every captured sample — and
+    # MowerTriggerEvent carries a _seq, so none of them would be deduped. That
+    # is one event, one task and one debug line per push, for a consumer that
+    # only reacts to "rain" (sensor.py). Taking the trigger from here would be a
+    # behaviour change this fix has no reason to make.
+    bus = _bus()
+    register(bus)
+    triggers = _collect(bus, MowerTriggerEvent)
+
+    OnCleanInfo._handle_body_data_dict(
+        bus,
+        {"trigger": trigger, "state": "clean", "cleanState": {"motionState": "pause"}},
+    )
+    await asyncio.sleep(0)
+
+    # "none" is what every captured sample carries, and is the case that would
+    # have produced the noise. "rain" is the one value a consumer acts on, so it
+    # is the case where leaking a trigger from here would change behaviour.
+    assert triggers == []
+
+
+async def test_the_pushed_charge_state_sets_the_dock_too() -> None:
+    # Observed on 1.36.208 in issue #67: iot/atr/onChargeState carrying
+    # {"isCharging": 1, "mode": "slot"}, four seconds before a paused plan.
+    bus = _bus()
+    record = register(bus)
+    published = _collect(bus, StateEvent)
+
+    OnChargeState._handle_body_data_dict(bus, {"isCharging": 1, "mode": "slot"})
+    await asyncio.sleep(0)
+
+    assert record.docked is True
+    assert [event.state for event in published] == [State.DOCKED]
+
+
+async def test_on_charge_state_is_registered_and_reachable() -> None:
+    apply()
+    assert get_message("onChargeState", _static_device_info()) is OnChargeState
+
+
+async def test_docking_sets_the_dock_and_go_charging_clears_it() -> None:
+    # onChargeInfo is how a mid-session docking is announced. The poll loop
+    # stops on DOCKED, so nothing asks getChargeState again — without this the
+    # record would stay unset until something restarted polling, which is one
+    # flap per docking.
+    bus = _bus()
+    record = register(bus)
+    record.dock()
+
+    OnChargeInfo._handle_body_data_dict(bus, {"trigger": "app", "state": "goCharging"})
+    assert record.docked is False
+
+    OnChargeInfo._handle_body_data_dict(bus, {"trigger": "workComplete", "state": "idle"})
+    assert record.docked is True
+
+
+async def test_an_unregistered_bus_survives_the_charge_handlers() -> None:
+    bus = _bus()
+    published = _collect(bus, StateEvent)
+
+    GetChargeStateMower._handle_body_data_dict(bus, {"isCharging": 1})
+    OnChargeState._handle_body_data_dict(bus, {"isCharging": 1})
+    await asyncio.sleep(0)
+
+    assert [event.state for event in published] == [State.DOCKED]
+
+
+async def test_a_fail_coded_push_matches_the_librarys_own_handler() -> None:
+    # {"msg": "fail", "code": "30007"} — "already charging" answered as a
+    # failure — never reaches _handle_body_data_dict at all:
+    # GetChargeState._handle_body branches on the code before descending into
+    # body->data. Driving _handle_body_data_dict directly, like the sibling
+    # test above, cannot catch a regression in that branch — only going
+    # through handle() does, which is what this test does on both sides.
+    #
+    # apply() registers OnChargeState for onChargeState on every JSON device
+    # on the account (see the class docstring), so an ordinary Deebot vacuum's
+    # push has to come out exactly where it would have without us: compared
+    # here against the library's own GetChargeState.handle() on the same body.
+    from deebot_client.commands.json.charge_state import GetChargeState
+
+    message = {"body": {"msg": "fail", "code": "30007"}}
+
+    library_bus = Mock()
+    library_result = GetChargeState.handle(library_bus, message)
+
+    bus = _bus()
+    record = register(bus)
+    published = _collect(bus, StateEvent)
+
+    result = OnChargeState.handle(bus, message)
+    await asyncio.sleep(0)
+
+    assert result.state == library_result.state
+    assert [event.state for event in published] == [State.DOCKED]
+    # The fail-code dock recording (issue #67, GetChargeStateMower._handle_body
+    # in commands.py) is reachable from this push path too, not only from a
+    # getChargeState answer — the bug this test guards against left it
+    # unreachable here.
+    assert record.docked is True

@@ -17,7 +17,8 @@ from deebot_client.hardware import _DEVICES
 from deebot_client.messages.json import MESSAGES
 
 from .authentication import AccountAuthenticator
-from .commands import CleanMower, GetCleanInfoMower
+from .commands import CleanMower, GetCleanInfoMower, MowerStateRefresh, has_family
+from .families import family_name
 from .hardware import SUPPORTED_CLASSES, patch_device_info
 from .map_messages import (
     OnArI,
@@ -28,21 +29,28 @@ from .map_messages import (
 )
 from .messages import (
     OnChargeInfo,
+    OnChargeState,
+    OnCleanInfo,
     OnPos,
     OnProtectState,
     OnRainDelay,
     OnScheduleTaskInfo,
     OnStatsMower,
 )
+from .state_precedence import register as register_mower_bus
 
 __all__ = [
     "SUPPORTED_CLASSES",
     "AccountAuthenticator",
     "CleanMower",
     "GetCleanInfoMower",
+    "MowerStateRefresh",
     "PatchContractError",
     "apply",
+    "family_name",
+    "has_family",
     "patch_device_info",
+    "register_mower_bus",
     "verify_capabilities",
 ]
 
@@ -74,6 +82,8 @@ def apply() -> None:
     # object, so a rebinding would not be visible in get_message().
     for message in (
         OnChargeInfo,
+        OnChargeState,
+        OnCleanInfo,
         OnPos,
         OnProtectState,
         OnRainDelay,
@@ -107,8 +117,17 @@ def verify_capabilities(capabilities: Capabilities, class_: str) -> None:
         )
 
     # Exact type comparison, not isinstance: both GetCleanInfoV2 and our own
-    # GetCleanInfoMower inherit from GetCleanInfo, so isinstance() would accept
-    # exactly the unpatched set we want to catch. The check would be toothless.
+    # classes inherit from GetCleanInfo, so isinstance() would accept exactly
+    # the unpatched set we want to catch. The check would be toothless.
+    #
+    # The length is pinned as well. A second command here is the race in issue
+    # #67 — the two answers land in one TaskGroup and the last one wins — so a
+    # GetChargeState() finding its way back into the list must fail loudly
+    # rather than quietly reintroduce the flapping.
     commands = capabilities.get_refresh_commands(StateEvent)
-    if not any(type(c) is GetCleanInfoMower for c in commands):
-        _fail(f"GetCleanInfoMower is missing from the state commands for {class_}")
+    if [type(command) for command in commands] != [MowerStateRefresh]:
+        _fail(
+            f"the state commands for {class_} are "
+            f"{[type(c).__name__ for c in commands]} instead of "
+            f"[MowerStateRefresh]"
+        )
