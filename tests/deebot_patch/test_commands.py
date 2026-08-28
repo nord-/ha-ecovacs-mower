@@ -15,14 +15,18 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
     GetCleanInfoMower,
     GetLifeSpanMower,
     GetProtectState,
+    GetRainDelay,
     GetStatsMower,
+    SetRainDelay,
 )
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     MowerBeacon,
     MowerBeaconsEvent,
     MowerProtectStateEvent,
+    MowerRainDelayEvent,
     MowerStatsEvent,
     OnProtectState,
+    OnRainDelay,
 )
 
 
@@ -378,4 +382,65 @@ def test_get_life_span_mower_survives_a_component_it_has_never_heard_of() -> Non
     assert (
         call(LifeSpanEvent(LifeSpan.BLADE, 51.52, 2473))
         in event_bus.notify.call_args_list
+    )
+
+
+def test_get_rain_delay_asks_on_the_command_name_not_the_message_name() -> None:
+    # Issue #54. Same shape as getProtectState: the library has neither, and
+    # the answer carries the same payload as the push. Ecovacs' own app sends
+    # it, and Janverhu/ecovacs-goat-g1 requests it at startup against a GOAT G1
+    # and parses the answer as an onRainDelay payload.
+    assert GetRainDelay.NAME == "getRainDelay"
+    assert OnRainDelay.NAME == "onRainDelay"
+
+
+def test_get_rain_delay_takes_no_arguments() -> None:
+    assert GetRainDelay()._args == {}
+
+
+def test_get_rain_delay_parses_the_answer_with_the_message_handler() -> None:
+    # One parser, two entry points — the reason OnRainDelay is inherited rather
+    # than copied. Compared as functions: a classmethod accessed on two classes
+    # gives two distinct bound objects even when it is the same code.
+    assert (
+        GetRainDelay._handle_body_data_dict.__func__
+        is OnRainDelay._handle_body_data_dict.__func__
+    )
+
+
+def test_get_rain_delay_notifies_the_setting_and_its_delay() -> None:
+    event_bus = Mock()
+    GetRainDelay._handle_body_data_dict(event_bus, {"enable": 1, "delay": 180})
+    assert event_bus.notify.call_args_list == [
+        call(MowerRainDelayEvent(enabled=True, delay=180))
+    ]
+
+
+def test_set_rain_delay_is_the_write_side_of_the_same_setting() -> None:
+    assert SetRainDelay.NAME == "setRainDelay"
+
+
+def test_set_rain_delay_sends_both_fields() -> None:
+    # The whole reason the two entities have to know each other's value: the
+    # device wants the pair, so switching the sensor on has to carry the delay
+    # along and setting the delay has to carry the sensor's state.
+    assert SetRainDelay(enable=True, delay=180)._args == {"enable": 1, "delay": 180}
+
+
+def test_set_rain_delay_sends_zero_for_the_sensor_switched_off() -> None:
+    # The wire wants 0/1, not JSON booleans.
+    assert SetRainDelay(enable=False, delay=180)._args == {"enable": 0, "delay": 180}
+
+
+def test_set_rain_delay_reports_a_refusal_instead_of_claiming_success() -> None:
+    # ExecuteCommand's contract: a non-zero code is a failure. Without it a
+    # rejected setting would look like it took, and the entity would only flip
+    # back when the next push disagreed.
+    assert (
+        SetRainDelay._handle_body(Mock(), {"code": 500, "msg": "fail"}).state
+        is HandlingState.FAILED
+    )
+    assert (
+        SetRainDelay._handle_body(Mock(), {"code": 0, "msg": "ok"}).state
+        is HandlingState.SUCCESS
     )

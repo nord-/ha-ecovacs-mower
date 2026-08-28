@@ -13,6 +13,7 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
     GetCleanInfoMower,
     GetLifeSpanMower,
     GetProtectState,
+    GetRainDelay,
     GetStatsMower,
 )
 from custom_components.ecovacs_mower.deebot_patch.hardware import (
@@ -22,6 +23,7 @@ from custom_components.ecovacs_mower.deebot_patch.hardware import (
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     MowerBeaconsEvent,
     MowerProtectStateEvent,
+    MowerRainDelayEvent,
     MowerStatsEvent,
 )
 
@@ -130,6 +132,20 @@ async def test_patch_wires_a_refresh_command_for_the_protection_flags(
     info = await get_static_device_info(class_)
     commands = info.capabilities.get_refresh_commands(MowerProtectStateEvent)
     assert [type(c) for c in commands] == [GetProtectState]
+
+
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_patch_wires_a_refresh_command_for_the_rain_setting(
+    class_: str,
+) -> None:
+    # Issue #54, the same trap as #31 one setting over: the device pushes
+    # onRainDelay only when the setting changes, so without an entry here the
+    # switch and the number read "unknown" from startup until somebody opens
+    # the app and touches the rain sensor.
+    await patch_device_info(class_)
+    info = await get_static_device_info(class_)
+    commands = info.capabilities.get_refresh_commands(MowerRainDelayEvent)
+    assert [type(c) for c in commands] == [GetRainDelay]
 
 
 async def test_patch_leaves_the_librarys_own_refresh_commands_alone() -> None:

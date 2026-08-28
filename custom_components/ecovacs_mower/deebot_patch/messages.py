@@ -34,6 +34,13 @@ inside its ``getLifeSpan`` answer, which the library drops on the floor and
 takes the rest of the answer with it (issue #40). Its parser is called from
 ``GetLifeSpanMower`` in ``commands.py``.
 
+``MowerRainDelayEvent`` carries the rain sensor's *setting* and the hold that
+follows a rain stop, from ``onRainDelay`` — a fifth unhandled message, and the
+last row of the app's Configuration page with no entity behind it (issue #54).
+Its refresh command, ``GetRainDelay``, is in ``commands.py``, and unlike the
+rest of this module it has a write side: ``SetRainDelay`` there sends both
+fields back.
+
 ``onProtectState`` is a fourth unhandled message. It carries the mower's
 protection flags. ``isRainProtect`` is the rain sensor's reading, not the
 rain-protection setting — see ``MowerProtectStateEvent`` for the two samples
@@ -453,6 +460,76 @@ class OnProtectState(MessageBodyDataDict):
                 **{field: bool(data[key]) for key, field in cls._FLAGS.items()}
             )
         )
+        return HandlingResult.success()
+
+
+@dataclass(frozen=True)
+class MowerRainDelayEvent(Event):
+    """The rain sensor's setting and the hold that follows a rain stop.
+
+    ``onRainDelay`` is a fifth unhandled message, and the last row of the app's
+    Configuration page without an entity behind it (issue #54). Both fields
+    arrive together in a payload of nothing else:
+
+        {"enable": 1, "delay": 180}
+
+    ``delay`` is in minutes. The reporter's app read three hours against that
+    180, which is what fixes the unit — the payload itself says nothing.
+
+    Not to be confused with either of the two rain readings in
+    ``MowerProtectStateEvent`` above: this is the *setting*, what the settings
+    message calls ``RainDetect``, and the same toggle produced ``RainDetect``
+    ``0 -> 1`` in the ``onFwBuryPoint-bd_setting-evt`` delta two milliseconds
+    before this message arrived. ``isRainProtect`` is the sensor's live reading
+    and ``isRainDelay`` is whether the mower is currently holding.
+
+    ``delay`` is optional, ``enabled`` is not — see ``OnRainDelay`` for why the
+    two are treated differently.
+    """
+
+    enabled: bool
+    delay: int | None
+
+
+class OnRainDelay(MessageBodyDataDict):
+    """The rain sensor's setting and its post-rain hold."""
+
+    NAME = "onRainDelay"
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data.
+
+        The two fields are treated differently on purpose.
+
+        ``enable`` is required. A payload without it is dropped whole, the same
+        way ``OnProtectState`` drops a partial flag set: defaulting it to False
+        would claim the rain sensor is switched off on the strength of a message
+        that never said so — and unlike a read-only flag, that claim is written
+        back to the device the next time the delay is set, because
+        ``setRainDelay`` carries both fields.
+
+        ``delay`` is optional and becomes ``None`` when it is missing or is not
+        a whole number, the same convention ``notify_mower_stats`` uses. A
+        firmware that does not report it should leave the number entity unknown
+        rather than read 0 minutes, which would say the mower resumes the
+        instant the rain stops.
+
+        ``bool`` is not accepted as the delay: it is an ``int`` subclass in
+        Python, and a ``True`` arriving there is a firmware quirk to drop, not a
+        one-minute hold.
+        """
+        if (enable := data.get("enable")) is None:
+            _LOGGER.warning("onRainDelay without an enable field: %s", data)
+            return HandlingResult.analyse()
+
+        delay = data.get("delay")
+        if isinstance(delay, bool) or not isinstance(delay, int):
+            delay = None
+
+        event_bus.notify(MowerRainDelayEvent(enabled=bool(enable), delay=delay))
         return HandlingResult.success()
 
 

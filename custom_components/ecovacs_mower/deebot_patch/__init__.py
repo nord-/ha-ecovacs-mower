@@ -30,6 +30,7 @@ from .messages import (
     OnChargeInfo,
     OnPos,
     OnProtectState,
+    OnRainDelay,
     OnScheduleTaskInfo,
     OnStatsMower,
 )
@@ -75,6 +76,7 @@ def apply() -> None:
         OnChargeInfo,
         OnPos,
         OnProtectState,
+        OnRainDelay,
         OnScheduleTaskInfo,
         OnStatsMower,
         OnArI,

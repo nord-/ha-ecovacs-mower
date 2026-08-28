@@ -26,6 +26,10 @@ counterpart for the unsolicited half, ``OnStatsMower``, is in ``messages.py``.
 ``GetLifeSpanMower`` is a fourth: the command works, is answered in full, and
 one component of the answer makes the library abandon the rest of it (issue
 #40).
+
+``GetRainDelay`` and ``SetRainDelay`` are the same kind as ``GetProtectState``
+— commands the library does not have at all — with the difference that this
+setting is writable, so it needs both halves (issue #54).
 """
 
 from __future__ import annotations
@@ -34,7 +38,10 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from deebot_client.commands.json.clean import Clean, GetCleanInfo
-from deebot_client.commands.json.common import JsonCommandWithMessageHandling
+from deebot_client.commands.json.common import (
+    ExecuteCommand,
+    JsonCommandWithMessageHandling,
+)
 from deebot_client.commands.json.life_span import GetLifeSpan
 from deebot_client.commands.json.stats import GetStats
 from deebot_client.events import LifeSpan
@@ -44,6 +51,7 @@ from deebot_client.models import CleanMode
 from .messages import (
     BEACON_COMPONENT,
     OnProtectState,
+    OnRainDelay,
     notify_mower_beacons,
     notify_mower_stats,
 )
@@ -135,6 +143,55 @@ class GetProtectState(JsonCommandWithMessageHandling, OnProtectState):
     """
 
     NAME = "getProtectState"
+
+
+class GetRainDelay(JsonCommandWithMessageHandling, OnRainDelay):
+    """Ask for the rain sensor's setting instead of waiting for a push.
+
+    The same shape as ``GetProtectState`` one setting over, and the same trap:
+    ``onRainDelay`` is sent when somebody changes the setting and never
+    otherwise, so without this the switch and the number would read "unknown"
+    from startup until the owner next opened the app and touched the rain
+    sensor (issue #31 is the identical failure on the protection flags).
+
+    ``OnRainDelay`` is inherited for its handler: the answer carries the same
+    payload as the push, so both entry points must parse it the same way. Only
+    ``NAME`` differs, which is also why the pair cannot be one class — the
+    message registry and the command topic are keyed on that one string.
+
+    Evidence that the command exists on the wire, since the library has no
+    definition to copy: ``Janverhu/ecovacs-goat-g1`` requests ``getRainDelay``
+    in its startup group against a GOAT G1 and parses the answer as an
+    ``onRainDelay`` payload. It takes no arguments.
+    """
+
+    NAME = "getRainDelay"
+
+
+class SetRainDelay(ExecuteCommand):
+    """Write the rain sensor's setting and its post-rain hold.
+
+    The device wants the pair, not a field at a time: the same integration that
+    establishes ``getRainDelay`` reads the other half out of its own state
+    before every write, for both the toggle and the duration. That is why the
+    switch and the number entities each hold the whole last event and send the
+    field they do not own unchanged.
+
+    ``ExecuteCommand`` rather than the library's ``JsonSetCommand``: that base
+    exists to link a set to its get so an answer can update the sensors, and it
+    drags ``CommandMqttP2P`` along with it. Neither buys anything here — the
+    device pushes ``onRainDelay`` on every change, including its own answer to
+    this command, which is how the entities learn the new value. What
+    ``ExecuteCommand`` does give is the part that matters: a non-zero ``code``
+    in the reply is reported as a failure instead of passing for success.
+    """
+
+    NAME = "setRainDelay"
+
+    def __init__(self, *, enable: bool, delay: int) -> None:
+        # 0/1, not JSON booleans: that is what the app sends and what every
+        # observed payload of this message carries.
+        super().__init__({"enable": 1 if enable else 0, "delay": delay})
 
 
 class GetStatsMower(GetStats):

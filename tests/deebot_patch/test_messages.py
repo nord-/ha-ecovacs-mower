@@ -19,11 +19,13 @@ from deebot_client.rs.map import PositionType
 from custom_components.ecovacs_mower.deebot_patch import apply
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     MowerProtectStateEvent,
+    MowerRainDelayEvent,
     MowerStatsEvent,
     MowerTriggerEvent,
     OnChargeInfo,
     OnPos,
     OnProtectState,
+    OnRainDelay,
     OnScheduleTaskInfo,
     OnStatsMower,
 )
@@ -449,3 +451,69 @@ def test_on_stats_mower_is_registered_by_apply() -> None:
     # area is dropped on the floor, which is the whole of issue #55.
     apply()
     assert MESSAGES["onStats"] is OnStatsMower
+
+
+# Verbatim from the log attached to issue #54, a GOAT G1-800 (77atlz) on
+# firmware 1.36.208. The push arrived the moment the rain sensor was switched
+# back on in the app, and the app's own setting read three hours — which is
+# what pins the unit of ``delay`` to minutes.
+_RAIN_DELAY = {"enable": 1, "delay": 180}
+
+
+def test_on_rain_delay_notifies_the_setting_and_its_delay() -> None:
+    assert _notified(OnRainDelay, _RAIN_DELAY, MowerRainDelayEvent) == [
+        MowerRainDelayEvent(enabled=True, delay=180)
+    ]
+
+
+def test_on_rain_delay_reports_the_sensor_switched_off() -> None:
+    # The delay survives the sensor being switched off: the device keeps the
+    # configured hold, and the number entity must keep showing it.
+    assert _notified(OnRainDelay, {"enable": 0, "delay": 180}, MowerRainDelayEvent) == [
+        MowerRainDelayEvent(enabled=False, delay=180)
+    ]
+
+
+def test_on_rain_delay_without_a_delay_leaves_it_unknown() -> None:
+    # None rather than 0, for the same reason notify_mower_stats does it: a
+    # firmware that does not report the field should leave the entity unknown,
+    # not claim the mower resumes the instant the rain stops.
+    assert _notified(OnRainDelay, {"enable": 1}, MowerRainDelayEvent) == [
+        MowerRainDelayEvent(enabled=True, delay=None)
+    ]
+
+
+def test_on_rain_delay_ignores_a_delay_that_is_not_a_number() -> None:
+    # The enable half is still worth publishing; only the delay is lost.
+    assert _notified(
+        OnRainDelay, {"enable": 1, "delay": "180"}, MowerRainDelayEvent
+    ) == [MowerRainDelayEvent(enabled=True, delay=None)]
+
+
+def test_on_rain_delay_without_enable_is_not_handled() -> None:
+    # Same rule as onProtectState's missing flags: defaulting to False would
+    # claim the rain sensor is switched off on the strength of a payload that
+    # never said so, and the switch would send that back on the next
+    # setRainDelay.
+    assert _notified(OnRainDelay, {"delay": 180}, MowerRainDelayEvent) == []
+
+
+def test_on_rain_delay_without_enable_asks_for_analysis() -> None:
+    # The handler directly, not through Message.handle: that wrapper turns an
+    # ANALYSE into ANALYSE_LOGGED once it has logged the payload, so going
+    # through it would assert on the library's bookkeeping rather than on what
+    # this handler decided.
+    result = OnRainDelay._handle_body_data_dict(Mock(), {"delay": 180})
+    assert result.state is HandlingState.ANALYSE
+
+
+def test_on_rain_delay_message_name() -> None:
+    assert OnRainDelay.NAME == "onRainDelay"
+
+
+def test_on_rain_delay_is_registered_by_apply() -> None:
+    # The library has no handler at all, so without this the push is logged as
+    # 'Unknown message "onRainDelay"' and both entities stay unknown until
+    # something else asks (issue #54).
+    apply()
+    assert MESSAGES["onRainDelay"] is OnRainDelay

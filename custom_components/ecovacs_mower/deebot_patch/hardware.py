@@ -22,9 +22,15 @@ from .commands import (
     GetCleanInfoMower,
     GetLifeSpanMower,
     GetProtectState,
+    GetRainDelay,
     GetStatsMower,
 )
-from .messages import MowerBeaconsEvent, MowerProtectStateEvent, MowerStatsEvent
+from .messages import (
+    MowerBeaconsEvent,
+    MowerProtectStateEvent,
+    MowerRainDelayEvent,
+    MowerStatsEvent,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,8 +83,8 @@ async def patch_device_info(class_: str) -> None:
     * ``life_span.get``: ``GetLifeSpan`` raises on the ``uwbCell`` entries a
       beacon-guided mower reports, which loses the beacons and every component
       listed after them. Swapped for ``GetLifeSpanMower``.
-    * ``MowerProtectStateEvent``, ``MowerStatsEvent`` and ``MowerBeaconsEvent``:
-      given the refresh commands they had none of.
+    * ``MowerProtectStateEvent``, ``MowerRainDelayEvent``, ``MowerStatsEvent``
+      and ``MowerBeaconsEvent``: given the refresh commands they had none of.
 
     The call is idempotent and does nothing for classes outside
     ``SUPPORTED_CLASSES``.
@@ -137,7 +143,10 @@ async def patch_device_info(class_: str) -> None:
     # Without it the event bus finds no command when the first binary sensor
     # subscribes, and the device only pushes onProtectState when a flag flips:
     # through a dry, uneventful spell nothing arrives at all, so the entities
-    # read "unknown" until the weather changes (issue #31).
+    # read "unknown" until the weather changes (issue #31). MowerRainDelayEvent
+    # is the same trap one setting over: onRainDelay arrives only when somebody
+    # changes the rain sensor, so its switch and number would sit at "unknown"
+    # until the owner next opened the app (issue #54).
     #
     # This has to stay below the replace() above and cannot move up: replace()
     # re-runs __post_init__, which rebuilds the mapping from the fields, and an
@@ -166,6 +175,7 @@ async def patch_device_info(class_: str) -> None:
             {
                 **patched._events,
                 MowerProtectStateEvent: [GetProtectState()],
+                MowerRainDelayEvent: [GetRainDelay()],
                 MowerStatsEvent: [GetStatsMower()],
                 MowerBeaconsEvent: [GetLifeSpanMower(capabilities.life_span.types)],
             }
