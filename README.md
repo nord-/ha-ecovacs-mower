@@ -175,7 +175,7 @@ plus one per UWB beacon on the models that use them:
 | `switch` | 8 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection, rain detection (see below) |
 | `number` | 3 | Notification volume, cutting direction, rain delay duration (see below) |
 | `button` | 6 | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), and "Clear fault" (releases the latched fault; see below) |
-| `event` | 1 | Last mowing job (finished / finished with warnings / manually stopped) |
+| `event` | 1 | Last mowing job (finished / finished with warnings / manually stopped — see below) |
 | `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, and `onMapTrace` on firmware 1.17); the format is documented in `docs/superpowers/specs/2026-08-10-mower-map-design.md`. Geometry survives restarts; the position track is live-only |
 
 Not included yet: **RTK diagnostics** (position and satellite data) and
@@ -319,6 +319,30 @@ or switch their rain sensor off.
 
 [goat-g1]: https://github.com/Janverhu/ecovacs-goat-g1
 
+### When a job ends
+
+`event.<device>_last_mowing_job` fires once each time a job stops, with
+`finished` or `manually_stopped` as the event type. It is the signal to
+automate on for "the mowing is done" — the mower's state is not, because
+`paused` covers a charge break and a rain pause as well as an ending.
+
+Two sources feed it. The first is the one Home Assistant's own Ecovacs
+integration uses, `reportStats`, which no GOAT has been observed to send:
+across every capture taken so far, on two different classes and 28 job
+endings, it has not arrived once, and the entity simply never fired. The
+second is the mower's own stop announcement, which is what makes the entity
+work here.
+
+The announcement carries a reason, and only the two reasons that have actually
+been observed are mapped: a completed job and one stopped from the app.
+`finished_with_warnings` stays reachable from `reportStats` alone, since
+nothing on the wire is known to mean it — firing it on a guess would tell an
+automation a job ended cleanly when nobody knows that. A mower that does send
+`reportStats` keeps using it: the first answer from it stands the second source
+down for good. If such a mower turns up and its announcement happens to
+arrive first, that single ending is reported twice before the switch settles;
+nothing observed says any GOAT sends both.
+
 ### How far along the mower is
 
 `sensor.<device>_mowing_progress` reports the percentage of the running job that
@@ -347,10 +371,11 @@ Two things worth knowing:
 - **"Finished" is not this entity's job.** A completed run publishes its final
   figure here, but that figure is not always 100: for a zone the target is the
   polygon's estimate, and a mower that considers itself done after 24 of 32 m²
-  reports 76 %. There is no dedicated "job is done" signal to automate on yet —
-  `lawn_mower.<device>` going from `mowing` to `paused` also covers a charge
-  break and a manual or rain pause (see below), so it cannot tell a finished
-  job from either of those.
+  reports 76 %. What to automate on instead is `event.<device>_last_mowing_job`,
+  which fires `finished` when the mower says a job completed — not
+  `lawn_mower.<device>` going from `mowing` to `paused`, which also covers a
+  charge break and a manual or rain pause (see below) and so cannot tell a
+  finished job from either of those.
 - **It follows the push where there is one, and a poll where there is not.**
   Some mowers send `onStats` several times a second while cutting; others have
   been observed not to. Where it arrives, the reading tracks the mower, and a
