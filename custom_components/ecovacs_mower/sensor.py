@@ -710,6 +710,12 @@ class EcovacsMowingProgressSensor(
         # is PAUSED because a stale paused-plan clean-info landed before the
         # mower reached its dock. Both windows contain the tick's zeroed
         # getStats.
+        #
+        # The repeat guard in ``_on_state`` is safe against this latch sticking
+        # past its window for two independent reasons: the tick bounds a
+        # CLEANING-stuck ``_last_state`` to one poll interval, and the start
+        # bury point is a second, independent exit that does not depend on
+        # ``_last_state`` at all.
         self._job_over = False
 
     @override
@@ -724,6 +730,13 @@ class EcovacsMowingProgressSensor(
         # subscriber.
         self._subscribe(MowerStatsEvent, self._on_stats)
         self._subscribe(StateEvent, self._on_state)
+        # _on_job_edge derives _job_over/_last_state, which looks like the
+        # violation the project rule against deriving state in a subscription
+        # is meant to catch — but it is not: both fields are entity-local and
+        # read by nothing else, MowerJobEdgeEvent._seq defeats the bus's
+        # dedup, and notify() dispatches callbacks via create_task in notify
+        # order, so a stop followed by a stats answer still runs in that
+        # order.
         self._subscribe(MowerJobEdgeEvent, self._on_job_edge)
 
     async def _on_stats(self, event: MowerStatsEvent) -> None:
@@ -780,7 +793,7 @@ class EcovacsMowingProgressSensor(
         run — and a finished job cleared before anything could show how far it
         got.
 
-Clearing on the way *in* on the strength of the state alone would be
+        Clearing on the way *in* on the strength of the state alone would be
         no better: this handler cannot tell a new job from a resume either, so
         it would blip to unknown at every rain pause and every charge resume.
         Nor does the refresh below rescue it — at 09:00:01.757 on the captured
@@ -825,7 +838,7 @@ Clearing on the way *in* on the strength of the state alone would be
         leaves the reading exactly where it was, and is logged once so a
         trigger nobody has seen yet surfaces without filling the log.
 
-A stop also latches ``_job_over``, and that latch is what makes both
+        A stop also latches ``_job_over``, and that latch is what makes both
         clears safe and what keeps the completion from being erased. Writing
         the final percentage is not enough on its own: the state can still read
         CLEANING when it arrives, because this firmware drops parking pushes,
@@ -839,14 +852,23 @@ A stop also latches ``_job_over``, and that latch is what makes both
         progress; whichever of the two edges notices the new job first clears,
         and the other finds the latch already down and does nothing.
 
+        ``EventBus.subscribe`` replays the last event of a type to a new
+        subscriber, so disabling and re-enabling this entity within one
+        config-entry lifetime re-delivers the last stop, sets the latch again,
+        and rewrites the completion on top of a job that may already be
+        running. Rare enough — the entity has to be toggled mid-job — that it
+        is recorded here rather than guarded against.
+
         No hard 100 on a completion: a zone's ``workArea`` is the polygon's
         estimate, and the captured zone job finished at 24.287498 of 32.162498
         m². That the mower considers itself done after 76 % is information, not
         an error — and writing 100 anyway would make the scheduled run's exact
-        equality indistinguishable from a fabricated one. What "finished" should
-        be watched on instead is ``lawn_mower.<device>`` going ``mowing`` ->
-        ``paused``; see #74 for the event entity that ought to say it and
-        currently never fires.
+        equality indistinguishable from a fabricated one. There is no dedicated
+        "job finished" signal for other entities to watch yet: ``lawn_mower.
+        <device>`` going to ``paused`` also covers a charge break and a manual
+        or rain pause (see ``_on_state`` above), so it cannot stand in for one.
+        See #74 for the event entity that is meant to carry this and currently
+        never fires.
         """
         # Both phases named explicitly rather than leaning on "not a start
         # means a stop": registering the pause and resume edges is meant to be

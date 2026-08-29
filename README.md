@@ -347,8 +347,10 @@ Two things worth knowing:
 - **"Finished" is not this entity's job.** A completed run publishes its final
   figure here, but that figure is not always 100: for a zone the target is the
   polygon's estimate, and a mower that considers itself done after 24 of 32 m²
-  reports 76 %. An automation that wants "the job is done" should watch
-  `lawn_mower.<device>` going from `mowing` to `paused` instead.
+  reports 76 %. There is no dedicated "job is done" signal to automate on yet —
+  `lawn_mower.<device>` going from `mowing` to `paused` also covers a charge
+  break and a manual or rain pause (see below), so it cannot tell a finished
+  job from either of those.
 - **It follows the push where there is one, and a poll where there is not.**
   Some mowers send `onStats` several times a second while cutting; others have
   been observed not to. Where it arrives, the reading tracks the mower, and a
