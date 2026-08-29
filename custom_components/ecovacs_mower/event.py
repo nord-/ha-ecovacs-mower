@@ -26,6 +26,7 @@ from typing import override
 from deebot_client.capabilities import CapabilityEvent
 from deebot_client.device import Device
 from deebot_client.events import CleanJobStatus, ReportStatsEvent
+from deebot_client.events.base import Event
 
 from homeassistant.components.event import EventEntity, EventEntityDescription
 from homeassistant.const import EntityCategory
@@ -97,17 +98,20 @@ class EcovacsLastJobEventEntity(
         self._logged_triggers: set[str] = set()
         # The ending already reported, held by identity so a replay of it does
         # not fire again. EventBus.subscribe hands its last event of a type to
-        # every new subscriber, and renaming the entity in the UI is enough to
-        # reach that: HA removes and re-adds the same object against the same
-        # config entry, Device and EventBus, so both subscriptions here replay.
-        # Without this a rename hours after a job re-fired the ending with a
-        # fresh timestamp and every automation on the entity ran again.
+        # every new subscriber, and changing the entity ID is enough to reach
+        # that: HA removes and re-adds the same object against the same config
+        # entry, Device and EventBus, so both subscriptions here replay. A
+        # name-only rename does not — that hits entity.py's
+        # registry_entry.entity_id == old.entity_id branch and just calls
+        # async_write_ha_state(). Without this guard, an entity-ID change hours
+        # after a job re-fired the ending with a fresh timestamp and every
+        # automation on the entity ran again.
         #
         # Identity rather than equality, and the bus hands back the very object
         # it notified. A genuinely new ending is always a new instance —
         # MowerJobEdgeEvent._seq exists so two equal-looking ones cannot
         # collapse into one notification in the first place.
-        self._reported_ending: object | None = None
+        self._reported_ending: Event | None = None
 
     @override
     async def async_added_to_hass(self) -> None:

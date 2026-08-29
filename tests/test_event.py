@@ -285,14 +285,52 @@ async def test_a_mid_job_report_does_not_stand_the_bury_point_down() -> None:
     assert entity.state_attributes["event_type"] == "finished"
 
 
+async def test_async_added_to_hass_subscribes_both_sources() -> None:
+    """The wiring itself, not just the handlers behind it.
+
+    Every other test calls ``_on_report``/``_on_job_edge`` directly, so none of
+    them would notice if the ``_subscribe(MowerJobEdgeEvent, ...)`` call were
+    deleted from ``async_added_to_hass`` — the suite would stay green while
+    #74 stayed unfixed in production.
+    """
+    from unittest.mock import Mock
+
+    from custom_components.ecovacs_mower.deebot_patch.messages import MowerJobEdgeEvent
+
+    entity = _bare_event_entity()
+    entity._subscribe = Mock()
+
+    await entity.async_added_to_hass()
+
+    calls = {call.args for call in entity._subscribe.call_args_list}
+    assert (entity._capability.event, entity._on_report) in calls
+    assert (MowerJobEdgeEvent, entity._on_job_edge) in calls
+
+
+async def test_an_unmapped_trigger_is_logged_only_once(caplog) -> None:
+    """The debug line is meant to surface an unseen trigger, not flood the log."""
+    import logging
+
+    entity = _bare_event_entity()
+
+    with caplog.at_level(logging.DEBUG):
+        await entity._on_job_edge(_stop("rain"))
+        await entity._on_job_edge(_stop("rain"))
+
+    assert sum("maps to no event type" in record.message for record in caplog.records) == 1
+
+
 async def test_a_replayed_ending_does_not_fire_again() -> None:
     """EventBus.subscribe hands the last event of a type to every new subscriber.
 
-    Renaming the entity in the UI is enough to reach this: HA removes and
+    Changing the entity ID in the UI is enough to reach this: HA removes and
     re-adds the same object against the same config entry, Device and EventBus
     (helpers/entity.py's _async_registry_updated), so both subscriptions here
-    replay. Without this guard a rename hours after a job re-fired `finished`
-    with a fresh timestamp, and every automation on the entity ran again.
+    replay. A name-only rename does not — that hits the
+    registry_entry.entity_id == old.entity_id branch and just calls
+    async_write_ha_state(). Without this guard an entity-ID change hours after
+    a job re-fired `finished` with a fresh timestamp, and every automation on
+    the entity ran again.
 
     Identity, not equality: the bus hands back the very object it notified, and
     a genuinely new ending is always a new instance — MowerJobEdgeEvent._seq

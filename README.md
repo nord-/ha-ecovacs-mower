@@ -321,7 +321,7 @@ or switch their rain sensor off.
 
 ### When a job ends
 
-`event.<device>_last_mowing_job` fires once each time a job stops, with
+`event.<device>_last_mowing_job` fires once each time a job stops for a known reason, with
 `finished` or `manually_stopped` as the event type. It is the signal to
 automate on for "the mowing is done" — the mower's state is not, because
 `paused` covers a charge break and a rain pause as well as an ending.

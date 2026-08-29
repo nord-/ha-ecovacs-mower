@@ -867,8 +867,7 @@ class EcovacsMowingProgressSensor(
         "job finished" signal for other entities to watch yet: ``lawn_mower.
         <device>`` going to ``paused`` also covers a charge break and a manual
         or rain pause (see ``_on_state`` above), so it cannot stand in for one.
-        See #74 for the event entity that is meant to carry this and currently
-        never fires.
+        ``event.<device>_last_mowing_job`` is that signal (issue #74).
         """
         # Both phases named explicitly rather than leaning on "not a start
         # means a stop": registering the pause and resume edges is meant to be
