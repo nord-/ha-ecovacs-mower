@@ -27,13 +27,14 @@ parses the answer to ``getStats``, and ``OnStatsMower`` below parses the
 ``onStats`` push that some classes send and others never do (issue #55).
 
 ``MowerJobEdgeEvent`` republishes the task bury points that mark a job's own
-boundaries — ``onFwBuryPoint-bd_task-mow-{schedule,spotarea}-{start,stop}``,
-four more messages the library has no handler for. They are the only thing on
+boundaries — ``onFwBuryPoint-bd_task-mow-{schedule,spotarea,border}-{start,stop}``,
+six more messages the library has no handler for. They are the only thing on
 the wire that separates a job which has finished from one parked to charge,
 which ``State`` reports identically (issue #73), and a completion carries the
-two areas its final percentage is computed from. Both job types are registered
-because the middle topic segment is the type, not the trigger: a zone job
-started from the app ends on ``mow-spotarea-stop``.
+two areas its final percentage is computed from. All three job types are
+registered because the middle topic segment is the type, not the trigger: a
+zone job started from the app ends on ``mow-spotarea-stop``, an edge cut on
+``mow-border-stop`` (issue #74).
 
 ``OnPos`` is different in kind from the rest of this module: ``onPos`` is not
 unhandled, it is handled wrongly. See the class for what and why.
@@ -108,11 +109,18 @@ class MowerJobEdgeEvent(Event):
     """A job boundary exactly as the device announces it.
 
     The mower publishes four task bury points per job type —
-    ``mow-schedule-{start,pause,resume,stop}`` and the same set for
-    ``mow-spotarea`` — and the middle segment is the *job type*, not the
-    trigger: a zone job started from the app ends on ``mow-spotarea-stop``.
-    Only the two edges this integration acts on are registered; adding a
-    ``pause`` or ``resume`` is one subclass each (issue #73).
+    ``mow-schedule-{start,pause,resume,stop}`` and the same sets for
+    ``mow-spotarea`` and ``mow-border`` — and the middle segment is the *job
+    type*, not the trigger: a zone job started from the app ends on
+    ``mow-spotarea-stop``. Only the two edges this integration acts on are
+    registered; adding a ``pause`` or ``resume`` is one subclass each
+    (issue #73).
+
+    The border points speak a different dialect of the same payload:
+    ``triggerType`` where the others say ``trigger``, and ``cuttedArea`` on a
+    stop where the others say ``mowedArea`` (issue #74, captured on a G1-800
+    fw 1.36.208). The handler reads the original spellings first, so the
+    schedule and spot-area paths are untouched by the fallbacks.
 
     ``phase`` is ``"start"`` or ``"stop"``. ``trigger`` is the raw string, and
     what it means is the consumer's business — see ``MowerTriggerEvent`` for
@@ -166,13 +174,17 @@ class _OnMowJobEdge(MessageBody, ABC):
         """Handle message->body."""
         trigger = body.get("trigger")
         if not isinstance(trigger, str) or not trigger:
+            # The border dialect spells it ``triggerType`` (issue #74).
+            trigger = body.get("triggerType")
+        if not isinstance(trigger, str) or not trigger:
             return HandlingResult.analyse()
 
         event_bus.notify(
             MowerJobEdgeEvent(
                 phase=cls.PHASE,
                 trigger=trigger,
-                mowed_area=_as_area(body.get("mowedArea")),
+                # ``cuttedArea`` is the border dialect's ``mowedArea`` (issue #74).
+                mowed_area=_as_area(body.get("mowedArea", body.get("cuttedArea"))),
                 work_area=_as_area(body.get("workArea")),
             )
         )
@@ -204,6 +216,20 @@ class OnMowSpotAreaStop(_OnMowJobEdge):
     """A zone job ends, for whatever reason its trigger names."""
 
     NAME = "onFwBuryPoint-bd_task-mow-spotarea-stop"
+    PHASE = "stop"
+
+
+class OnMowBorderStart(_OnMowJobEdge):
+    """An edge-cut job begins (issue #74)."""
+
+    NAME = "onFwBuryPoint-bd_task-mow-border-start"
+    PHASE = "start"
+
+
+class OnMowBorderStop(_OnMowJobEdge):
+    """An edge-cut job ends, for whatever reason its trigger names."""
+
+    NAME = "onFwBuryPoint-bd_task-mow-border-stop"
     PHASE = "stop"
 
 

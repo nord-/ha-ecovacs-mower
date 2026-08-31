@@ -30,6 +30,8 @@ from custom_components.ecovacs_mower.deebot_patch.messages import (
     OnChargeInfo,
     OnChargeState,
     OnCleanInfo,
+    OnMowBorderStart,
+    OnMowBorderStop,
     OnMowScheduleStart,
     OnMowScheduleStop,
     OnMowSpotAreaStart,
@@ -1037,6 +1039,70 @@ def test_a_payload_without_a_trigger_is_analysed() -> None:
     result = OnMowScheduleStop._handle_body(Mock(), {"mowedArea": 1.0})
 
     assert result.state == HandlingState.ANALYSE
+
+
+# border-* from a GOAT G1-800 (77atlz, fw 1.36.208) on 2026-08-30, issue #74.
+# A third payload dialect: ``triggerType`` instead of ``trigger``, and the
+# stop carries ``cuttedArea`` instead of ``mowedArea``.
+_BORDER_START = {
+    "index": "0000000842",
+    "mapid": "2049987783",
+    "mowId": "1788074264229565",
+    "triggerType": "app",
+    "ts": "1788074264230",
+}
+_BORDER_STOP = {
+    "index": "0000000851",
+    "mapid": "2049987783",
+    "mowId": "1788074264229565",
+    "triggerType": "app",
+    "ts": "1788074293897",
+    "cuttedArea": 1.63,
+    "workArea": 19.24,
+    "time": 0.083333,
+}
+
+
+def test_a_border_start_reads_the_trigger_from_triggerType() -> None:
+    """The border dialect names its trigger ``triggerType`` (issue #74)."""
+    (event,) = _notified_edges(OnMowBorderStart, _BORDER_START)
+
+    assert event.phase == "start"
+    assert event.trigger == "app"
+    assert event.mowed_area is None
+    assert event.work_area is None
+
+
+def test_a_border_stop_reads_the_mowed_area_from_cuttedArea() -> None:
+    """The border stop calls its mowed square metres ``cuttedArea`` (issue #74)."""
+    (event,) = _notified_edges(OnMowBorderStop, _BORDER_STOP)
+
+    assert event.phase == "stop"
+    assert event.trigger == "app"
+    assert event.mowed_area == 1.63
+    assert event.work_area == 19.24
+
+
+def test_the_original_keys_win_over_the_border_dialect() -> None:
+    """A payload carrying both spellings is read the way it always was.
+
+    The fallbacks must not change what the schedule and spot-area paths see —
+    ``trigger`` before ``triggerType``, ``mowedArea`` before ``cuttedArea``.
+    """
+    (event,) = _notified_edges(
+        OnMowScheduleStop,
+        {**_SCHEDULE_STOP_COMPLETE, "triggerType": "app", "cuttedArea": 1.0},
+    )
+
+    assert event.trigger == "workComplete"
+    assert event.mowed_area == 320.567505
+
+
+def test_the_border_job_edge_names_are_registered() -> None:
+    apply()
+
+    assert MESSAGES["onFwBuryPoint-bd_task-mow-border-start"] is OnMowBorderStart
+    assert MESSAGES["onFwBuryPoint-bd_task-mow-border-stop"] is OnMowBorderStop
 
 
 async def test_two_identical_starts_both_reach_the_subscriber() -> None:
