@@ -109,12 +109,12 @@ class MowerJobEdgeEvent(Event):
     """A job boundary exactly as the device announces it.
 
     The mower publishes four task bury points per job type —
-    ``mow-schedule-{start,pause,resume,stop}`` and the same sets for
-    ``mow-spotarea`` and ``mow-border`` — and the middle segment is the *job
-    type*, not the trigger: a zone job started from the app ends on
-    ``mow-spotarea-stop``. Only the two edges this integration acts on are
-    registered; adding a ``pause`` or ``resume`` is one subclass each
-    (issue #73).
+    ``mow-schedule-{start,pause,resume,stop}`` and the same set for
+    ``mow-spotarea``; ``mow-border`` has been observed with ``start``/``stop``
+    only — and the middle segment is the *job type*, not the trigger: a zone
+    job started from the app ends on ``mow-spotarea-stop``. Only the two
+    edges this integration acts on are registered; adding a ``pause`` or
+    ``resume`` is one subclass each (issue #73).
 
     The border points speak a different dialect of the same payload:
     ``triggerType`` where the others say ``trigger``, and ``cuttedArea`` on a

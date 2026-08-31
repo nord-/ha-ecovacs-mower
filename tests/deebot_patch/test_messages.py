@@ -1122,7 +1122,7 @@ async def test_two_identical_starts_both_reach_the_subscriber() -> None:
     assert len(published) == 2
 
 
-def test_the_four_job_edge_names_are_registered() -> None:
+def test_the_schedule_and_spotarea_job_edge_names_are_registered() -> None:
     apply()
 
     assert MESSAGES["onFwBuryPoint-bd_task-mow-schedule-start"] is OnMowScheduleStart
