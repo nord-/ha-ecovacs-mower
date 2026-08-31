@@ -1102,14 +1102,18 @@ async def test_a_resume_does_not_clear_the_reading() -> None:
         assert sensor._attr_native_value == 55
 
 
-async def test_a_new_job_clears_the_reading() -> None:
-    """A start announcement clears a finished job's figure, issue #73.
+async def test_a_new_job_resets_the_reading_to_zero() -> None:
+    """A start announcement resets a finished job's figure, issue #73.
 
     Driven as the pair it really is — the completion that sets the latch, then
     the start that acts on it — because the start alone is not enough to know
     the figure is stale. The CLEANING edge does the same thing when it gets
     there first; this is the path for a class whose parking push was dropped,
     where the announcement is the only signal.
+
+    Zero rather than unknown: the announcement is the device itself saying a
+    new job has begun, so unlike a bare telemetry zero (``_progress``'s
+    ambiguity, tested above) there is nothing to be unsure about here.
     """
     for trigger in ("schedule", "app"):
         sensor = _bare_progress_sensor()
@@ -1120,7 +1124,7 @@ async def test_a_new_job_clears_the_reading() -> None:
 
         await sensor._on_job_edge(_edge("start", trigger))
 
-        assert sensor._attr_native_value is None, trigger
+        assert sensor._attr_native_value == 0, trigger
 
 
 async def test_a_start_does_not_clear_a_reading_from_its_own_job() -> None:
@@ -1377,15 +1381,16 @@ async def test_a_completion_survives_a_paused_plan_before_the_dock() -> None:
     assert sensor._attr_native_value == 100
 
 
-async def test_a_finished_figure_is_cleared_when_cutting_starts_again() -> None:
+async def test_a_finished_figure_is_reset_to_zero_when_cutting_starts_again() -> None:
     """A new job must not open showing the last job's completion.
 
     The start bury point arrives 13 seconds into a run, and on a class that
     never sends it at all it never arrives. Meanwhile the CLEANING edge's own
     refresh answers zeros, which the bus dedupes away — so without this the
-    reading held 100 % into a job that had just started, which is a worse lie
-    than unknown. The latch is what makes the edge safe to act on: it fires
-    only when the standing figure belongs to a job that is over.
+    reading held 100 % into a job that had just started. The latch is what
+    makes the edge safe to act on: it fires only when the standing figure
+    belongs to a job that is over, which is also what makes writing 0 here
+    honest rather than a guess — the edge itself says a new job has begun.
     """
     from deebot_client.models import State
 
@@ -1397,7 +1402,7 @@ async def test_a_finished_figure_is_cleared_when_cutting_starts_again() -> None:
 
     await sensor._on_state(_state_event(State.CLEANING))
 
-    assert sensor._attr_native_value is None
+    assert sensor._attr_native_value == 0
 
 
 async def test_a_charge_break_resume_is_not_a_new_job() -> None:

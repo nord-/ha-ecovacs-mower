@@ -357,17 +357,19 @@ than the lawn.
 
 Two things worth knowing:
 
-- **Between jobs it holds the last job's figure**, and it is unknown rather than
-  0 before the first one. Most firmware reports zeros when nothing is running,
-  and a 0 there would be indistinguishable from a job that has just started;
-  some firmware never zeroes at all and keeps reporting the finished job's
-  numbers, which is why the entity refuses to read the payload at all while the
-  mower is parked. What clears the reading is the mower announcing that a job
-  ended, acted on when the next one begins — not the mower parking, since a run
-  that docks to charge and resumes is one job and keeping its figure through the
-  break is the point. On a mower that never sends those announcements the figure
-  simply stands until real numbers replace it, so the first minutes of a job can
-  still show the previous one's.
+- **Between jobs it holds the last job's figure**, and a bare telemetry zero
+  cannot reset it: most firmware reports zeros when nothing is running, and a
+  0 there would be indistinguishable from a job that has just started; some
+  firmware never zeroes at all and keeps reporting the finished job's numbers,
+  which is why the entity refuses to read the payload at all while the mower
+  is parked. What resets the reading — to 0, not unknown — is the mower
+  announcing that a job ended, acted on when the next one begins: unlike a
+  telemetry zero, that announcement removes the ambiguity, since it is the
+  device itself saying a new job has started. It is not the mower parking,
+  since a run that docks to charge and resumes is one job and keeping its
+  figure through the break is the point. On a mower that never sends those
+  announcements the figure simply stands until real numbers replace it, so the
+  first minutes of a job can still show the previous one's.
 - **"Finished" is not this entity's job.** A completed run publishes its final
   figure here, but that figure is not always 100: for a zone the target is the
   polygon's estimate, and a mower that considers itself done after 24 of 32 m²
