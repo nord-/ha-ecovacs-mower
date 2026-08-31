@@ -176,7 +176,7 @@ plus one per UWB beacon on the models that use them:
 | `number` | 3 | Notification volume, cutting direction, rain delay duration (see below) |
 | `button` | 6 | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), and "Clear fault" (releases the latched fault; see below) |
 | `event` | 1 | Last mowing job (finished / finished with warnings / manually stopped — see below) |
-| `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, and `onMapTrace` on firmware 1.17); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only |
+| `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, `onMapTrace` on firmware 1.17, and `onMapInfo_V2` on 1.36 — that last one only ever arrives in answer to a `getMapInfo_V2` the integration now sends); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only |
 
 Not included yet: **RTK diagnostics** (position and satellite data) and
 zone control. RTK is planned for the next release; the other has no
@@ -607,8 +607,9 @@ To get a usable log:
 For anything about the map, `deebot_client` at debug level is the only thing
 that shows whether the mower sends `onMI`/`onArI`/`onMapTrack`/
 `onSpecialContour` — or `onMapTrace`, which firmware 1.17 sends instead of
-`onMapTrack` — at all. That is the log to attach to a map issue, and the
-`info` fields have to be left intact: they are the map geometry itself.
+`onMapTrack`, or `onMapInfo_V2`, which is 1.36's name for `onMI` — at all.
+That is the log to attach to a map issue, and the `info` fields have to be
+left intact: they are the map geometry itself.
 
 ## Current status
 

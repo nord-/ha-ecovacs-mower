@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from copy import deepcopy
 from unittest.mock import Mock, patch
 
 from custom_components.ecovacs_mower.deebot_patch.map_messages import (
@@ -18,6 +19,7 @@ from custom_components.ecovacs_mower.deebot_patch.map_messages import (
     MowerNoGoZonesEvent,
     MowerObstaclesEvent,
     OnArI,
+    OnMapInfo,
     OnMapTrace,
     OnMapTrack,
     OnMI,
@@ -163,6 +165,10 @@ def test_apply_registers_the_map_messages() -> None:
     assert MESSAGES["onMapTrack"] is OnMapTrack
     assert MESSAGES["onMapTrace"] is OnMapTrace
     assert MESSAGES["onSpecialContour"] is OnSpecialContour
+    # The full name, not the suffix-stripped one: get_message() matches
+    # onMapInfo_V2 exactly before it strips _V2, and the library ships its
+    # own class under that key. Registering "onMapInfo" would be dead.
+    assert MESSAGES["onMapInfo_V2"] is OnMapInfo
 
 
 def test_on_mi_v117_notifies_boundary() -> None:
@@ -200,3 +206,60 @@ def test_on_map_trace_notifies_covered_area() -> None:
     assert isinstance(events[0], MowerCoveredAreaEvent)
     assert len(events[0].areas) == 1
     assert len(events[0].holes) == 6
+
+
+def test_on_map_info_decodes_the_same_payload_as_on_mi() -> None:
+    # onMapInfo_V2 is onMI's payload under firmware 1.36's name (issue #81).
+    # Fed the onMI fixture, the alias must publish the identical event —
+    # the point of subclassing rather than writing a second handler.
+    assert _notified(OnMapInfo, "on_mi_full_v117") == _notified(
+        OnMI, "on_mi_full_v117"
+    )
+
+
+def test_on_map_info_reassembles_independently_of_on_mi() -> None:
+    # __init_subclass__ hands every subclass its own FragmentBuffer, so the
+    # two names never share a batch. Half a blob into OnMI must leave
+    # OnMapInfo with nothing, and vice versa.
+    fragments = sorted(
+        FIXTURES["on_mi_full_v117"],
+        key=lambda item: int(item["payload"]["body"]["data"]["index"]),
+    )
+    assert len(fragments) > 1, "needs a multipart fixture to mean anything"
+
+    assert OnMapInfo._buffer is not OnMI._buffer
+
+    event_bus = Mock()
+    OnMI.handle(event_bus, fragments[0]["payload"])
+    for fragment in fragments[1:]:
+        OnMapInfo.handle(event_bus, fragment["payload"])
+    assert not [
+        call.args[0]
+        for call in event_bus.notify.call_args_list
+        if isinstance(call.args[0], _MAP_EVENTS)
+    ]
+
+
+def test_on_map_info_does_not_inherit_the_outline_version_filter() -> None:
+    # The library's own onMapInfo_V2 handler drops any blob whose outlineVer
+    # is not "1". Firmware 1.36 sends outlineVer "0" on the map it reports as
+    # in use, which is why the boundary was claimed and then discarded. Our
+    # handler must publish it regardless of the field.
+    payload = deepcopy(FIXTURES["on_mi_full_v117"][0]["payload"])
+    fragments = sorted(
+        FIXTURES["on_mi_full_v117"],
+        key=lambda item: int(item["payload"]["body"]["data"]["index"]),
+    )
+    event_bus = Mock()
+    for fragment in fragments:
+        payload = deepcopy(fragment["payload"])
+        payload["body"]["data"]["outlineVer"] = "0"
+        OnMapInfo.handle(event_bus, payload)
+
+    events = [
+        call.args[0]
+        for call in event_bus.notify.call_args_list
+        if isinstance(call.args[0], MowerMapInfoEvent)
+    ]
+    assert len(events) == 1
+    assert events[0].boundary[0] == (-10800, 7900)

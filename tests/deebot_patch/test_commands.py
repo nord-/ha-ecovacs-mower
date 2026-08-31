@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock, call, patch
 import pytest
 from deebot_client.command import Command
 from deebot_client.commands.json.clean import Clean, CleanV2, GetCleanInfo
+from deebot_client.commands.json.common import ExecuteCommand
 from deebot_client.commands.json.life_span import GetLifeSpan
 from deebot_client.commands.json.stats import GetStats
 from deebot_client.event_bus import EventBus
@@ -21,6 +22,7 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
     GetCleanInfoMower,
     GetLifeSpanMower,
     GetProtectState,
+    GetMapInfoV2,
     GetRainDelay,
     GetStatsMower,
     MowerStateRefresh,
@@ -938,3 +940,26 @@ async def test_the_wrapper_still_turns_resume_into_start_when_nothing_is_paused(
         await command._execute(AsyncMock(), _DEVICE_INFO, bus)
 
     assert command._delegate(Family.NON_V2)._args["act"] == "start"
+
+
+def test_get_map_info_v2_asks_for_the_boundary_by_name() -> None:
+    assert GetMapInfoV2.NAME == "getMapInfo_V2"
+    # type "0" is what the app sends. Its bdTaskID is left off on the
+    # assumption that it is optional; nobody has been able to test that.
+    assert GetMapInfoV2()._args == {"type": "0"}
+
+
+def test_get_map_info_v2_parses_nothing_from_the_ack() -> None:
+    # The reply is {"code": 0, "msg": "ok"} and the boundary follows on the
+    # atr topic, where OnMapInfo picks it up. An ExecuteCommand reports a
+    # non-zero code as a failure and reads nothing else — which is the whole
+    # contract here, and the reason the library's own GetMapInfoV2, whose
+    # inherited handler reads body.data, cannot stand in (issue #81).
+    assert issubclass(GetMapInfoV2, ExecuteCommand)
+    assert GetMapInfoV2._handle_body(Mock(), {"code": 0, "msg": "ok"}) == (
+        HandlingResult.success()
+    )
+    assert (
+        GetMapInfoV2._handle_body(Mock(), {"code": 500}).state
+        is HandlingState.FAILED
+    )

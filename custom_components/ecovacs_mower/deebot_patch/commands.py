@@ -578,6 +578,44 @@ class GetRainDelay(JsonCommandWithMessageHandling, OnRainDelay):
     NAME = "getRainDelay"
 
 
+class GetMapInfoV2(ExecuteCommand):
+    """Ask for the lawn boundary, which is never pushed unasked.
+
+    Every other map message in this integration is unsolicited telemetry.
+    ``onMapInfo_V2`` is not: on a GOAT G1-800 (``77atlz``, fw 1.36.208) the
+    32 KB of outline arrives only as the answer to this request, and it is
+    the reason ``onMI``/``onArI``/``onSpecialContour`` are absent from every
+    capture anyone has taken against this integration, idle or mid-job. The
+    integration subscribed and waited for a push no client had asked for, so
+    the map could only ever be a bare coverage patch with no field around it
+    (issue #81).
+
+    Nothing here parses an answer, because there is nothing in it: the reply
+    is ``{"code": 0, "msg": "ok"}`` and the payload follows a fraction of a
+    second later on the ``atr`` topic, where ``OnMapInfo`` picks it up. That
+    is what ``ExecuteCommand`` is — a non-zero ``code`` reported as a failure,
+    no response parsing — and the event bus asks nothing more of a refresh
+    command than that it complete: ``_call_refresh_function`` awaits the
+    execute and never checks whether an event came out of it, so a refresh
+    that publishes nothing is neither retried nor logged as failed.
+
+    The library's own ``GetMapInfoV2`` cannot stand in for this one. It
+    inherits ``OnMapInfoV2``'s message handler, which reads ``body.data`` —
+    an ack carries none, so the handler falls through to an abstract base,
+    returns ``None``, and the library logs "returned no response. This is a
+    bug" on every refresh. It also defaults ``mid`` to the empty string.
+
+    The app sends a ``bdTaskID`` alongside ``type``. It is omitted here on the
+    working assumption that it is optional — the same evidence-free footing as
+    every other argument nobody has been able to omit and test yet.
+    """
+
+    NAME = "getMapInfo_V2"
+
+    def __init__(self) -> None:
+        super().__init__({"type": "0"})
+
+
 class SetRainDelay(ExecuteCommand):
     """Write the rain sensor's setting and its post-rain hold.
 

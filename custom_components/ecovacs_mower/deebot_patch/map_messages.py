@@ -11,6 +11,10 @@ instead of chain codes, no-go zones inside onArI instead of
 onSpecialContour, and onMapTrace instead of onMapTrack (issue #41). The
 dialect is decided per blob in geometry.py, so one build serves both.
 
+Firmware 1.36 renamed onMI to onMapInfo_V2 and, unlike the rest of these,
+sends it only to a client that asked with getMapInfo_V2 — see OnMapInfo
+below and GetMapInfoV2 in commands.py (issue #81).
+
 Map data is best effort: a broken payload logs at DEBUG and is dropped,
 it never raises and never touches the control path.
 """
@@ -149,6 +153,42 @@ class OnMI(_MapMessage):
             )
         )
         return HandlingResult.success()
+
+
+class OnMapInfo(OnMI):
+    """``onMapInfo_V2``: onMI's payload under the name firmware 1.36 uses.
+
+    A GOAT G1-800 (``77atlz``, fw 1.36.208) answers ``getMapInfo_V2`` with
+    32 KB of lawn outline across seven ``onMapInfo_V2`` fragments — the
+    same multipart envelope and, as far as the capture in issue #52 shows,
+    the same payload ``onMI`` carries. ``OnMI`` keeps ``NAME = "onMI"``;
+    hardware sending the short name is still supported, and
+    ``_MapMessage.__init_subclass__`` gives this subclass its own
+    ``FragmentBuffer``, so the two names reassemble independently.
+
+    **The name is the full ``onMapInfo_V2``, not the suffix-stripped
+    ``onMapInfo``.** ``get_message()`` tries an exact match before it
+    strips ``_V2``, and the library registers its own ``OnMapInfoV2``
+    under the full name — which is why the message is never logged as
+    ``Unknown message`` and why registering the stripped name would
+    silently never be reached. ``apply()`` overwrites that entry, the same
+    way ``OnStatsMower`` overwrites ``onStats``, and asserts afterwards
+    that the lookup returns this class.
+
+    What the library's handler does with the payload is the bug: it drops
+    every blob whose ``outlineVer`` is not ``"1"``, and this firmware
+    sends ``outlineVer "0"`` on the map it reports as ``using: 1``. So the
+    boundary arrived, was claimed, and was discarded — no
+    ``MowerMapInfoEvent``, no obstacles, no no-go zones.
+
+    Nothing here parses the blob differently from ``onMI``: if this
+    firmware's 32 KB turns out to be a shape ``parse_map_info`` does not
+    recognise, it returns no boundary and ``OnMI._notify`` publishes
+    nothing, which is the same best-effort drop every other map message
+    makes. See issue #81.
+    """
+
+    NAME = "onMapInfo_V2"
 
 
 class OnArI(_MapMessage):
