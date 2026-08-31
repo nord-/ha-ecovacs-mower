@@ -13,7 +13,11 @@ import sys
 
 import pytest
 
-from custom_components.ecovacs_mower.deebot_patch import families, state_precedence
+from custom_components.ecovacs_mower.deebot_patch import (
+    families,
+    messages,
+    state_precedence,
+)
 
 # The guard only prevents the explicit load. The plugin also registers itself as a
 # pytest11 entry point and is auto-loaded by pytest regardless of this file.
@@ -27,15 +31,16 @@ _HA_AVAILABLE = sys.platform != "win32"
 
 @pytest.fixture(autouse=True)
 def _reset_deebot_patch_state() -> None:
-    """Clear both command-family and precedence state before every test.
+    """Clear the patch layer's per-device stores before every test.
 
-    The two stores have different key types and lifetimes (``did`` vs.
-    ``EventBus``), so a test that reset only one used to leak state into
-    whatever ran next. One fixture for the whole suite removes the need for
-    every test module that touches either store to remember to reset it.
+    They have different key types and lifetimes (``did`` vs. ``EventBus``), so a
+    test that reset only one used to leak state into whatever ran next. One
+    fixture for the whole suite removes the need for every test module that
+    touches any of them to remember to reset it.
     """
     families.reset()
     state_precedence.reset()
+    messages.reset_beacon_readings()
 
 
 if _HA_AVAILABLE:

@@ -415,12 +415,12 @@ attribute; this drops the `_battery` suffix since `device_class: battery`
 already says what the reading is, and the serial moved into the entity id and
 name since it is already the unique identifier for the sensor.
 
-They appear once the mower has answered `getLifeSpan` for the first time, not
-at setup: the payload is what says how many beacons there are and what they are
-called, and nothing else does. A beacon that stops being reported keeps its
-entity and reads unknown rather than holding the dead cell's last charge;
-deleting it is a manual step in the entity registry, deliberately, because a
-poll that failed is not proof that a beacon is gone.
+They appear once the mower has first reported its beacons, not at setup: the
+payload is what says how many there are and what they are called, and nothing
+else does. A beacon that stops being reported keeps its entity and reads unknown
+rather than holding the dead cell's last charge; deleting it is a manual step in
+the entity registry, deliberately, because a poll that failed is not proof that
+a beacon is gone.
 
 `deebot-client` drops these. Its `LifeSpan` enum has no member for the
 `uwbCell` component, and it raises on one rather than skipping it — which took
@@ -431,16 +431,35 @@ reported a value from before the beacons were paired that could never change.**
 That last one is fixed here too, as a side effect of not giving up on the
 answer.
 
-Two things this does not do yet:
+#### Two sources, and they do not always agree
 
-- **There is no per-beacon reset button.** The existing lifespan resets each
-  target a single component; targeting one beacon needs its serial, and the
-  wire format for that has not been captured. Reset the cell in the Ecovacs app
-  for now.
-- **It rides the poll.** No mower has been observed pushing `onLifeSpan`, so
-  the readings refresh on the same schedule as everything else that needs a
-  round trip — and on the firmware where those round trips fail intermittently,
-  they go stale for as long as the failures last.
+The mower also pushes the beacon batteries on its own, in an `onUWB` message the
+library has no handler for either. That push is what fills the sensors in when
+`getLifeSpan` is not answered — which happens on firmware 1.36.208, where polls
+return `errno 500` intermittently or constantly — and it fills them in faster
+after a restart, since it does not wait for a round trip.
+
+The two numbers are **not** interchangeable. On the four beacons this was
+captured against, three matched exactly and one read a round `100` in the push
+against `83` in `getLifeSpan`, in every sample across two days. Which one is
+correct cannot be settled from the wire; the only hint is that the push is the
+one reporting a round `100` where the other reports less, which is what
+saturating at the top of a range looks like.
+
+So the sensor picks deliberately rather than showing whichever arrived last: the
+`getLifeSpan` reading always wins, and a pushed one is only ever used for a
+beacon the poll has not reported. Otherwise the disputed beacon would flap
+between 83 % and 100 % and no low-battery automation built on it could be
+trusted.
+
+#### There is no per-beacon reset button, and none is needed
+
+The beacon percentage is a live measurement, not a consumable counter like the
+blade. Replacing a flat cell brought its reading back to 100 % on its own, with
+no reset command sent by anything — Home Assistant or the Ecovacs app — across a
+capture that contained every command either of them sent. So unlike the blade
+and the lens brush, there is nothing for a reset button to do. Issue #63 is
+closed on that basis.
 
 ### Entities disabled by default
 

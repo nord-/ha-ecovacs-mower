@@ -42,6 +42,7 @@ from .messages import (
     OnRainDelay,
     OnScheduleTaskInfo,
     OnStatsMower,
+    OnUwb,
 )
 from .state_precedence import register as register_mower_bus
 
@@ -101,6 +102,7 @@ def apply() -> None:
         OnRainDelay,
         OnScheduleTaskInfo,
         OnStatsMower,
+        OnUwb,
         OnArI,
         OnMapTrace,
         OnMapTrack,
