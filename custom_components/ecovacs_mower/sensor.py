@@ -685,9 +685,9 @@ class EcovacsMowingProgressSensor(
 
     A third source draws the edges neither of those can, since the numbers
     alone cannot say which job they belong to: the mower's own job bury points
-    clear the reading when a new job starts and write the final percentage when
-    one completes (issue #73). That is what lets the figure survive a charge
-    break instead of going unknown for the length of it.
+    reset the reading to 0 when a new job starts and write the final percentage
+    when one completes (issue #73). That is what lets the figure survive a
+    charge break instead of going unknown for the length of it.
     """
 
     entity_description: SensorEntityDescription = SensorEntityDescription(
@@ -768,11 +768,21 @@ class EcovacsMowingProgressSensor(
         not change nearly that often: one percent of the captured O800 RTK job
         is 2089 cm² against a few hundred per push, so most pushes would
         otherwise round to the number already showing.
+
+        An unreadable payload — ``_progress`` returning ``None`` — is never
+        written over a standing figure either, trusted state or not: a fresh
+        ``0`` from the CLEANING or job-edge reset is otherwise indistinguishable
+        from a job whose numbers just have not arrived yet, and a zeroed
+        ``getStats`` answer landing in that window would blip it straight back
+        to unknown. The dedup two ``_on_state`` docstring paragraphs above
+        describes is not guaranteed to catch that answer — it depends on the
+        bus's last ``MowerStatsEvent`` still matching by coincidence — so this
+        guard is what actually keeps the reset in place.
         """
         if self._job_over or self._last_state not in _STATS_TRUSTED_STATES:
             return
         value = _progress(event.area, event.mowed_area)
-        if value == self._attr_native_value:
+        if value is None or value == self._attr_native_value:
             return
         self._attr_native_value = value
         self.async_write_ha_state()
@@ -796,10 +806,12 @@ class EcovacsMowingProgressSensor(
         Resetting on the way *in* on the strength of the state alone would be
         no better: this handler cannot tell a new job from a resume either, so
         it would blip to zero at every rain pause and every charge resume. Nor
-        does the refresh below rescue it — at 09:00:01.757 on the captured run
-        it answered ``{"area": 0, "mowedArea": 0}`` 0.2 s into the job, the
-        event was deduped away, and the first real number arrived five minutes
-        later from the tick.
+        does the refresh below rescue it on its own — at 09:00:01.757 on the
+        captured run it answered ``{"area": 0, "mowedArea": 0}`` 0.2 s into the
+        job, and the event happened to be deduped away, with the first real
+        number arriving five minutes later from the tick. That dedup is
+        incidental, not guaranteed: ``_on_stats`` is what actually protects the
+        fresh reset now, by refusing to write an unreadable payload over it.
 
         What makes the entry edge usable is not the state but ``_job_over``,
         which a stop bury point sets and a resume never does. The edge is then
@@ -841,7 +853,7 @@ class EcovacsMowingProgressSensor(
         trigger nobody has seen yet surfaces without filling the log.
 
         A stop also latches ``_job_over``, and that latch is what makes both
-        clears safe and what keeps the completion from being erased. Writing
+        resets safe and what keeps the completion from being erased. Writing
         the final percentage is not enough on its own: the state can still read
         CLEANING when it arrives, because this firmware drops parking pushes,
         and it can read PAUSED before the mower reaches its dock — and the

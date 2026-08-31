@@ -599,7 +599,7 @@ async def test_the_states_in_between_are_left_alone() -> None:
     """No state asks for a fresh answer except a start; the rest ride the tick.
 
     None of them writes to the reading either: no state edge does, since
-    issue #73. What clears the value and what finishes it is ``_on_job_edge``,
+    issue #73. What resets the value and what finishes it is ``_on_job_edge``,
     tested at the bottom of this file.
     """
     from deebot_client.models import State
@@ -619,8 +619,33 @@ async def test_the_percentage_follows_the_answer() -> None:
     await sensor._on_stats(_job(211275, 208275))
     assert sensor._attr_native_value == 99
 
+    # A zeroed answer is unreadable (_progress returns None for it), not a
+    # figure to publish, so the standing 99 is left alone rather than erased.
     await sensor._on_stats(_job(0, 0))
-    assert sensor._attr_native_value is None
+    assert sensor._attr_native_value == 99
+
+
+async def test_a_zeroed_answer_does_not_erase_a_fresh_reset() -> None:
+    """A zeroed getStats landing right after a reset must not blip it to unknown.
+
+    _progress(0, 0) is None (no job, by convention), and before this guard
+    ``_on_stats`` wrote that None straight over the fresh ``0`` the CLEANING
+    edge had just set — because ``None == 0`` is false, the "unchanged"
+    short-circuit never caught it. Pre-#82 this same path was a silent no-op
+    (``None == None``), which is why it never mattered until the reset
+    started writing 0 instead.
+    """
+    from deebot_client.models import State
+
+    sensor = _bare_progress_sensor()
+    sensor._last_state = State.DOCKED
+    sensor._job_over = True
+
+    await sensor._on_state(_state_event(State.CLEANING))
+    assert sensor._attr_native_value == 0
+
+    await sensor._on_stats(_job(0, 0))
+    assert sensor._attr_native_value == 0
 
 
 async def test_a_paused_plan_on_the_dock_cannot_re_arm_the_reading() -> None:
@@ -1082,13 +1107,13 @@ async def test_a_charge_break_leaves_the_reading_standing() -> None:
 
 
 async def test_a_resume_does_not_clear_the_reading() -> None:
-    """_on_state must not clear on the strength of the state alone.
+    """_on_state must not reset on the strength of the state alone.
 
     A guard rather than a demonstration: master did not clear on entering a
     job state either, so this passes on both sides of issue #73. What it pins
-    is that the clear the CLEANING edge *does* now perform stays gated on
+    is that the reset the CLEANING edge *does* now perform stays gated on
     ``_job_over`` — both a rain pause and a charge break come back through
-    CLEANING, and an ungated clear would blip the sensor to unknown every time.
+    CLEANING, and an ungated reset would blip the sensor to zero every time.
     """
     from deebot_client.models import State
 
