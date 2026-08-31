@@ -160,8 +160,12 @@ class OnMapInfo(OnMI):
 
     A GOAT G1-800 (``77atlz``, fw 1.36.208) answers ``getMapInfo_V2`` with
     32 KB of lawn outline across seven ``onMapInfo_V2`` fragments — the
-    same multipart envelope and, as far as the capture in issue #52 shows,
-    the same payload ``onMI`` carries. ``OnMI`` keeps ``NAME = "onMI"``;
+    same multipart envelope and the same 7z-base64 JSON container ``onMI``
+    uses, but not the same record layout: the boundary record leads with
+    an id where ``onMI`` writes ``s1``, each of its 692 points carries a
+    third field, and three sections follow it. ``parse_map_info`` reads
+    that dialect too, from the captured blob in the fixtures rather than
+    from an assumption. ``OnMI`` keeps ``NAME = "onMI"``;
     hardware sending the short name is still supported, and
     ``_MapMessage.__init_subclass__`` gives this subclass its own
     ``FragmentBuffer``, so the two names reassemble independently.
@@ -181,11 +185,12 @@ class OnMapInfo(OnMI):
     boundary arrived, was claimed, and was discarded — no
     ``MowerMapInfoEvent``, no obstacles, no no-go zones.
 
-    Nothing here parses the blob differently from ``onMI``: if this
-    firmware's 32 KB turns out to be a shape ``parse_map_info`` does not
-    recognise, it returns no boundary and ``OnMI._notify`` publishes
-    nothing, which is the same best-effort drop every other map message
-    makes. See issue #81.
+    Nothing here parses the blob differently from ``onMI`` — the dialect
+    is decided per blob in ``geometry.py``, as it already is for firmware
+    1.17 — and the fallback is unchanged: a shape ``parse_map_info`` does
+    not recognise yields no boundary and ``OnMI._notify`` publishes
+    nothing, the same best-effort drop every other map message makes. See
+    issue #81.
     """
 
     NAME = "onMapInfo_V2"

@@ -133,6 +133,15 @@ def test_fragment_buffer_evicts_oldest_when_full() -> None:
     )
 
 
+def _point_set(record: str) -> set[tuple[int, int]]:
+    """The distinct x,y of a record, ignoring any field past the second."""
+    return {
+        tuple(int(value) for value in part.split(",")[:2])
+        for part in record.split(";")
+        if "," in part
+    }
+
+
 def _blob(key: str) -> bytes:
     """Decode a fixture, joining fragments when multipart."""
     fragments = _fragments(key)
@@ -236,6 +245,73 @@ def test_parse_map_info_v117_idle_carries_nothing() -> None:
     info = parse_map_info(_blob("on_mi_idle_v117"))
     assert info.boundary is None
     assert info.zones is None and info.corridors is None
+
+
+# ``on_map_info_v2_g1800`` is the seven-fragment ``onMapInfo_V2`` answer a
+# GOAT G1-800 (77atlz, fw 1.36.208) gave on 2026-08-30, byte for byte, with
+# only ``mid`` and the header timestamps replaced. The device sent the same
+# 32137-byte blob three times that day and all three reassemble identically
+# (issue #81).
+def test_map_info_v2_reassembles_to_the_size_the_device_declared() -> None:
+    # Seven fragments, and the blob that decides issue #81. Pinned before
+    # anything is read out of it: a short reassembly would fail the tests
+    # below in a way that looks like a parser bug.
+    fragments = _fragments("on_map_info_v2_g1800")
+    assert len(fragments) == 7
+    blob = _blob("on_map_info_v2_g1800")
+    assert len(blob) == fragments[0]["infoSize"] == 32137
+
+
+def test_parse_map_info_reads_the_firmware_136_boundary() -> None:
+    # The record leads with an id, not the "s1" marker of every earlier
+    # dialect. Keyed on "s1" alone, the parser walked past this blob and
+    # returned no boundary — 32 KB of lawn claimed and dropped (#81).
+    info = parse_map_info(_blob("on_map_info_v2_g1800"))
+    assert info.boundary is not None
+    assert info.boundary[0] == (-11918, 1959)
+    assert len(info.boundary) == 692
+    assert info.zones is None and info.corridors is None
+    # Same closure rule as every other dialect: within one grid step.
+    end_x, end_y = info.boundary[-1]
+    assert abs(end_x - info.boundary[0][0]) <= STEP_MM
+    assert abs(end_y - info.boundary[0][1]) <= STEP_MM
+
+
+def test_parse_map_info_drops_the_firmware_136_point_flag() -> None:
+    # Every point is "<x>,<y>,1" here. Unpacking two values out of three
+    # raises, and the raise is swallowed as an undecodable blob, so the
+    # third field has to be dropped rather than merely ignored downstream.
+    blob = _blob("on_map_info_v2_g1800")
+    assert b";-11918,1959,1;" in blob
+    boundary = parse_map_info(blob).boundary
+    assert all(len(point) == 2 for point in boundary)
+
+
+def test_map_info_v2_section_2_retraces_section_1() -> None:
+    # Not read, and recorded so the fixture says why. Section 2 is the same
+    # outline at the 50 mm step where section 1 collapses straight runs:
+    # 1924 points against 692, and it contains every one of them. Section 1
+    # is the boundary in every dialect, so that is what is published.
+    sections = json.loads(_blob("on_map_info_v2_g1800"))
+    coarse = _point_set(sections[0][1])
+    fine = _point_set(sections[1][1])
+    assert len(coarse) == 672 and len(fine) == 1909
+    assert coarse <= fine
+
+
+def test_map_info_v2_section_3_holds_the_islands() -> None:
+    # Thirteen closed shapes inside the lawn, ids 100-116 — the same
+    # numbering onArI's obstacle section uses. MapInfo has nowhere to put
+    # them yet; the fixture keeps them for whoever wires them up.
+    sections = json.loads(_blob("on_map_info_v2_g1800"))
+    islands = sections[2][1:]
+    assert len(islands) == 13
+    assert [record.split(";")[0] for record in islands][:3] == [
+        "100",
+        "101",
+        "102",
+    ]
+    assert sections[3] == ["4"] and sections[4] == ["5"]
 
 
 def test_parse_area_info_v117_zones_obstacles_and_empty_nogo() -> None:

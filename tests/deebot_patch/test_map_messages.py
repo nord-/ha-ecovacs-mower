@@ -208,13 +208,56 @@ def test_on_map_trace_notifies_covered_area() -> None:
     assert len(events[0].holes) == 6
 
 
-def test_on_map_info_decodes_the_same_payload_as_on_mi() -> None:
-    # onMapInfo_V2 is onMI's payload under firmware 1.36's name (issue #81).
-    # Fed the onMI fixture, the alias must publish the identical event —
-    # the point of subclassing rather than writing a second handler.
+def test_on_map_info_is_a_pure_alias_of_on_mi() -> None:
+    # The rename is the only difference the handler knows about: fed the
+    # same blob, the two names must publish the identical event. That is
+    # the point of subclassing rather than writing a second handler, and
+    # it holds whichever dialect the blob turns out to be in — the payload
+    # is decided per blob in geometry.py (issue #81).
     assert _notified(OnMapInfo, "on_mi_full_v117") == _notified(
         OnMI, "on_mi_full_v117"
     )
+    assert _notified(OnMapInfo, "on_map_info_v2_g1800") == _notified(
+        OnMI, "on_map_info_v2_g1800"
+    )
+
+
+def test_on_map_info_publishes_the_captured_boundary() -> None:
+    # What issue #81 is actually for, against the blob the device sent
+    # rather than an onMI stand-in: seven fragments, 32 KB, one boundary
+    # out the other end. Until this fixture existed the wiring was
+    # unverified on its central point — and it did not in fact work, since
+    # firmware 1.36 leads the record with an id instead of "s1".
+    events = _notified(OnMapInfo, "on_map_info_v2_g1800")
+    assert len(events) == 1
+    assert isinstance(events[0], MowerMapInfoEvent)
+    assert events[0].boundary[0] == (-11918, 1959)
+    assert len(events[0].boundary) == 692
+    assert events[0].zones is None and events[0].corridors is None
+
+
+def test_on_map_info_publishes_nothing_before_the_last_fragment() -> None:
+    # Seven fragments is the most any capture has needed, and the buffer
+    # is what keeps a partial 32 KB blob off the bus. Six of them must be
+    # silent — a premature notify would publish a truncated lawn.
+    fragments = sorted(
+        FIXTURES["on_map_info_v2_g1800"],
+        key=lambda item: int(item["payload"]["body"]["data"]["index"]),
+    )
+    event_bus = Mock()
+    for fragment in fragments[:-1]:
+        OnMapInfo.handle(event_bus, fragment["payload"])
+    assert not [
+        call.args[0]
+        for call in event_bus.notify.call_args_list
+        if isinstance(call.args[0], _MAP_EVENTS)
+    ]
+    OnMapInfo.handle(event_bus, fragments[-1]["payload"])
+    assert [
+        call.args[0]
+        for call in event_bus.notify.call_args_list
+        if isinstance(call.args[0], MowerMapInfoEvent)
+    ]
 
 
 def test_on_map_info_reassembles_independently_of_on_mi() -> None:
@@ -245,16 +288,18 @@ def test_on_map_info_does_not_inherit_the_outline_version_filter() -> None:
     # is not "1". Firmware 1.36 sends outlineVer "0" on the map it reports as
     # in use, which is why the boundary was claimed and then discarded. Our
     # handler must publish it regardless of the field.
-    payload = deepcopy(FIXTURES["on_mi_full_v117"][0]["payload"])
     fragments = sorted(
-        FIXTURES["on_mi_full_v117"],
+        FIXTURES["on_map_info_v2_g1800"],
         key=lambda item: int(item["payload"]["body"]["data"]["index"]),
     )
+    # The captured value, not a synthetic one: the device really does send
+    # outlineVer "0" on the map it flags as using: 1.
+    assert fragments[0]["payload"]["body"]["data"]["outlineVer"] == "0"
+    assert fragments[0]["payload"]["body"]["data"]["using"] == 1
+
     event_bus = Mock()
     for fragment in fragments:
-        payload = deepcopy(fragment["payload"])
-        payload["body"]["data"]["outlineVer"] = "0"
-        OnMapInfo.handle(event_bus, payload)
+        OnMapInfo.handle(event_bus, deepcopy(fragment["payload"]))
 
     events = [
         call.args[0]
@@ -262,4 +307,4 @@ def test_on_map_info_does_not_inherit_the_outline_version_filter() -> None:
         if isinstance(call.args[0], MowerMapInfoEvent)
     ]
     assert len(events) == 1
-    assert events[0].boundary[0] == (-10800, 7900)
+    assert events[0].boundary[0] == (-11918, 1959)
