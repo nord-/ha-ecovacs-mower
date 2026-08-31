@@ -61,7 +61,7 @@ fields back.
 ``OnUwb`` is a sixth unhandled message, and the beacons above from a second
 source that disagrees with the first: ``onUWB`` pushes a ``battery`` per beacon
 without being asked. Publishing both into one event would flap the sensor for
-any beacon the two number differently, so the polled reading wins and a pushed
+any beacon the two sources number differently, so the polled reading wins and a pushed
 one is only ever a floor under a serial the poll has not delivered — see the
 class for the samples that establish the disagreement, and
 ``_LIFE_SPAN_READINGS`` for the record that decides it.
@@ -399,20 +399,24 @@ def notify_mower_beacons(event_bus: EventBus, data: list[dict[str, Any]]) -> Non
         # a blade cannot disagree about what 51.52 means.
         beacons.append(MowerBeacon(sn=sn, percent=round((left / total) * 100, 2)))
 
+    # Recorded here, inside the handler and before notifying, because a
+    # subscription cannot do this job: EventBus.notify drops an event equal
+    # to the previous one of the same type before any subscriber runs, and
+    # dispatches the rest through create_task — so a subscriber would miss
+    # every repeat and see the rest out of order with respect to a push
+    # arriving in between.
+    #
+    # Replaced rather than updated, and unconditionally so: an answer that no
+    # longer lists any beacon at all is still this source withdrawing every
+    # claim it previously made, and OnUwb is then the only thing that knows
+    # anything about them. Gating this on ``beacons`` being non-empty would
+    # leave a stale reading in place exactly when the poll has the least to
+    # say — a mower that stops reporting beacons entirely.
+    _LIFE_SPAN_READINGS[event_bus] = {
+        beacon.sn: beacon.percent for beacon in beacons
+    }
+
     if beacons:
-        # Recorded here, inside the handler and before notifying, because a
-        # subscription cannot do this job: EventBus.notify drops an event equal
-        # to the previous one of the same type before any subscriber runs, and
-        # dispatches the rest through create_task — so a subscriber would miss
-        # every repeat and see the rest out of order with respect to a push
-        # arriving in between.
-        #
-        # Replaced rather than updated: an answer that no longer lists a serial
-        # is this source withdrawing its claim about that beacon, and OnUwb is
-        # then the only thing that knows anything about it.
-        _LIFE_SPAN_READINGS[event_bus] = {
-            beacon.sn: beacon.percent for beacon in beacons
-        }
         event_bus.notify(MowerBeaconsEvent(beacons=tuple(beacons)))
 
 
@@ -520,6 +524,16 @@ class OnUwb(MessageBodyDataDict):
             beacons.append(MowerBeacon(sn=sn, percent=percent))
 
         if contributed:
+            # Whole relative to the poll too, not just to this push: a serial
+            # the poll has delivered but this push omits is not the poll's
+            # claim being withdrawn — only ``notify_mower_beacons`` gets to do
+            # that — so it is unioned in here rather than left to fall out of
+            # the event and read as unknown.
+            beacons.extend(
+                MowerBeacon(sn=sn, percent=percent)
+                for sn, percent in polled.items()
+                if sn not in seen
+            )
             event_bus.notify(MowerBeaconsEvent(beacons=tuple(beacons)))
         return HandlingResult.success()
 

@@ -1294,6 +1294,75 @@ def test_a_life_span_answer_that_drops_a_beacon_stops_speaking_for_it() -> None:
     assert ("BEACON-1", 100.0) in _pushed_beacons(bus, _UWB_PUSH)
 
 
+def test_on_uwb_unions_in_a_polled_beacon_the_push_omits() -> None:
+    # Whole relative to the poll, not just to this push: BEACON-4 has been
+    # polled but this push does not mention it at all, and a fifth, never
+    # polled serial is what makes the push contribute and therefore publish.
+    # Omission is not the same as the life-span source withdrawing its claim —
+    # only notify_mower_beacons gets to do that — so BEACON-4 must still
+    # appear, sourced from the poll.
+    bus = Mock()
+    notify_mower_beacons(bus, _LIFE_SPANS_SAME_BEACONS)
+    bus.reset_mock()
+
+    published = _pushed_beacons(
+        bus,
+        {
+            "uwbPos": [
+                {"sn": "BEACON-1", "battery": 100},
+                {"sn": "BEACON-2", "battery": 68},
+                {"sn": "BEACON-3", "battery": 0},
+                {"sn": "BEACON-5", "battery": 42},
+            ]
+        },
+    )
+
+    assert set(published) == {
+        ("BEACON-1", 83.0),
+        ("BEACON-2", 68.0),
+        ("BEACON-3", 0.0),
+        ("BEACON-4", 73.0),
+        ("BEACON-5", 42.0),
+    }
+
+
+def test_life_span_readings_are_kept_per_bus() -> None:
+    # _LIFE_SPAN_READINGS is keyed by EventBus for the same reason
+    # state_precedence's records are: a message handler is a classmethod that
+    # receives nothing else to key on, and every device has its own bus. A
+    # life-span answer on one device must not decide precedence for another.
+    bus_a, bus_b = Mock(), Mock()
+    notify_mower_beacons(bus_a, _LIFE_SPANS_SAME_BEACONS)
+    bus_a.reset_mock()
+    bus_b.reset_mock()
+
+    assert _pushed_beacons(bus_b, _UWB_PUSH) == [
+        ("BEACON-1", 100.0),
+        ("BEACON-2", 68.0),
+        ("BEACON-3", 0.0),
+        ("BEACON-4", 73.0),
+    ]
+
+
+def test_a_life_span_answer_with_no_beacons_at_all_stops_speaking_for_any() -> None:
+    # The replace has to happen even when the new set is empty: a mower that
+    # stops reporting beacons entirely (unpaired, or a firmware that drops
+    # the component) is exactly the case where a stale reading would
+    # otherwise linger forever, since there is never a later non-empty
+    # answer to replace it.
+    bus = Mock()
+    notify_mower_beacons(bus, _LIFE_SPANS_SAME_BEACONS)
+    notify_mower_beacons(bus, [])
+    bus.reset_mock()
+
+    assert _pushed_beacons(bus, _UWB_PUSH) == [
+        ("BEACON-1", 100.0),
+        ("BEACON-2", 68.0),
+        ("BEACON-3", 0.0),
+        ("BEACON-4", 73.0),
+    ]
+
+
 def test_on_uwb_ignores_the_zeroed_coordinates() -> None:
     # x/y are 0 on every sample of this push, so they are not positions. OnPos
     # is where a real one comes from.
@@ -1317,6 +1386,16 @@ def test_on_uwb_drops_a_beacon_with_no_serial() -> None:
                 {"sn": "BEACON-2", "battery": 50},
             ]
         },
+    ) == [("BEACON-2", 50.0)]
+
+
+def test_on_uwb_drops_a_non_dict_entry() -> None:
+    # A bare string in uwbPos has no .get, so the isinstance guard is what
+    # keeps it from raising instead of just being dropped like any other
+    # entry without a usable serial.
+    assert _pushed_beacons(
+        Mock(),
+        {"uwbPos": ["not-a-dict", {"sn": "BEACON-2", "battery": 50}]},
     ) == [("BEACON-2", 50.0)]
 
 
