@@ -5,6 +5,15 @@ fw 1.11.31) and verified against the official app's map; the ``_v117`` ones
 were captured 2026-08-26 from two GOAT O800 RTK (2px96q) on firmware 1.17.8
 and 1.17.11 (issue #41). No deebot-client or Home Assistant needed — this
 file runs on Windows.
+
+The ``on_map_trace_g1800_*`` three are re-encoded rather than captured: the
+payloads are the decompressed blobs a GOAT G1-800 (77atlz, fw 1.36.208) sent
+on 2026-08-30, quoted in issue #52 and re-compressed here with the dictionary
+size the device's own header carries. The idle and cleared ones are byte-exact
+— each decodes to the length its log line reported, 131 and 19. The two-run
+one is assembled from two runs of that capture: record "1" verbatim from the
+09:18:14 blob, record "2" the polyline the same capture's idle snapshot
+carries, which the issue shows to be the same dialect and coordinate frame.
 """
 
 from __future__ import annotations
@@ -332,3 +341,45 @@ def test_parse_map_trace_multipart_carries_holes() -> None:
     assert len(covered.areas) == 1
     assert len(covered.areas[0]) == 257
     assert [len(hole) for hole in covered.holes] == [8, 14, 24, 8, 8, 8]
+
+
+def test_parse_map_trace_idle_still_reads_section_1() -> None:
+    # The shape a docked G1-800 sends, and what the two below regress
+    # against: reading section 3 must not cost the classic section-1 form.
+    covered = parse_map_trace(_blob("on_map_trace_g1800_idle"))
+    assert [len(area) for area in covered.areas] == [13]
+    assert covered.areas[0][0] == (-968, 9)
+    assert covered.holes == []
+
+
+def test_parse_map_trace_drops_the_id_only_record_of_a_running_job() -> None:
+    # The whole freeze in issue #52 hangs off this one filter. A job puts
+    # the batch id alone in section 1; kept, it decodes to [] and the event
+    # is areas=[[]] on every blob for the length of the job, so the bus
+    # dedups all of them against the first and the coverage layer stops
+    # moving. Asserted on its own because it looks like a tidiness check
+    # that a later refactor would drop.
+    covered = parse_map_trace(
+        b'[["1","1958878756;"],["2"],["3"]]'
+    )
+    assert covered.areas == []
+    assert covered.holes == []
+
+
+def test_parse_map_trace_reads_the_live_geometry_from_section_3() -> None:
+    # Newest first: the firmware renumbers the older run to "2" and starts
+    # a new "1". Nothing renders in that order today — areas is drawn as an
+    # unordered set of polygons — but a stroked coverage layer would care,
+    # so the order is pinned here rather than re-derived from a log later.
+    covered = parse_map_trace(_blob("on_map_trace_g1800_job_two_runs"))
+    assert [len(area) for area in covered.areas] == [7, 13]
+    assert covered.areas[0][0] == (-3318, -840)
+    assert covered.holes == []
+
+
+def test_parse_map_trace_job_start_clears_everything() -> None:
+    # One second into a job the firmware empties all three sections. That
+    # must decode as "nothing mowed", not as an empty polygon.
+    covered = parse_map_trace(_blob("on_map_trace_g1800_job_cleared"))
+    assert covered.areas == []
+    assert covered.holes == []

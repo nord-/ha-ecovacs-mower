@@ -34,9 +34,12 @@ class MowerMap:
         self.position: Point | None = None
         self.heading: int = 0
         # The map frame's origin is the dock: the first valid deebotPos of
-        # a session is exactly (0, 0) and chargePos is never valid on the
-        # verified hardware. Overwritten if a device ever reports a valid
-        # charger position.
+        # a session is exactly (0, 0), and on firmware 1.11.31 and 1.13.10
+        # — the captures this map was designed against — chargePos is
+        # flagged invalid on every sample, leaving nothing else to use.
+        # Firmware 1.36.208 does report it, and reports (0, 0), so the
+        # assumption is confirmed rather than undermined (issue #52).
+        # Overwritten whenever a device reports a valid charger position.
         self.dock: Point = (0, 0)
 
     @property

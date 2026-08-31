@@ -899,5 +899,86 @@
     }
    }
   }
+ ],
+ "on_map_trace_g1800_idle": [
+  {
+   "message": "onMapTrace",
+   "payload": {
+    "header": {
+     "pri": 1,
+     "tzm": 60,
+     "ts": "1787680620653",
+     "ver": "0.0.1",
+     "fwVer": "1.36.208",
+     "hwVer": "0.1.1",
+     "wkVer": "0.1.54"
+    },
+    "body": {
+     "data": {
+      "mid": "123456789",
+      "batid": "mbdlgm",
+      "serial": "1",
+      "index": "0",
+      "type": "0",
+      "info": "XQAABACDAAAAAC3ghGIjMKGNR5LFxc2MT41ThkHu9LaP+NGp4CtSqIuSPSvQWBsBCNSWhtwrZlWj0LUCziOC03jrzG/KOZkZSjvg3ICAO/I9//WnCAA=",
+      "infoSize": 131
+     }
+    }
+   }
+  }
+ ],
+ "on_map_trace_g1800_job_cleared": [
+  {
+   "message": "onMapTrace",
+   "payload": {
+    "header": {
+     "pri": 1,
+     "tzm": 60,
+     "ts": "1787680620653",
+     "ver": "0.0.1",
+     "fwVer": "1.36.208",
+     "hwVer": "0.1.1",
+     "wkVer": "0.1.54"
+    },
+    "body": {
+     "data": {
+      "mid": "123456789",
+      "batid": "gfgkci",
+      "serial": "1",
+      "index": "0",
+      "type": "0",
+      "info": "XQAABAATAAAAAC3ghGIjS7mQaJ7g4Li/uXEXv//pxSAA",
+      "infoSize": 19
+     }
+    }
+   }
+  }
+ ],
+ "on_map_trace_g1800_job_two_runs": [
+  {
+   "message": "onMapTrace",
+   "payload": {
+    "header": {
+     "pri": 1,
+     "tzm": 60,
+     "ts": "1787680620653",
+     "ver": "0.0.1",
+     "fwVer": "1.36.208",
+     "hwVer": "0.1.1",
+     "wkVer": "0.1.54"
+    },
+    "body": {
+     "data": {
+      "mid": "123456789",
+      "batid": "fpadfj",
+      "serial": "1",
+      "index": "0",
+      "type": "0",
+      "info": "XQAABADjAAAAAC3ghGIjMOLiNPZiXTrIVgADsdpEl2L8PqhMqg5RGuigPeBOqOckCnKQuUc1hEulz9oYOXRBrLmZlN12XumiMXdyGV/OQCnzz2GH1WHF4Ya+TYEDpbAawRL3A8zzgheKlgpHbR8tjjH7wpZ2an7d/9LNAAA=",
+      "infoSize": 227
+     }
+    }
+   }
+  }
  ]
 }

@@ -1010,18 +1010,20 @@ class OnPos(MessageBodyDataDict):
     the filter never showed until now.
 
     Only bit 0 is read as "no position". ``invalid: 1`` is what ``chargePos``
-    carries on every sample from the verified hardware, and map.py's
-    dock-at-the-origin assumption rests on exactly that. What bit 1 means is
-    not established — dead reckoning between fixes is the obvious guess — but
-    whatever it is, those coordinates track the mower, which is the only
-    question this handler has to answer.
+    carries on every sample from firmware 1.11.31 and 1.13.10, and map.py's
+    dock-at-the-origin assumption was written from that; firmware 1.36.208
+    sends ``chargePos`` with ``invalid: 0`` at (0, 0) instead, so the dock is
+    read from the payload there and lands on the same point (issue #52). What
+    bit 1 means is not established — dead reckoning between fixes is the
+    obvious guess — but whatever it is, those coordinates track the mower,
+    which is the only question this handler has to answer.
 
     A payload with nothing but flagged-out samples is handled, not unparsed:
-    ``chargePos`` carries ``invalid: 1`` on every sample from this hardware, so
-    a docked mower sends exactly that, and upstream's ``analyse()`` would log
-    "Could not handle onPos" for a message this handler understood perfectly.
-    ``OnMI`` makes the same distinction: success when there is nothing new to
-    publish, ``analyse()`` reserved for a payload that would not parse.
+    on the firmwares that flag ``chargePos`` out, a docked mower sends exactly
+    that, and upstream's ``analyse()`` would log "Could not handle onPos" for a
+    message this handler understood perfectly. ``OnMI`` makes the same
+    distinction: success when there is nothing new to publish, ``analyse()``
+    reserved for a payload that would not parse.
 
     The body is otherwise upstream's, in upstream's order, so it stays easy to
     diff against ``commands/json/pos.py`` the day the filter is fixed there and
@@ -1062,10 +1064,11 @@ class OnPos(MessageBodyDataDict):
                 if not entry.get("invalid", 0) & 1
             )
 
-        # Usually the origin — verified hardware sends chargePos with
-        # invalid: 1 on every sample, which the filter above already dropped
-        # — but a firmware that ever reports a valid, non-origin chargePos in
-        # the same payload should be measured from that, not from (0, 0).
+        # Often the origin: firmware 1.11.31 and 1.13.10 send chargePos with
+        # invalid: 1 on every sample, which the filter above already dropped,
+        # and 1.36.208 sends a valid one that is (0, 0). A firmware that ever
+        # reports a valid, non-origin chargePos in the same payload is
+        # measured from that rather than from the fallback.
         dock_x, dock_y = next(
             (
                 (position.x, position.y)
