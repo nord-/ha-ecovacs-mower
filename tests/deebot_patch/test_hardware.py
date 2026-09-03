@@ -10,6 +10,7 @@ from deebot_client.hardware import _DEVICES, get_static_device_info
 from custom_components.ecovacs_mower.deebot_patch.commands import (
     CleanMower,
     GetLifeSpanMower,
+    GetMapInfoV2,
     GetProtectState,
     GetRainDelay,
     GetStatsMower,
@@ -18,6 +19,9 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
 from custom_components.ecovacs_mower.deebot_patch.hardware import (
     SUPPORTED_CLASSES,
     patch_device_info,
+)
+from custom_components.ecovacs_mower.deebot_patch.map_messages import (
+    MowerMapInfoEvent,
 )
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     MowerBeaconsEvent,
@@ -158,6 +162,19 @@ async def test_patch_wires_a_refresh_command_for_the_rain_setting(
     info = await get_static_device_info(class_)
     commands = info.capabilities.get_refresh_commands(MowerRainDelayEvent)
     assert [type(c) for c in commands] == [GetRainDelay]
+
+
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_patch_wires_a_request_for_the_lawn_boundary(class_: str) -> None:
+    # Issue #81, and a different failure from #31 and #54 above: the boundary
+    # is not a push the mower may forget to send, it is a push the mower never
+    # sends unasked. Firmware 1.36 answers getMapInfo_V2 with 32 KB of outline
+    # on the atr topic and sends it at no other time, so without this entry
+    # onMapInfo_V2 never arrives and the map has no field around its coverage.
+    await patch_device_info(class_)
+    info = await get_static_device_info(class_)
+    commands = info.capabilities.get_refresh_commands(MowerMapInfoEvent)
+    assert [type(c) for c in commands] == [GetMapInfoV2]
 
 
 async def test_patch_leaves_the_librarys_own_refresh_commands_alone() -> None:

@@ -51,11 +51,15 @@ def _points(spec: str) -> Polygon:
 
     Parts without a comma are skipped: a leading id or kind marker, and
     the empty field a trailing ";" leaves behind.
+
+    Fields past the second are dropped. Firmware 1.36 appends a third one
+    to every boundary point of ``onMapInfo_V2`` — ``1`` on all 692 of the
+    capture in issue #81 — and nothing downstream has a use for it yet.
     """
     points: Polygon = []
     for part in spec.split(";"):
         if "," in part:
-            x, y = part.split(",")
+            x, y = part.split(",")[:2]
             points.append((int(x), int(y)))
     return points
 
@@ -153,25 +157,41 @@ class CoveredArea:
 
 
 def parse_map_info(blob: bytes) -> MapInfo:
-    """Parse onMI, in either dialect:
+    """Parse onMI, in any of three dialects:
 
     ``[["1","s1;1;<x,y>;<chain code>"],["2","1"]]`` up to firmware 1.13,
-    ``[["1","s1;<x,y>;<x,y>;…"],["2"]]`` from 1.17 on.
+    ``[["1","s1;<x,y>;<x,y>;…"],["2"]]`` from 1.17 on, and
+    ``[["1","<id>;<x,y,flag>;…"],["2",…],["3",…],["4"],["5"]]`` from 1.36,
+    where the message is named ``onMapInfo_V2``.
 
-    Both have an idle variant carrying no geometry — ``s1;0;`` and a bare
-    ``1`` respectively — which yields all-None.
+    The first two have an idle variant carrying no geometry — ``s1;0;``
+    and a bare ``1`` respectively — which yields all-None.
+
+    1.36 drops the ``s1`` marker for a record id, appends a per-point
+    flag, and adds sections. Only section 1 is read here. Section 2 is
+    the same outline retraced at the 50 mm grid step — 1924 points to
+    section 1's 692, every one of which it also contains — and section 3
+    holds the islands inside the lawn, thirteen of them in the capture
+    behind issue #81. Neither has a home in ``MapInfo`` yet, and section 1
+    is the boundary in every dialect, so publishing more than it would be
+    a new claim rather than a decode. The fixture carries all five.
     """
     boundary: Polygon | None = None
     for entry in json.loads(blob):
         if entry[0] != "1" or len(entry) < 2:
             continue
         fields = entry[1].split(";")
-        if fields[0] != "s1" or len(fields) < 2:
+        if len(fields) < 2:
+            # 1.17's idle marker: the record is the bare id, no geometry.
             continue
-        if "," in fields[1]:
+        if fields[0] == "s1":
+            if "," in fields[1]:
+                boundary = _points(entry[1])
+            elif fields[1] == "1":
+                boundary = chain_to_points(";".join(fields[2:]))
+        elif "," in fields[1]:
+            # 1.36: an id where "s1" used to be, points from there on.
             boundary = _points(entry[1])
-        elif fields[1] == "1":
-            boundary = chain_to_points(";".join(fields[2:]))
     return MapInfo(boundary=boundary)
 
 

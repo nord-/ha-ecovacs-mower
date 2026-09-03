@@ -9,6 +9,7 @@ from dataclasses import fields
 from deebot_client.capabilities import Capabilities
 from deebot_client.events import StateEvent
 from deebot_client.hardware import _DEVICES
+from deebot_client.message import HandlingState
 from deebot_client.messages.json import MESSAGES
 
 
@@ -486,3 +487,93 @@ def test_the_v2_command_names_are_what_we_fall_back_to() -> None:
 
     assert CleanV2.NAME == "clean_V2"
     assert GetCleanInfoV2.NAME == "getCleanInfo_V2"
+
+
+def test_get_message_prefers_an_exact_name_over_the_v2_strip() -> None:
+    # OnMapInfo is registered as "onMapInfo_V2" rather than "onMapInfo"
+    # because this ordering makes the stripped name unreachable for a device
+    # sending the full one. If upstream ever strips first, the shorter name
+    # becomes the right key and this test is where that shows up.
+    import inspect
+
+    from deebot_client.messages import get_message
+
+    source = inspect.getsource(get_message)
+    exact = source.index("messages.get(message_name")
+    stripped = source.index('removesuffix("_V2")')
+    assert exact < stripped
+
+
+def test_upstream_still_owns_the_boundary_message_name() -> None:
+    # The reason onMapInfo_V2 is never logged as an unknown message, and the
+    # reason apply() has to overwrite rather than fill a gap. Upstream's
+    # handler drops any blob whose outlineVer is not "1"; firmware 1.36 sends
+    # "0" on the map it reports as in use, so the boundary was claimed and
+    # discarded (issue #81). If upstream drops this class, the override
+    # becomes a plain registration and this test says so.
+    from deebot_client.messages.json import MESSAGES
+    from deebot_client.messages.json.map import OnMapInfoV2
+
+    from custom_components.ecovacs_mower.deebot_patch import apply
+    from custom_components.ecovacs_mower.deebot_patch.map_messages import (
+        OnMapInfo,
+    )
+
+    assert OnMapInfoV2.NAME == "onMapInfo_V2"
+    apply()
+    assert MESSAGES["onMapInfo_V2"] is OnMapInfo
+
+
+def test_upstream_still_drops_the_outline_version_1_36_sends() -> None:
+    # The behaviour the test above exists for, pinned rather than narrated:
+    # upstream reports success and notifies nothing when outlineVer is "0",
+    # which is what firmware 1.36 sends on the map it flags as in use. The
+    # values are the captured ones (issue #81). Overwriting the registration
+    # stays necessary either way — the library notifies MapInfoEvent, not
+    # MowerMapInfoEvent — but if upstream ever accepts "0", this is where the
+    # comment above stops being true, instead of going quietly stale.
+    from unittest.mock import Mock
+
+    from deebot_client.messages.json.map import OnMapInfoV2
+
+    event_bus = Mock()
+
+    result = OnMapInfoV2._handle_body_data_dict(
+        event_bus,
+        {
+            "mid": "123456789",
+            "outlineVer": "0",
+            "using": 1,
+            "info": "XQAABACJfQAAAC2WwEIAXhQm9CKuIaCWfoHDAPM7",
+        },
+    )
+
+    assert result.state is HandlingState.SUCCESS
+    event_bus.notify.assert_not_called()
+
+
+def test_execute_command_succeeds_on_an_ack_without_reading_data() -> None:
+    # What GetMapInfoV2 relies on: the getMapInfo_V2 reply is an ack with no
+    # data, so the base must succeed on code 0 without reaching for body.data.
+    import inspect
+
+    from deebot_client.commands.json.common import ExecuteCommand
+
+    source = inspect.getsource(ExecuteCommand)
+    assert "data" not in source
+    result = ExecuteCommand._handle_body(None, {"code": 0, "msg": "ok"})
+    assert result.state is HandlingState.SUCCESS
+
+
+def test_a_refresh_is_not_expected_to_produce_an_event() -> None:
+    # GetMapInfoV2 rides the refresh machinery but publishes nothing itself:
+    # the boundary lands separately on the atr topic. That only works while
+    # the bus awaits the command and asks nothing else of it — no retry, no
+    # "refresh produced no event" failure (issue #81).
+    import inspect
+
+    from deebot_client.event_bus import EventBus
+
+    source = inspect.getsource(EventBus._call_refresh_function)
+    assert "last_event" not in source
+    assert "retry" not in source

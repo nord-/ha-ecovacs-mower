@@ -22,6 +22,7 @@ from .families import attempted_family_name
 from .hardware import SUPPORTED_CLASSES, patch_device_info
 from .map_messages import (
     OnArI,
+    OnMapInfo,
     OnMapTrace,
     OnMapTrack,
     OnMI,
@@ -104,6 +105,11 @@ def apply() -> None:
         OnStatsMower,
         OnUwb,
         OnArI,
+        # Registered under the full onMapInfo_V2, which the library already
+        # claims: get_message() matches that exactly before it strips the
+        # suffix, so this entry is what decides whether the boundary is
+        # decoded or dropped. The assertion below is what proves it took.
+        OnMapInfo,
         OnMapTrace,
         OnMapTrack,
         OnMI,

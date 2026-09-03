@@ -19,11 +19,13 @@ from deebot_client.hardware import _DEVICES, get_static_device_info
 from .commands import (
     CleanMower,
     GetLifeSpanMower,
+    GetMapInfoV2,
     GetProtectState,
     GetRainDelay,
     GetStatsMower,
     MowerStateRefresh,
 )
+from .map_messages import MowerMapInfoEvent
 from .messages import (
     MowerBeaconsEvent,
     MowerProtectStateEvent,
@@ -86,6 +88,9 @@ async def patch_device_info(class_: str) -> None:
       listed after them. Swapped for ``GetLifeSpanMower``.
     * ``MowerProtectStateEvent``, ``MowerRainDelayEvent``, ``MowerStatsEvent``
       and ``MowerBeaconsEvent``: given the refresh commands they had none of.
+    * ``MowerMapInfoEvent``: given ``GetMapInfoV2``, without which firmware
+      1.36 never sends the lawn boundary at all — it answers the request and
+      pushes at no other time (issue #81).
 
     The call is idempotent and does nothing for classes outside
     ``SUPPORTED_CLASSES``.
@@ -169,6 +174,18 @@ async def patch_device_info(class_: str) -> None:
     # every mower — beacon-equipped or not — asks twice at startup and on
     # every reconnect. Both parse the one answer correctly; only the extra
     # round trip is paid.
+    #
+    # MowerMapInfoEvent is a different case from all of the above: it is not a
+    # push the mower may forget to send, it is a push the mower never sends
+    # unasked. Firmware 1.36 answers getMapInfo_V2 with the lawn outline on
+    # the atr topic and sends it at no other time, so without an entry here
+    # the boundary never arrives at all and the map stays a coverage patch
+    # with no field around it (issue #81). controller._setup_map subscribes
+    # MowerMapInfoEvent eagerly, so this alone gets the request sent at setup
+    # and again on every reconnect — no new lifecycle code, and no risk of a
+    # command firing before the device exists. The answer is an ack; the
+    # payload lands separately in OnMapInfo, which is why this refresh
+    # publishes no event of its own and why that is fine — see GetMapInfoV2.
     object.__setattr__(
         patched,
         "_events",
@@ -179,6 +196,7 @@ async def patch_device_info(class_: str) -> None:
                 MowerRainDelayEvent: [GetRainDelay()],
                 MowerStatsEvent: [GetStatsMower()],
                 MowerBeaconsEvent: [GetLifeSpanMower(capabilities.life_span.types)],
+                MowerMapInfoEvent: [GetMapInfoV2()],
             }
         ),
     )
