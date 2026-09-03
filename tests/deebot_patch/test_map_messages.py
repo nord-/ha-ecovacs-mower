@@ -165,21 +165,6 @@ def test_apply_registers_the_map_messages() -> None:
     assert MESSAGES["onSpecialContour"] is OnSpecialContour
 
 
-def test_the_v2_trace_name_falls_back_to_our_handler() -> None:
-    # Firmware 1.36 sends onMapTrace_V2, not onMapTrace — every g1800
-    # fixture here was captured under that name. get_message() reaches our
-    # class by stripping the suffix, which only works while upstream leaves
-    # the full name unclaimed. If it ever ships an OnMapTraceV2 the strip
-    # stops being reached and issue #52 is silently back.
-    from deebot_client.messages.json import MESSAGES
-
-    from custom_components.ecovacs_mower.deebot_patch import apply
-
-    apply()
-    assert "onMapTrace_V2" not in MESSAGES
-    assert MESSAGES["onMapTrace"] is OnMapTrace
-
-
 def test_on_mi_v117_notifies_boundary() -> None:
     events = _notified(OnMI, "on_mi_full_v117")
     assert len(events) == 1
@@ -215,3 +200,26 @@ def test_on_map_trace_notifies_covered_area() -> None:
     assert isinstance(events[0], MowerCoveredAreaEvent)
     assert len(events[0].areas) == 1
     assert len(events[0].holes) == 6
+
+
+def test_on_map_trace_notifies_the_live_runs_of_a_job() -> None:
+    # The same decode as test_geometry, but through the handler and on the
+    # firmware that reported issue #52: two runs out of section 3, and not
+    # the empty polygon an id-only section 1 used to contribute.
+    events = _notified(OnMapTrace, "on_map_trace_g1800_job_two_runs")
+    assert len(events) == 1
+    assert isinstance(events[0], MowerCoveredAreaEvent)
+    assert [len(area) for area in events[0].areas] == [7, 52]
+    assert events[0].holes == []
+
+
+def test_on_map_trace_notifies_an_emptied_blob() -> None:
+    # The filter drops empty polygons, never the event. A blob whose
+    # sections hold nothing but ids is how the mower says the coverage is
+    # gone — it sends one a second into every job — and the map layer only
+    # clears itself if that still arrives as an event.
+    events = _notified(OnMapTrace, "on_map_trace_g1800_job_cleared")
+    assert len(events) == 1
+    assert isinstance(events[0], MowerCoveredAreaEvent)
+    assert events[0].areas == []
+    assert events[0].holes == []

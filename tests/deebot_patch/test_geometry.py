@@ -10,9 +10,10 @@ The ``on_map_trace_g1800_*`` four are byte-exact ``onMapTrace_V2`` payloads a
 GOAT G1-800 (77atlz, fw 1.36.208) pushed on 2026-08-30, taken from the MQTT
 debug log of issue #52: the docked snapshot at 09:17:28, the cleared sections
 one second into the job at 09:17:47, and two blobs of the border run itself,
-09:18:05 and 09:18:14. Only ``mid`` and the header timestamps are replaced;
-every ``info`` is the base64 the device sent, and each decompresses to exactly
-the ``infoSize`` its log line declared.
+09:18:05 and 09:18:14. Only the header timestamps are replaced — ``mid`` is
+the placeholder ``123456789`` the firmware itself puts on every trace (issue
+#52) — and every ``info`` is the base64 the device sent, each decompressing
+to exactly the ``infoSize`` its log line declared.
 
 The two job blobs are a pair on purpose. Nine seconds apart, they carry the
 same 52-point run under two different ids — "1" while it is the only run,

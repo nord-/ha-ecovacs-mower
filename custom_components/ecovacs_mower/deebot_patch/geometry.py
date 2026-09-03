@@ -354,11 +354,13 @@ def parse_map_trace(blob: bytes) -> CoveredArea:
     six-point run — so both feed ``areas``.
 
     Records carry a leading id that ``_points`` drops, so an id-only
-    record decodes to an empty polygon. Those are discarded rather than
-    kept: an id-only section 1 is what a running job sends, and an
-    ``areas=[[]]`` that never changes makes the event bus dedup every
-    later blob against the first, freezing the coverage layer for the
-    length of the job. The filter is the fix, not tidiness.
+    record decodes to an empty polygon. Those are discarded from both
+    lists rather than kept: an id-only section 1 is what a running job
+    sends, and an ``areas=[[]]`` that never changes makes the event bus
+    dedup every later blob against the first, freezing the coverage layer
+    for the length of the job. The filter is the fix, not tidiness. No
+    captured blob holds an id-only hole record, so section 2 is covered
+    for symmetry rather than against a known shape.
     """
     sections: dict[str, list[Polygon]] = {"1": [], "2": [], "3": []}
     for entry in json.loads(blob):
