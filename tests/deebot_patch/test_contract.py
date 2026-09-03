@@ -524,6 +524,34 @@ def test_upstream_still_owns_the_boundary_message_name() -> None:
     assert MESSAGES["onMapInfo_V2"] is OnMapInfo
 
 
+def test_upstream_still_drops_the_outline_version_1_36_sends() -> None:
+    # The behaviour the test above exists for, pinned rather than narrated:
+    # upstream reports success and notifies nothing when outlineVer is "0",
+    # which is what firmware 1.36 sends on the map it flags as in use. The
+    # values are the captured ones (issue #81). Overwriting the registration
+    # stays necessary either way — the library notifies MapInfoEvent, not
+    # MowerMapInfoEvent — but if upstream ever accepts "0", this is where the
+    # comment above stops being true, instead of going quietly stale.
+    from unittest.mock import Mock
+
+    from deebot_client.messages.json.map import OnMapInfoV2
+
+    event_bus = Mock()
+
+    result = OnMapInfoV2._handle_body_data_dict(
+        event_bus,
+        {
+            "mid": "123456789",
+            "outlineVer": "0",
+            "using": 1,
+            "info": "XQAABACJfQAAAC2WwEIAXhQm9CKuIaCWfoHDAPM7",
+        },
+    )
+
+    assert result.state is HandlingState.SUCCESS
+    event_bus.notify.assert_not_called()
+
+
 def test_execute_command_succeeds_on_an_ack_without_reading_data() -> None:
     # What GetMapInfoV2 relies on: the getMapInfo_V2 reply is an ack with no
     # data, so the base must succeed on code 0 without reaching for body.data.

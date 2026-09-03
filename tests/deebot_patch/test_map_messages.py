@@ -6,10 +6,10 @@ installed (CI; local Python 3.12 cannot install the cp314-only wheels).
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from pathlib import Path
 from typing import Any
-from copy import deepcopy
 from unittest.mock import Mock, patch
 
 from custom_components.ecovacs_mower.deebot_patch.map_messages import (

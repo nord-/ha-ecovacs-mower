@@ -607,9 +607,19 @@ To get a usable log:
 For anything about the map, `deebot_client` at debug level is the only thing
 that shows whether the mower sends `onMI`/`onArI`/`onMapTrack`/
 `onSpecialContour` — or `onMapTrace`, which firmware 1.17 sends instead of
-`onMapTrack`, or `onMapInfo_V2`, which is 1.36's name for `onMI` — at all.
-That is the log to attach to a map issue, and the `info` fields have to be
-left intact: they are the map geometry itself.
+`onMapTrack`, or `onMapInfo_V2`, which is 1.36's replacement for `onMI` — at
+all. That is the log to attach to a map issue, and the `info` fields have to
+be left intact: they are the map geometry itself.
+
+On firmware older than 1.36, the `getMapInfo_V2` the integration sends at
+setup and after every reconnect may go unanswered, which `deebot_client` logs
+as `Command "getMapInfo_V2" was not successfully.` or `No response received
+for command "getMapInfo_V2"`. That warning is expected and harmless — the
+request is never retried and the boundary those firmwares push unasked as
+`onMI` arrives regardless. It is still worth reporting with the log around
+it: nobody has captured what pre-1.36 firmware answers here, and that capture
+is what would justify picking between `getMapInfo` and `getMapInfo_V2` per
+mower the way the clean commands already do.
 
 ## Current status
 
