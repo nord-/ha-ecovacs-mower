@@ -82,3 +82,90 @@ def test_device_info_keys_are_covered_or_deliberately_public() -> None:
     public = {"class", "company", "deviceName"}
 
     assert set(ApiDeviceInfo.__annotations__) <= REDACT | public
+
+
+def test_keys_observed_on_real_hardware_are_covered_or_deliberately_public() -> None:
+    """The TypedDict is not the payload.
+
+    ``ApiDeviceInfo`` declares a subset. ``api_client.py`` feeds raw API JSON
+    straight into it, so a real mower's ``device.device_info`` carries keys the
+    annotations never mention — and the test above, which walks
+    ``__annotations__``, is structurally blind to every one of them. ``homeId``
+    was already masked for exactly this reason; it was added by hand, because
+    nothing could have failed to point at it.
+
+    This is the key set observed on GOAT hardware, which is the shape that
+    actually reaches a diagnostics report. It is what caught ``btMac``: a
+    Bluetooth MAC shipping in the clear past a REDACT that listed ``mac`` and
+    therefore looked like it covered the case.
+
+    Keys only, never values — the point of the file this guards is that real
+    values do not get published, and a fixture is not an exception to that.
+    """
+    from custom_components.ecovacs_mower.diagnostics import REDACT
+
+    observed = {
+        "did",
+        "name",
+        "class",
+        "resource",
+        "company",
+        "bindTs",
+        "service",
+        "deviceName",
+        "icon",
+        "ota",
+        "UILogicId",
+        "materialNo",
+        "pid",
+        "product_category",
+        "model",
+        "updateInfo",
+        "nick",
+        "homeId",
+        "homeSort",
+        "status",
+        "btName",
+        "btMac",
+        "otaUpgrade",
+        "networkMode",
+    }
+
+    # Deliberately unmasked, in three groups.
+    #
+    # Model identity ("class", "deviceName", "model", "pid", "materialNo",
+    # "product_category", "UILogicId", "icon", "company") describes which machine
+    # this is, not whose: it is shared by every unit of the same product, and it
+    # is the first thing anyone triaging an issue needs.
+    #
+    # Firmware and connectivity posture ("ota", "otaUpgrade", "updateInfo",
+    # "networkMode", "status") is state, not identity, and a report without it
+    # cannot distinguish a stale firmware from a broken patch layer.
+    #
+    # "service" is the regional endpoint pair (which Ecovacs datacenter answers
+    # this account) and "bindTs" is when the mower was bound. Regional and
+    # coarse rather than personal, and both change the interpretation of an
+    # authentication failure — the class of bug this fork exists for.
+    # "homeSort" is this device's ordinal within a household whose "homeId" is
+    # already masked, so on its own it names nothing.
+    public = {
+        "class",
+        "company",
+        "deviceName",
+        "model",
+        "pid",
+        "materialNo",
+        "product_category",
+        "UILogicId",
+        "icon",
+        "ota",
+        "otaUpgrade",
+        "updateInfo",
+        "networkMode",
+        "status",
+        "service",
+        "bindTs",
+        "homeSort",
+    }
+
+    assert observed <= REDACT | public
