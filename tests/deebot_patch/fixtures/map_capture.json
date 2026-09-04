@@ -899,5 +899,113 @@
     }
    }
   }
+ ],
+ "on_map_trace_g1800_idle": [
+  {
+   "message": "onMapTrace_V2",
+   "payload": {
+    "header": {
+     "pri": 1,
+     "tzm": 60,
+     "ts": "1787680620653",
+     "ver": "0.0.1",
+     "fwVer": "1.36.208",
+     "hwVer": "0.1.1",
+     "wkVer": "0.1.54"
+    },
+    "body": {
+     "data": {
+      "mid": "123456789",
+      "batid": "gpagmm",
+      "serial": "1",
+      "index": "0",
+      "type": "0",
+      "info": "XQAABACDAAAAAC2WwEIAXhHX5+Zn01Yx58ayQPiVHKCVFm+o2y4HlmmSMlGiKvsn9wT4jNdJEQKnClIKd13LJXWJL1VWdFh0tsX+iWPdJf7ZVmA=",
+      "infoSize": 131
+     }
+    }
+   }
+  }
+ ],
+ "on_map_trace_g1800_job_cleared": [
+  {
+   "message": "onMapTrace_V2",
+   "payload": {
+    "header": {
+     "pri": 1,
+     "tzm": 60,
+     "ts": "1787680639113",
+     "ver": "0.0.1",
+     "fwVer": "1.36.208",
+     "hwVer": "0.1.1",
+     "wkVer": "0.1.54"
+    },
+    "body": {
+     "data": {
+      "mid": "123456789",
+      "batid": "olpcbp",
+      "serial": "1",
+      "index": "0",
+      "type": "0",
+      "info": "XQAABAATAAAAAC2WwEIAXv+ORhXbW7mCK5g9YA==",
+      "infoSize": 19
+     }
+    }
+   }
+  }
+ ],
+ "on_map_trace_g1800_job_one_run": [
+  {
+   "message": "onMapTrace_V2",
+   "payload": {
+    "header": {
+     "pri": 1,
+     "tzm": 60,
+     "ts": "1787680657719",
+     "ver": "0.0.1",
+     "fwVer": "1.36.208",
+     "hwVer": "0.1.1",
+     "wkVer": "0.1.54"
+    },
+    "body": {
+     "data": {
+      "mid": "123456789",
+      "batid": "gaemni",
+      "serial": "1",
+      "index": "0",
+      "type": "0",
+      "info": "XQAABAAOAgAAAC2WwEIAXhQm89TbsAJkvTtOLSQC+uKOTg/z22BLVo63ifPudFxUYTNgfig2P0AvpmBphEN5XatJUy8BCwdRThLuMcYUVLNlF0OD1Cm4AobCFMfDa6i9Ohn8Y5tAckdxwGFHq81t9xgVkc6G9urLb6fsRaspGhsbap4Lbw9uMB6hJsPu3yeSERJFcBD7aNjlqXvuT4kfmws2GDvxSxfi4JSRExaKuCuhg1C6krf6369V3qm0PyWfBdu/VkcT4A==",
+      "infoSize": 526
+     }
+    }
+   }
+  }
+ ],
+ "on_map_trace_g1800_job_two_runs": [
+  {
+   "message": "onMapTrace_V2",
+   "payload": {
+    "header": {
+     "pri": 1,
+     "tzm": 60,
+     "ts": "1787680666722",
+     "ver": "0.0.1",
+     "fwVer": "1.36.208",
+     "hwVer": "0.1.1",
+     "wkVer": "0.1.54"
+    },
+    "body": {
+     "data": {
+      "mid": "123456789",
+      "batid": "ndoffj",
+      "serial": "1",
+      "index": "0",
+      "type": "0",
+      "info": "XQAABABgAgAAAC2WwEIAXhQm89TbsAJkvTtOLSQC+uKOTg/z22BLVo67xOth4y1B269yiCuiX3GPguIsR7C74w0F1zcJ2Uxo2Ip819127PgXJBemtT+WFiPwN2McpvJ1xyLhTv+YfQCoWijmfqHKWFu+0objJ2n505ho5LoRL+o8NgE1wWwWuat+JJ2Jx7nsJwyNQ5WUQZiWBmI2vAjbni4hMYmi44sbV5hzRHORENX9TNW81BLfUWU8RvlEQURus8l4tJRAUQrWx4fLFoS49aI1wGepzI5xUr3gAA==",
+      "infoSize": 608
+     }
+    }
+   }
+  }
  ]
 }

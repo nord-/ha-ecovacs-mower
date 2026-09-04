@@ -317,9 +317,10 @@ class EcovacsController:
             save()
 
         async def on_positions(event: PositionsEvent) -> None:
-            # Position is volatile — no save. A valid charger position has
-            # never been observed on the verified hardware, but if one
-            # arrives it beats the origin assumption.
+            # Position is volatile — no save. No valid charger position was
+            # observed on firmware 1.11.31 or 1.13.10, which is why the map
+            # defaults to the origin; 1.36.208 does send one, and a reported
+            # position beats the assumption either way (issue #52).
             for position in event.positions:
                 if position.type is PositionType.DEEBOT:
                     mower_map.update_position(
