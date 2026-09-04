@@ -169,3 +169,65 @@ def test_keys_observed_on_real_hardware_are_covered_or_deliberately_public() -> 
     }
 
     assert observed <= REDACT | public
+
+
+async def test_the_dump_itself_redacts_and_not_only_the_set() -> None:
+    """The set is not the behaviour.
+
+    Every other test in this file asserts something about REDACT's *contents*.
+    None of them calls the function, so dropping ``async_redact_data`` from
+    either branch of the dump — or reaching for ``device.device_info`` a second
+    time somewhere below — would leave all of them green while the report goes
+    out in full. This one reads the output.
+
+    ``async_get_config_entry_diagnostics`` never touches ``hass``, so the entry
+    and its controller are plain stubs rather than a set-up config entry: the
+    contract under test is what comes back, not how the entry was loaded.
+
+    Placeholder values throughout, and deliberately so — a test that pins
+    redaction is the last place a real identifier should appear.
+    """
+    from unittest.mock import MagicMock
+
+    from homeassistant.components.diagnostics import REDACTED
+
+    from custom_components.ecovacs_mower.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    device = MagicMock()
+    device.device_info = {
+        "did": "test-did",
+        "resource": "test-resource",
+        "btMac": "00:00:00:00:00:XX",
+        "btName": "GOAT-0000",
+        "class": "77atlz",
+        # Nested, because the raw api dict nests and the mower's real payload
+        # repeats identifiers below the top level. Redaction has to recurse.
+        "service": {"jmq": "jmq.example.net", "did": "test-did"},
+    }
+
+    entry = MagicMock()
+    entry.data = {
+        "username": "user@example.com",
+        "password": "password",
+        "country": "IT",
+    }
+    entry.runtime_data.devices = [device]
+
+    dump = await async_get_config_entry_diagnostics(None, entry)
+    config = dump["config"]
+    (reported,) = dump["devices"]
+
+    assert config["username"] == REDACTED
+    assert config["password"] == REDACTED
+    assert reported["did"] == REDACTED
+    assert reported["resource"] == REDACTED
+    assert reported["btMac"] == REDACTED
+    assert reported["btName"] == REDACTED
+    assert reported["service"]["did"] == REDACTED
+
+    # The other half of the contract: a redacted report has to stay useful.
+    # Country and device class are what someone triaging reads first.
+    assert config["country"] == "IT"
+    assert reported["class"] == "77atlz"
