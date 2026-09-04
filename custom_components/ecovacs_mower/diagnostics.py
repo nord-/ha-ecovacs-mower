@@ -41,6 +41,20 @@ from .const import CONF_CREDENTIALS, CONF_OVERRIDE_MQTT_URL, CONF_OVERRIDE_REST_
 # the MQTT topic; "did" is already masked, but without "resource" the topic can
 # still be reconstructed) are in the TypedDict and come along entirely
 # unabridged — device.device_info *is* the raw api dict.
+#
+# "btMac" and "btName" are the mower's Bluetooth identity, and they leak by the
+# same mechanism as "homeId": outside the TypedDict, carried through whole. The
+# set below has listed "mac" since it was written, which reads like it covers
+# the first of them and does not — async_redact_data matches keys exactly, and a
+# GOAT payload has no "mac" key at all. The Wi-Fi MAC reaches the device
+# registry by an entirely different path (Device.mac, into DeviceInfo's
+# connections), never through this dict, so "mac" masks nothing here; it stays
+# only because the payload shape is Ecovacs' to change, not ours to pin.
+#
+# Masking both matters more than the usual "it is an identifier" argument: a MAC
+# is globally unique and geolocatable through public BSSID databases, and the
+# diagnostics dump is the artifact users are asked to attach to a GitHub issue —
+# the one path every other entry in this set exists to protect.
 REDACT = {
     CONF_USERNAME,
     CONF_PASSWORD,
@@ -54,6 +68,8 @@ REDACT = {
     "resource",
     "homeId",
     "mac",
+    "btMac",
+    "btName",
 }
 
 
