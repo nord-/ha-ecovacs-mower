@@ -19,7 +19,7 @@ from deebot_client.messages.json import MESSAGES
 from .authentication import AccountAuthenticator
 from .commands import CleanMower, GetCleanInfoMower, MowerStateRefresh, has_family
 from .families import attempted_family_name
-from .hardware import SUPPORTED_CLASSES, patch_device_info
+from .hardware import SUPPORTED_CLASSES, ZONE_AREA_CLASSES, patch_device_info
 from .map_messages import (
     OnArI,
     OnMapTrace,
@@ -45,6 +45,7 @@ from .messages import (
     OnUwb,
 )
 from .state_precedence import register as register_mower_bus
+from .zonal import MowArea
 
 __all__ = [
     "SUPPORTED_CLASSES",
@@ -128,6 +129,12 @@ def verify_capabilities(capabilities: Capabilities, class_: str) -> None:
         _fail(
             f"device {class_} was built with {capabilities.clean.action.command.__name__} "
             f"instead of CleanMower — the patch ran too late"
+        )
+
+    if class_ in ZONE_AREA_CLASSES and capabilities.clean.action.area is not MowArea:
+        _fail(
+            f"device {class_} was built without the patched MowArea capability "
+            f"— the patch ran too late"
         )
 
     # Exact type comparison, not isinstance: both GetCleanInfoV2 and our own

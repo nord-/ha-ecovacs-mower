@@ -1,0 +1,13 @@
+mow_area:
+  target:
+    entity:
+      domain: lawn_mower
+      integration: ecovacs_mower
+  fields:
+    area_ids:
+      required: true
+      example: "[1, 3]"
+      selector:
+        text:
+          multiple: true
+          type: number

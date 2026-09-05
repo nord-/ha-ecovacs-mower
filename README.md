@@ -82,7 +82,7 @@ merely that the class string was seen:
 | **Ecovacs GOAT O800 RTK** | `9bts2s` | a user, firmware 1.13.8 ([#8](https://github.com/nord-/ha-ecovacs-mower/issues/8)) |
 | **Ecovacs GOAT O800 RTK** | `2px96q` | a user, controls and state confirmed — start/pause in [#24](https://github.com/nord-/ha-ecovacs-mower/issues/24), state on firmware 1.17.11 in [#56](https://github.com/nord-/ha-ecovacs-mower/issues/56). Firmware 1.17 speaks a second map dialect, decoded from two users' logs but not yet confirmed on hardware ([#41](https://github.com/nord-/ha-ecovacs-mower/issues/41)) |
 | **Ecovacs GOAT G1-800** | `77atlz` | patched, controls **not** confirmed — the protection-flag sensors work on firmware 1.36.208 ([#30](https://github.com/nord-/ha-ecovacs-mower/issues/30)); that firmware branch answers the `V2` command family instead of the one every other confirmed mower uses, and the integration now detects and switches to it automatically, so no manual configuration is needed ([#42](https://github.com/nord-/ha-ecovacs-mower/issues/42)) |
-| **Ecovacs GOAT A1600 LiDAR Pro** | `e4gqia` | a user, firmware 1.11.31 ([#29](https://github.com/nord-/ha-ecovacs-mower/pull/29)) |
+| **Ecovacs GOAT A1600 LiDAR Pro** | `e4gqia` | a user, firmware 1.11.31 — zone mowing confirmed ([#29](https://github.com/nord-/ha-ecovacs-mower/pull/29)) |
 | **Ecovacs GOAT A1600 RTK** | `xmp9ds` | reported, patch not yet confirmed — firmware 1.17.9 ([#43](https://github.com/nord-/ha-ecovacs-mower/issues/43)) |
 
 The A1600 ships as two machines, and they report different device classes:
@@ -178,9 +178,41 @@ plus one per UWB beacon on the models that use them:
 | `event` | 1 | Last mowing job (finished / finished with warnings / manually stopped — see below) |
 | `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, and `onMapTrace` on firmware 1.17); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only |
 
-Not included yet: **RTK diagnostics** (position and satellite data) and
-zone control. RTK is planned for the next release; the other has no
-committed date.
+Not included yet: **RTK diagnostics** (position and satellite data). RTK is
+planned for the next release.
+
+### Zone-specific mowing
+
+The `ecovacs_mower.mow_area` service starts a mowing job for one or more
+specified zone IDs using the mower's `spotArea` command.
+
+Zone mowing is currently confirmed only on the A1600 LiDAR Pro (`e4gqia`).
+If you have another mower class, zone mowing is not yet verified on that
+hardware; please report the device class in a new issue if you test it.
+
+The service requires a mower entity as its target and accepts one or more
+integer `area_ids` between `1` and `999`:
+
+```yaml
+action: ecovacs_mower.mow_area
+target:
+  entity_id: lawn_mower.my_goat
+data:
+  area_ids:
+    - 1
+    - 3
+```
+
+Multiple zones can be supplied in a single call. The service is stateless:
+it sends the requested zones directly to the targeted mower and does not
+attempt to determine whether the specified zones actually exist on the
+mower.
+
+The same service can also be used from Home Assistant's UI, where the mower
+entity and one or more zone IDs can be selected.
+
+The zone IDs are mower-specific. A value being within the accepted 1..999
+range does not imply that the mower has a zone with that ID.
 
 ### When a run stops because of rain
 

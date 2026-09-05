@@ -127,5 +127,17 @@
       "safe_protect": { "name": "Safety protection" },
       "rain_detection": { "name": "Rain detection" }
     }
+  },
+  "services": {
+    "mow_area": {
+      "name": "Mow area",
+      "description": "Start mowing one or more saved mowing areas.",
+      "fields": {
+        "area_ids": {
+          "name": "Area IDs",
+          "description": "Saved mower area IDs to mow."
+        }
+      }
+    }
   }
 }
