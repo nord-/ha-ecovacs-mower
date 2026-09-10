@@ -1035,6 +1035,20 @@ async def test_a_start_is_a_new_auto_job_whatever_was_recorded() -> None:
     assert sent == [{"act": "start", "content": {"type": "auto"}}]
 
 
+async def test_a_start_writes_auto_into_the_record_before_the_first_push() -> None:
+    # Closes the window between pressing start and onCleanInfo arriving: a
+    # quick pause in between must not echo a stale type from a prior job.
+    bus = _bus()
+    record = register(bus)
+    record.note_job({"type": "spotArea"})
+    fake_execute, _sent = _sent_args()
+
+    with patch.object(Command, "_execute", fake_execute):
+        await CleanMower(CleanAction.START)._execute(AsyncMock(), _DEVICE_INFO, bus)
+
+    assert record.job_type == "auto"
+
+
 async def test_a_resume_falls_back_to_auto_when_no_job_type_is_known() -> None:
     # After a restart nothing has been reported yet; auto is what the
     # integration always sent, so this is no worse than before.

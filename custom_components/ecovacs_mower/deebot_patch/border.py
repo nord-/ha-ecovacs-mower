@@ -29,6 +29,7 @@ from deebot_client.models import CleanAction
 
 from .commands import _AdaptiveFamily, _TaskClean
 from .families import Family
+from .state_precedence import record_for
 
 if TYPE_CHECKING:
     from deebot_client.authentication import Authenticator
@@ -89,6 +90,11 @@ class MowBorder(_AdaptiveFamily, Clean):
         event_bus: EventBus,
     ) -> tuple[HandlingResult, dict[str, Any]]:
         """Build the two wire variants and let the adaptive family choose."""
+        # Written here, not just sent: closes the window between issuing a
+        # start and the first onCleanInfo push, where a quick pause would
+        # otherwise echo whatever the previous job left behind (issue #94).
+        if (record := record_for(event_bus)) is not None:
+            record.job_type = _TYPE_BORDER
         self._delegates = {
             Family.NON_V2: _BorderCleanNonV2(self._map_id),
             Family.V2: _BorderCleanV2(self._map_id),

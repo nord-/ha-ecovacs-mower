@@ -12,8 +12,9 @@ from custom_components.ecovacs_mower.deebot_patch.border import (
     _BorderCleanV2,
 )
 from custom_components.ecovacs_mower.deebot_patch.families import Family, selected
+from custom_components.ecovacs_mower.deebot_patch.state_precedence import register
 
-from .test_commands import _DEVICE_INFO, _NO_ANSWER, _OK, _transport
+from .test_commands import _DEVICE_INFO, _NO_ANSWER, _OK, _bus, _transport
 
 # The request the Ecovacs app sent on a GOAT G1-800 (77atlz, fw 1.36.208),
 # captured on issue #12. The map id is the one from that capture.
@@ -80,6 +81,21 @@ async def test_mow_border_executes_first_on_non_v2() -> None:
     assert sent == ["clean"]
     assert command._delegate(Family.NON_V2)._args == _CAPTURED_ARGS
     assert selected(_DEVICE_INFO["did"]) is Family.NON_V2
+
+
+async def test_mow_border_writes_border_into_the_record_before_the_first_push() -> None:
+    # Closes the window between pressing start and onCleanInfo arriving: a
+    # quick pause in between must not echo a stale type from a prior job.
+    bus = _bus()
+    record = register(bus)
+    record.note_job({"type": "auto"})
+    fake, _sent = _transport(_OK)
+    command = MowBorder(_CAPTURED_MAP_ID)
+
+    with patch.object(Command, "_execute", fake):
+        await command._execute(AsyncMock(), _DEVICE_INFO, bus)
+
+    assert record.job_type == "border"
 
 
 async def test_mow_border_falls_back_to_v2_and_commits_family() -> None:

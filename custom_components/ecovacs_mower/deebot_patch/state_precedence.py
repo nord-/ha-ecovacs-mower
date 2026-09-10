@@ -53,6 +53,19 @@ class MowerStateRecord:
         reported, so it is kept here for the command to read. Neither
         ``move()`` nor ``dock()`` clears it: a plan paused on the charger is
         the same plan, and resuming it needs the type it was started with.
+
+        A job that ends by finishing rather than by a stop has no message
+        that clears this: the captured natural-completion sequence
+        (``onChargeInfo goCharging`` → ``onChargeState isCharging=1`` →
+        ``onChargeInfo state=idle trigger=workComplete``) never touches
+        ``cleanState``. Whether that self-corrects on the next job's first
+        push depends on whether an ordinary automatic job's ``onCleanInfo``
+        carries ``content: {"type": "auto"}`` — unconfirmed, no device log
+        of one exists yet. ``CleanMower``, ``MowArea`` and ``MowBorder``
+        write their own type here the moment they issue a start, which
+        closes the window between pressing start and the first push for a
+        job this integration begins; it does not help a job the mower
+        starts on its own schedule.
         """
         if not isinstance(content, dict):
             return

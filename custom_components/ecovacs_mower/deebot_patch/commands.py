@@ -403,8 +403,16 @@ class CleanMower(_AdaptiveFamily, Clean):
     ) -> tuple[HandlingResult, dict[str, Any]]:
         """Decide the action, then send it on the family that answers."""
         action = self._effective_action(event_bus)
+        job_type = self._job_type(action, event_bus)
+        record = record_for(event_bus)
+        if action is CleanAction.START and record is not None:
+            # Write what this command is about to start, not just what it
+            # sends: it closes the window between issuing a start and the
+            # first onCleanInfo push, where a quick pause would otherwise
+            # echo whatever the previous job left behind.
+            record.job_type = job_type
         self._delegates = {
-            Family.NON_V2: _CleanNonV2(action, self._job_type(action, event_bus)),
+            Family.NON_V2: _CleanNonV2(action, job_type),
             Family.V2: _CleanV2Mower(action),
         }
         return await super()._execute(authenticator, device_info, event_bus)
