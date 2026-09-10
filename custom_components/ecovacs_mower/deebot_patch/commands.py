@@ -339,7 +339,9 @@ class _CleanNonV2(_NoActionRewrite, Clean):
     paused ``spotArea`` job is acknowledged and ignored.
     """
 
-    def __init__(self, action: CleanAction, job_type: str = CleanMode.AUTO.value) -> None:
+    def __init__(
+        self, action: CleanAction, job_type: str = CleanMode.AUTO.value
+    ) -> None:
         self._job_type = job_type
         super().__init__(action)
 

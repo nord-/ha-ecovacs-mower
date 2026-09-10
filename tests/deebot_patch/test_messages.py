@@ -1564,7 +1564,10 @@ async def test_a_paused_clean_info_records_the_job_type_even_while_docked() -> N
 
     handle_clean_info(
         bus,
-        {"state": "clean", "cleanState": {"motionState": "pause", "content": {"type": "spotArea"}}},
+        {
+            "state": "clean",
+            "cleanState": {"motionState": "pause", "content": {"type": "spotArea"}},
+        },
     )
 
     assert record.job_type == "spotArea"
@@ -1598,7 +1601,10 @@ async def test_a_vacuum_without_a_record_still_parses() -> None:
 
     handle_clean_info(
         bus,
-        {"state": "clean", "cleanState": {"motionState": "working", "content": {"type": "auto"}}},
+        {
+            "state": "clean",
+            "cleanState": {"motionState": "working", "content": {"type": "auto"}},
+        },
     )
     await asyncio.sleep(0)
 

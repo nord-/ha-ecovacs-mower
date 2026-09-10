@@ -1004,7 +1004,9 @@ def _sent_args() -> tuple[object, list[dict[str, object]]]:
     return fake_execute, sent
 
 
-@pytest.mark.parametrize("action", [CleanAction.PAUSE, CleanAction.RESUME, CleanAction.STOP])
+@pytest.mark.parametrize(
+    "action", [CleanAction.PAUSE, CleanAction.RESUME, CleanAction.STOP]
+)
 async def test_the_mow_command_sends_the_recorded_job_type(action: CleanAction) -> None:
     # 2026-09-10 on an O1200: resume with type auto against a paused spotArea
     # job was acked with code 0 and did nothing. The app's resume carried
