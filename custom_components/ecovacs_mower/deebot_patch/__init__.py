@@ -16,18 +16,20 @@ from deebot_client.events import StateEvent
 from deebot_client.hardware import _DEVICES
 from deebot_client.messages.json import MESSAGES
 
+from .areas import MowerAreaEvent
 from .authentication import AccountAuthenticator
-from .commands import CleanMower, GetCleanInfoMower, MowerStateRefresh, has_family
-from .families import attempted_family_name
-from .hardware import SUPPORTED_CLASSES, ZONE_AREA_CLASSES, patch_device_info
-from .map_messages import (
-    OnArI,
-    OnMapInfo,
-    OnMapTrace,
-    OnMapTrack,
-    OnMI,
-    OnSpecialContour,
+from .commands import (
+    CleanMower,
+    GetAreaParameter,
+    GetAreaSet,
+    GetCleanInfoMower,
+    MowerStateRefresh,
+    SetAreaParameter,
+    has_family,
 )
+from .families import attempted_family_name
+from .hardware import SUPPORTED_CLASSES, ZONE_AREA_CLASSES, patch_device_info, profile_for_class
+from .map_messages import OnArI, OnMapInfo, OnMapTrace, OnMapTrack, OnMI, OnSpecialContour
 from .messages import (
     OnChargeInfo,
     OnChargeState,
@@ -54,13 +56,18 @@ __all__ = [
     "SUPPORTED_CLASSES",
     "AccountAuthenticator",
     "CleanMower",
+    "GetAreaParameter",
+    "GetAreaSet",
     "GetCleanInfoMower",
+    "MowerAreaEvent",
     "MowerStateRefresh",
     "PatchContractError",
+    "SetAreaParameter",
     "apply",
     "attempted_family_name",
     "has_family",
     "patch_device_info",
+    "profile_for_class",
     "register_mower_bus",
     "verify_capabilities",
 ]
@@ -159,6 +166,18 @@ def verify_capabilities(capabilities: Capabilities, class_: str) -> None:
     if [type(command) for command in commands] != [MowerStateRefresh]:
         _fail(
             f"the state commands for {class_} are "
-            f"{[type(c).__name__ for c in commands]} instead of "
-            f"[MowerStateRefresh]"
+            f"{[type(c).__name__ for c in commands]} instead of [MowerStateRefresh]"
         )
+
+    profile = profile_for_class(class_)
+    if profile is not None and profile.area_parameters:
+        # One HA-facing event represents the whole area capability. Its refresh
+        # mapping deliberately contains both protocol reads; neither command
+        # interprets raw values into Home Assistant units.
+        area_commands = capabilities.get_refresh_commands(MowerAreaEvent)
+        if [type(command) for command in area_commands] != [GetAreaParameter, GetAreaSet]:
+            _fail(
+                f"the area commands for {class_} are "
+                f"{[type(c).__name__ for c in area_commands]} instead of "
+                f"[GetAreaParameter, GetAreaSet]"
+            )

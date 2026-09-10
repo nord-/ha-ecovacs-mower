@@ -191,9 +191,9 @@ stored, and the entry stops asking. There is no need to delete and re-add it.
 
 ## What you get
 
-Forty-three entities on the mower's device page, across eight platforms —
-forty-four on the G1-800, which alone gets the "Mow border" button — plus
-one per UWB beacon on the models that use them:
+Forty-three fixed entities on the mower's device page, across eight platforms
+— plus four writable entities per saved mowing area on the A1600 LiDAR Pro
+(`e4gqia`) and one per UWB beacon on the models that use them:
 
 | Platform | Count | What |
 |---|---|---|
@@ -201,7 +201,7 @@ one per UWB beacon on the models that use them:
 | `sensor` | 16 + one per beacon | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowing progress (see below), job target area, job target duration, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name, and on a beacon-guided mower one battery percentage per UWB beacon (see below) |
 | `binary_sensor` | 6 | Fault — a latched problem that stays on until the mower recovers or you clear it (see below) — plus rain sensor, rain delay, emergency stop, locked, animal protection: the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
 | `switch` | 8 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection, rain detection (see below) |
-| `number` | 3 | Notification volume, cutting direction, rain delay duration (see below) |
+| `number` | 3 + four per saved area on the A1600 LiDAR Pro | Notification volume, cutting direction, rain delay duration, plus cutting height, mowing speed, obstacle height and cutting direction for each saved area (see below) |
 | `button` | 7, 8 on the G1-800 | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), "Clear fault" (releases the latched fault; see below), "End mowing task" (ends the current job for good; see below) and, on the G1-800, "Mow border" (starts a border job; see below) |
 | `event` | 1 | Last mowing job (finished / finished with warnings / manually stopped — see below) |
 | `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, `onMapTrace` on firmware 1.17, and `onMapInfo_V2` on 1.36 — that last one only ever arrives in answer to a `getMapInfo_V2` the integration now sends); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only |
@@ -250,6 +250,47 @@ entity and one or more zone IDs can be selected.
 
 The zone IDs are mower-specific. A value being within the accepted 0..999
 range does not imply that the mower has a zone with that ID.
+
+### Per-area mowing parameters
+
+The A1600 LiDAR Pro (`e4gqia`) also exposes the settings stored for each
+saved mowing area. The integration discovers the mower's current area IDs and
+names at runtime and creates four writable `number` entities for each area:
+
+| Setting | Home Assistant value |
+|---|---|
+| Cutting height | 3–9 cm |
+| Mowing speed | 0.40–0.70 m/s |
+| Obstacle height | 10, 15 or 20 cm |
+| Cutting direction | 0–359° |
+
+The entities use the numeric `areaID` for their identity, not the area's name.
+The name shown by the mower is user-editable in the Ecovacs app, so changing
+it does not create a new Home Assistant entity.
+
+The settings are read from the mower with `getAreaParameter` and `getAreaSet`.
+The integration combines those responses into one authoritative area snapshot,
+so a write can preserve the other settings. Changing one value therefore sends
+one complete `setAreaParameter` request containing all four raw parameter
+values rather than replacing the other three with defaults.
+
+If the mower has not reported the complete parameter set for an area yet, the
+integration refuses the write rather than guessing the missing values. The
+entity state is also not changed optimistically: Home Assistant reflects the
+value reported back by the mower.
+
+Changes made in the Ecovacs phone app are not updated live in Home Assistant.
+There is currently no push or pull mechanism available or implemented for
+those area names or parameters. Reloading the integration, or restarting Home
+Assistant, refreshes the saved area name and all four parameter values from the
+mower. Changes made from Home Assistant are sent to the mower immediately and
+are directly visible in the Ecovacs app.
+
+These parameter mappings are currently confirmed only on the A1600 LiDAR Pro
+(`e4gqia`). The raw Ecovacs fields have the same names on other mower models,
+but that does not establish that their ranges, units or meanings are the same.
+The integration therefore does not expose these controls on other classes until
+their parameter representation has been independently verified.
 
 ### Border mowing
 
@@ -502,8 +543,8 @@ Two things worth knowing:
   minutes while a run is in progress, stopping when the mower parks. A run
   interrupted by charging needs no special case — the mower docks, the poll
   stops, and it starts again when the job resumes. The poll is also why the
-  final figure comes from elsewhere: its five-minute cadence rarely lands on the
-  last percent of a run, so the reading is completed from the job-finished
+  final figure comes from elsewhere: its five-minute cadence rarely lands on
+  the last percent of a run, so the reading is completed from the job-finished
   message the mower pushes at the same moment.
 
 `paused` is deliberately not a reason to stop asking: it is a normal mid-run
@@ -566,9 +607,8 @@ saturating at the top of a range looks like.
 
 So the sensor picks deliberately rather than showing whichever arrived last: the
 `getLifeSpan` reading always wins, and a pushed one is only ever used for a
-beacon the poll has not reported. Otherwise the disputed beacon would flap
-between 83 % and 100 % and no low-battery automation built on it could be
-trusted.
+beacon the poll has not reported. Otherwise the disputed beacon would flap between
+83 % and 100 % and no low-battery automation built on it could be trusted.
 
 #### There is no per-beacon reset button, and none is needed
 
