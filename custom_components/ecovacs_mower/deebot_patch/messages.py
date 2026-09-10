@@ -662,7 +662,11 @@ def handle_clean_info(event_bus: EventBus, data: dict[str, Any]) -> HandlingResu
         if state == "idle" and "cleanState" not in data:
             record.end_job()
         else:
-            record.note_job(data.get("cleanState", {}).get("content"))
+            clean_state = data.get("cleanState")
+            content = (
+                clean_state.get("content") if isinstance(clean_state, dict) else None
+            )
+            record.note_job(content)
 
         if status in (State.CLEANING, State.RETURNING):
             record.move()

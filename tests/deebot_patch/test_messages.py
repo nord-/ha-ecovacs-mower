@@ -1595,6 +1595,23 @@ async def test_a_clean_info_without_content_keeps_the_job_type() -> None:
     assert record.job_type == "spotArea"
 
 
+async def test_a_null_clean_state_does_not_raise() -> None:
+    # A present-but-null cleanState is not covered by note_job's own dict
+    # guard, since data.get("cleanState", {}) only falls back on an absent
+    # key. Not observed on the wire; held to the same standard OnStatsMower
+    # holds itself to for a push no firmware is known to send.
+    bus = _bus()
+    record = register(bus)
+    record.note_job({"type": "spotArea"})
+
+    result = handle_clean_info(
+        bus, {"trigger": "alert", "state": "idle", "cleanState": None}
+    )
+
+    assert result.state is HandlingState.SUCCESS
+    assert record.job_type == "spotArea"
+
+
 async def test_a_vacuum_without_a_record_still_parses() -> None:
     bus = _bus()
     published = _collect(bus, StateEvent)
