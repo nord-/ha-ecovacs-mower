@@ -96,8 +96,10 @@ def test_is_a_clean_command() -> None:
 def test_the_non_v2_delegate_keeps_the_mower_payload_shape(
     action: CleanAction, expected: dict[str, object]
 ) -> None:
-    # Unlike CleanV2, which sends an empty type on pause, we echo "auto" — that
-    # is what the app does against a lawn mower.
+    # Unlike CleanV2, which sends an empty type on pause, a type always goes
+    # out. "auto" is the default, for a start and for a mower whose job type
+    # nobody has reported yet; the running job's own type is passed in
+    # otherwise (issue #94, tests at the end of this file).
     assert _CleanNonV2(action)._args == expected
 
 
@@ -979,3 +981,82 @@ async def test_stop_goes_out_untouched_whatever_the_last_state_was() -> None:
 
     assert sent == ["clean", "clean_V2"]
     assert command._delegate(Family.V2)._args == {"act": "stop", "content": {"type": ""}}
+
+
+# Issue #94: pause, resume and stop carry the type of the running job.
+
+
+def test_the_non_v2_delegate_echoes_the_job_type_it_is_given() -> None:
+    assert _CleanNonV2(CleanAction.PAUSE, "spotArea")._args == {
+        "act": "pause",
+        "content": {"type": "spotArea"},
+    }
+
+
+def _sent_args() -> tuple[object, list[dict[str, object]]]:
+    """A fake Command._execute that records the payload each delegate sends."""
+    sent: list[dict[str, object]] = []
+
+    async def fake_execute(self, authenticator, device_info, event_bus):
+        sent.append(self._args)
+        return HandlingResult.success(), {"ret": "ok"}
+
+    return fake_execute, sent
+
+
+@pytest.mark.parametrize("action", [CleanAction.PAUSE, CleanAction.RESUME, CleanAction.STOP])
+async def test_the_mow_command_sends_the_recorded_job_type(action: CleanAction) -> None:
+    # 2026-09-10 on an O1200: resume with type auto against a paused spotArea
+    # job was acked with code 0 and did nothing. The app's resume carried
+    # spotArea and the mower moved.
+    bus = _bus()
+    record = register(bus)
+    record.note_job({"type": "spotArea", "value": "2"})
+    bus.notify(StateEvent(State.PAUSED))
+    fake_execute, sent = _sent_args()
+
+    with patch.object(Command, "_execute", fake_execute):
+        await CleanMower(action)._execute(AsyncMock(), _DEVICE_INFO, bus)
+
+    assert sent == [{"act": action.value, "content": {"type": "spotArea"}}]
+
+
+async def test_a_start_is_a_new_auto_job_whatever_was_recorded() -> None:
+    bus = _bus()
+    record = register(bus)
+    record.note_job({"type": "spotArea"})
+    fake_execute, sent = _sent_args()
+
+    with patch.object(Command, "_execute", fake_execute):
+        await CleanMower(CleanAction.START)._execute(AsyncMock(), _DEVICE_INFO, bus)
+
+    assert sent == [{"act": "start", "content": {"type": "auto"}}]
+
+
+async def test_a_resume_falls_back_to_auto_when_no_job_type_is_known() -> None:
+    # After a restart nothing has been reported yet; auto is what the
+    # integration always sent, so this is no worse than before.
+    bus = _bus()
+    register(bus)
+    bus.notify(StateEvent(State.PAUSED))
+    fake_execute, sent = _sent_args()
+
+    with patch.object(Command, "_execute", fake_execute):
+        await CleanMower(CleanAction.RESUME)._execute(AsyncMock(), _DEVICE_INFO, bus)
+
+    assert sent == [{"act": "resume", "content": {"type": "auto"}}]
+
+
+async def test_the_v2_delegate_still_sends_no_type_on_resume() -> None:
+    # Firmware 1.36.208 acked {"act": "resume", "content": {}} in 526 ms (#42).
+    bus = _bus()
+    record = register(bus)
+    record.note_job({"type": "spotArea"})
+    commit("test-did", Family.V2)
+    bus.notify(StateEvent(State.PAUSED))
+    fake_execute, sent = _sent_args()
+
+    with patch.object(Command, "_execute", fake_execute):
+        await CleanMower(CleanAction.RESUME)._execute(AsyncMock(), _DEVICE_INFO, bus)
+
+    assert sent == [{"act": "resume", "content": {}}]

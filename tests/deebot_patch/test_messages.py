@@ -1514,3 +1514,92 @@ def test_on_uwb_is_registered_by_apply() -> None:
     # (issue #40).
     apply()
     assert MESSAGES["onUWB"] is OnUwb
+
+
+# Issue #94: the handler remembers the type of the running job.
+
+
+async def test_clean_info_records_the_job_type() -> None:
+    bus = _bus()
+    record = register(bus)
+
+    handle_clean_info(
+        bus,
+        {
+            "trigger": "app",
+            "state": "clean",
+            "cleanState": {
+                "motionState": "working",
+                "cid": "122",
+                "content": {"type": "spotArea", "value": "2"},
+            },
+        },
+    )
+
+    assert record.job_type == "spotArea"
+
+
+async def test_a_paused_clean_info_records_the_job_type_too() -> None:
+    # The forced poll while the O1200 stood paused on the lawn answered this.
+    bus = _bus()
+    record = register(bus)
+
+    handle_clean_info(
+        bus,
+        {
+            "trigger": "app",
+            "state": "clean",
+            "cleanState": {"motionState": "pause", "content": {"type": "spotArea"}},
+        },
+    )
+
+    assert record.job_type == "spotArea"
+
+
+async def test_a_paused_clean_info_records_the_job_type_even_while_docked() -> None:
+    # The #67 gate withholds the StateEvent; it must not withhold the type.
+    bus = _bus()
+    record = register(bus)
+    record.dock()
+
+    handle_clean_info(
+        bus,
+        {"state": "clean", "cleanState": {"motionState": "pause", "content": {"type": "spotArea"}}},
+    )
+
+    assert record.job_type == "spotArea"
+
+
+async def test_an_idle_push_without_clean_state_forgets_the_job_type() -> None:
+    # What the app's End produced on 2026-09-10: state idle, no cleanState.
+    bus = _bus()
+    record = register(bus)
+    record.note_job({"type": "spotArea"})
+
+    handle_clean_info(bus, {"trigger": "app", "other": "", "state": "idle"})
+
+    assert record.job_type is None
+
+
+async def test_a_clean_info_without_content_keeps_the_job_type() -> None:
+    # onScheduleTaskInfo shares this handler and carries no content.
+    bus = _bus()
+    record = register(bus)
+    record.note_job({"type": "spotArea"})
+
+    handle_clean_info(bus, {"state": "clean", "cleanState": {"motionState": "working"}})
+
+    assert record.job_type == "spotArea"
+
+
+async def test_a_vacuum_without_a_record_still_parses() -> None:
+    bus = _bus()
+    published = _collect(bus, StateEvent)
+
+    handle_clean_info(
+        bus,
+        {"state": "clean", "cleanState": {"motionState": "working", "content": {"type": "auto"}}},
+    )
+    await asyncio.sleep(0)
+
+    assert [event.state for event in published] == [State.CLEANING]

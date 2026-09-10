@@ -5,8 +5,9 @@ facts, and ``capabilities.state`` collapses them into a single ``StateEvent``;
 this module holds the little state needed to prefer the first over the second
 (issue #67). It also remembers the id of the map the mower is using, read from
 the envelope of every map message, because a border job has to name it
-(issue #12). Plus the registry that says which event buses belong to a patched
-mower at all.
+(issue #12), and the type of the running job, because pause, resume and stop
+have to name that (issue #94). Plus the registry that says which event buses
+belong to a patched mower at all.
 
 Keyed by ``EventBus`` rather than by ``did`` because message handlers are
 classmethods that receive nothing else. An ``EventBus`` is per device, which
@@ -35,6 +36,37 @@ class MowerStateRecord:
     docked: bool = False
     suppressed: State | None = None
     map_id: str | None = None
+    job_type: str | None = None
+
+    def note_job(self, content: object) -> None:
+        """Remember the type of the running job, from ``cleanState.content``.
+
+        The wire string as it is (``"auto"``, ``"spotArea"``, ``"border"``), not
+        an enum: the mow command echoes it back and never interprets it, so a
+        type this integration has never heard of costs nothing to carry.
+
+        Issue #94. The mower wants the running job's type on pause, resume and
+        stop. On an O1200 a resume with ``type: auto`` against a paused
+        ``spotArea`` job was acknowledged with ``code 0`` and ignored; the
+        app's resume, carrying ``spotArea``, moved the mower two seconds later.
+        The ``onCleanInfo`` a job produces is the only place the type is
+        reported, so it is kept here for the command to read. Neither
+        ``move()`` nor ``dock()`` clears it: a plan paused on the charger is
+        the same plan, and resuming it needs the type it was started with.
+        """
+        if not isinstance(content, dict):
+            return
+        job_type = content.get("type")
+        if isinstance(job_type, str) and job_type:
+            self.job_type = job_type
+
+    def end_job(self) -> None:
+        """The mower reported ``idle`` with no ``cleanState``: the job is over.
+
+        That is what the app's *End* produces, and a job that is over has no
+        type to echo. A later start begins a new ``auto`` job.
+        """
+        self.job_type = None
 
     def dock(self) -> None:
         """The mower is on its charger."""

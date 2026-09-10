@@ -136,3 +136,47 @@ def test_map_id_for_reads_the_record_and_is_none_for_strangers() -> None:
     assert map_id_for(bus) is None  # registered, nothing reported yet
     record_for(bus).note_map("7")
     assert map_id_for(bus) == "7"
+
+
+# Issue #94: the type of the running job, echoed on pause, resume and stop.
+
+
+def test_a_new_record_knows_no_job_type() -> None:
+    assert MowerStateRecord().job_type is None
+
+
+def test_note_job_keeps_the_type_the_mower_reports() -> None:
+    # The O1200's own onCleanInfo during an area job, 2026-09-10.
+    record = MowerStateRecord()
+    record.note_job({"type": "spotArea", "value": "2", "subContent": {"type": "spotArea"}})
+    assert record.job_type == "spotArea"
+
+    record.note_job({"type": "auto"})
+    assert record.job_type == "auto"
+
+
+def test_note_job_ignores_content_without_a_type() -> None:
+    record = MowerStateRecord()
+    record.note_job({"type": "spotArea"})
+
+    for content in ({}, {"type": ""}, {"type": 3}, {"value": "2"}, None, "spotArea"):
+        record.note_job(content)
+        assert record.job_type == "spotArea"
+
+
+def test_end_job_forgets_the_type() -> None:
+    record = MowerStateRecord()
+    record.note_job({"type": "spotArea"})
+    record.end_job()
+    assert record.job_type is None
+
+
+def test_moving_and_docking_keep_the_job_type() -> None:
+    # A plan paused on the charger is still the same plan; resuming it needs
+    # the type it was started with.
+    record = MowerStateRecord()
+    record.note_job({"type": "spotArea"})
+    record.move()
+    assert record.job_type == "spotArea"
+    record.dock()
+    assert record.job_type == "spotArea"

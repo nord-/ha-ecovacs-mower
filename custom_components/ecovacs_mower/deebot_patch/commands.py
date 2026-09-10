@@ -8,8 +8,11 @@ clean_V2" and makes start and pause do nothing.
 ``CleanMower`` inherits ``Clean`` (topic ``clean``) but sends a V2-formatted
 payload, which is what Ecovacs' own app does.
 
-Corresponds to DeebotUniverse/client.py PR #1624, without its caching of the
-active clean type — that is only needed for customArea, which is out of scope.
+Corresponds to DeebotUniverse/client.py PR #1624. The active clean type it
+caches is kept here too, on the per-device record in ``state_precedence.py``
+rather than on the command: pause, resume and stop have to name the running
+job's type, and a resume with ``auto`` against a paused ``spotArea`` job is
+acknowledged and ignored (issue #94).
 
 ``GetCleanInfoMower`` fixes an answer rather than a request: ``getCleanInfo`` is
 sent and answered, and the answer is a constant ``idle`` whatever the mower is
@@ -327,10 +330,21 @@ class _TaskClean(_NoActionRewrite):
 
 
 class _CleanNonV2(_NoActionRewrite, Clean):
-    """Mow on the ``clean`` topic with a V2 payload, as the app does."""
+    """Mow on the ``clean`` topic with a V2 payload, as the app does.
+
+    *job_type* is what goes in ``content.type``: the running job's type for
+    pause, resume and stop (issue #94), ``auto`` for a start. The app carries
+    the job's own type on all three — captured on an O1200 as ``spotArea`` on
+    resume and stop after an area start — and a resume with ``auto`` against a
+    paused ``spotArea`` job is acknowledged and ignored.
+    """
+
+    def __init__(self, action: CleanAction, job_type: str = CleanMode.AUTO.value) -> None:
+        self._job_type = job_type
+        super().__init__(action)
 
     def _get_args(self, action: CleanAction) -> dict[str, Any]:
-        return {"act": action.value, "content": {"type": CleanMode.AUTO.value}}
+        return {"act": action.value, "content": {"type": self._job_type}}
 
 
 class _CleanV2Mower(_NoActionRewrite, CleanV2):
@@ -388,10 +402,26 @@ class CleanMower(_AdaptiveFamily, Clean):
         """Decide the action, then send it on the family that answers."""
         action = self._effective_action(event_bus)
         self._delegates = {
-            Family.NON_V2: _CleanNonV2(action),
+            Family.NON_V2: _CleanNonV2(action, self._job_type(action, event_bus)),
             Family.V2: _CleanV2Mower(action),
         }
         return await super()._execute(authenticator, device_info, event_bus)
+
+    @staticmethod
+    def _job_type(action: CleanAction, event_bus: EventBus) -> str:
+        """The type to echo for *action* (issue #94).
+
+        A start is a new ``auto`` job whatever ran before. Pause, resume and
+        stop name the job the mower is in, as the handler recorded it from
+        ``onCleanInfo``; ``auto`` when nothing has been reported yet, which is
+        what was always sent and so no worse than before.
+        """
+        if action is CleanAction.START:
+            return CleanMode.AUTO.value
+        record = record_for(event_bus)
+        if record is None or record.job_type is None:
+            return CleanMode.AUTO.value
+        return record.job_type
 
     def _effective_action(self, event_bus: EventBus) -> CleanAction:
         """``START`` or ``RESUME``, from the state the mower is really in.

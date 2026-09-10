@@ -652,6 +652,18 @@ def handle_clean_info(event_bus: EventBus, data: dict[str, Any]) -> HandlingResu
     # the same hazard met from the other side.
     record = record_for(event_bus)
     if record is not None:
+        # Issue #94. The type of the running job, for the mow command to echo
+        # on pause, resume and stop. Written before the gate below, because a
+        # plan paused on the charger has a type just as much as a running one,
+        # and the withheld StateEvent must not withhold this. A pushed idle
+        # without cleanState is the app's End: the job is over and so is its
+        # type. The polled idle on 1.13.x never gets here (see
+        # _MowerCleanInfoHandling), so it cannot forget a type by mistake.
+        if state == "idle" and "cleanState" not in data:
+            record.end_job()
+        else:
+            record.note_job(data.get("cleanState", {}).get("content"))
+
         if status in (State.CLEANING, State.RETURNING):
             record.move()
         elif record.docked and status in (State.PAUSED, State.IDLE):

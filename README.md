@@ -236,6 +236,15 @@ it sends the requested zones directly to the targeted mower and does not
 attempt to determine whether the specified zones actually exist on the
 mower.
 
+Once a zone job is running, *Pause*, *Start* (which resumes it) and **End
+mowing task** work on it like on any other job. The mower insists on being
+told which kind of job it is in: a resume that names the wrong kind is
+acknowledged and ignored, observed on an O1200 LiDAR
+([#94](https://github.com/nord-/ha-ecovacs-mower/issues/94)). The integration
+therefore remembers the kind of job the mower last reported and names it on
+those three commands, so a zone job started from the app or from this
+service can be paused and resumed from Home Assistant alike.
+
 The same service can also be used from Home Assistant's UI, where the mower
 entity and one or more zone IDs can be selected.
 
