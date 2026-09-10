@@ -34,30 +34,57 @@ responds to start / pause / dock.
 
 ## Why a separate integration, instead of a fix upstream
 
-The underlying library, `deebot-client`, currently has eight open pull
+The underlying library, `deebot-client`, has around twenty open pull
 requests touching GOAT/mower support, the oldest opened in April. None have
-merged. In the same period, vacuum and authentication changes to the same
-library have merged within days. Two Home Assistant core pull requests
-adding mower features were auto-closed as stale by the triage bot while
-waiting on those library PRs to land.
+merged, and no release since 18.5.1 (30 July) contains any mower work. In
+the same period, vacuum and authentication changes to the same library have
+merged within days. Two Home Assistant core pull requests adding mower
+features were auto-closed as stale by the triage bot while waiting on those
+library PRs to land.
+
+In August the maintainer explained what blocks the `CleanMower` fix: the
+library keys its command lookup on the command name alone, so two devices
+cannot answer differently to the same name until that lookup is made
+per-device. A refactor doing exactly that has been open since 21 August,
+without a review.
 
 This is not a criticism of the maintainers — they're volunteers, and review
 bandwidth is finite. It's the reason a fork is the pragmatic way to get a
 working mower today rather than waiting on a queue with no visible movement.
 
-Relevant links, so you can check the state of things yourself:
+Relevant links, so you can check the state of things yourself. The status
+in brackets is as of 10 September 2026:
 
-- [DeebotUniverse/client.py#1624](https://github.com/DeebotUniverse/client.py/pull/1624) — fixes the `clean_V2` command (open)
-- [DeebotUniverse/client.py#1647](https://github.com/DeebotUniverse/client.py/pull/1647) — adds the two missing message handlers (open, community-approved, no maintainer response)
-- [DeebotUniverse/client.py#1650](https://github.com/DeebotUniverse/client.py/issues/1650) — `getCleanInfo_V2` not answered by GOAT hardware
-- [DeebotUniverse/client.py#1587](https://github.com/DeebotUniverse/client.py/pull/1587) — RTK support
-- [home-assistant/core#168621](https://github.com/home-assistant/core/issues/168621) — the user-facing symptom report this integration exists to fix
-- [home-assistant/core#169723](https://github.com/home-assistant/core/issues/169723) — mowers exposed with vacuum terminology
-- [DeebotUniverse/client.py#1743](https://github.com/DeebotUniverse/client.py/pull/1743) — password-free session renewal, the fix for the verification loop (open)
-- [home-assistant/core#178558](https://github.com/home-assistant/core/pull/178558) — the core side of that fix, blocked on the library release (open)
+- [DeebotUniverse/client.py#1624](https://github.com/DeebotUniverse/client.py/pull/1624) — fixes the `clean_V2` command (open; the maintainer's reply names the per-device command lookup as the prerequisite)
+- [DeebotUniverse/client.py#1772](https://github.com/DeebotUniverse/client.py/pull/1772) — that per-device command lookup (open, unreviewed)
+- [DeebotUniverse/client.py#1647](https://github.com/DeebotUniverse/client.py/pull/1647) — adds the two missing message handlers (closed by this integration's author on 29 August, after months as community-approved with no maintainer response; the handlers live here instead)
+- [DeebotUniverse/client.py#1650](https://github.com/DeebotUniverse/client.py/issues/1650) — `getCleanInfo_V2` not answered by GOAT hardware (open)
+- [DeebotUniverse/client.py#1587](https://github.com/DeebotUniverse/client.py/pull/1587) — RTK support (open, the author's July ping unanswered)
+- [home-assistant/core#168621](https://github.com/home-assistant/core/issues/168621) — the user-facing symptom report this integration exists to fix (open)
+- [home-assistant/core#169723](https://github.com/home-assistant/core/issues/169723) — mowers exposed with vacuum terminology (open)
+- [DeebotUniverse/client.py#1743](https://github.com/DeebotUniverse/client.py/pull/1743) — password-free session renewal, the fix for the verification loop (open). One thing its thread turned up: the renewed session is only accepted from the same `device_id` that was verified, so the id has to survive restarts. This integration keeps it in the config entry, so it does.
+- [home-assistant/core#178558](https://github.com/home-assistant/core/pull/178558) — the core side of that fix, blocked on the library release (open, no review)
 
 This integration does not depend on any of those merging. If they do,
 the corresponding patch in this repo becomes dead code and gets deleted.
+
+### Protocol work upstream that this integration does not have yet
+
+Since August one contributor has opened a series of pull requests against
+`deebot-client` built on traffic captured from a GOAT O1200 LiDAR Pro, the
+class this integration was developed on. Those have not merged either, so
+none of it can arrive as a library update, but the captured request and
+response shapes are a ready map of what could be built here next without
+sniffing the traffic again. Much of it already exists in this integration —
+the mowing-progress sensor, the rain-delay switch and number, the volume
+number and the map decoding all cover the same ground — and what remains is:
+
+- [DeebotUniverse/client.py#1774](https://github.com/DeebotUniverse/client.py/pull/1774) — the names of the saved mowing areas, from `getAreaSet` with `type: "ar"`. The `mow_area` service here takes area ids only.
+- [DeebotUniverse/client.py#1778](https://github.com/DeebotUniverse/client.py/pull/1778) — the remaining global settings as settable values: animal protection with its schedule, AI recognition, smart mowing with avoidance, narrow-passage adaptation and the lifted-alarm volume. Only the read-only protection flags exist here, as binary sensors.
+- [DeebotUniverse/client.py#1767](https://github.com/DeebotUniverse/client.py/pull/1767) and [#1768](https://github.com/DeebotUniverse/client.py/pull/1768) — per-area cutting height, cut mode, obstacle height and angle via `setAreaParameter`/`onAreaParameter`.
+
+If one of these matters to you, open an issue and say so — that is how the
+order of work here gets decided.
 
 ## Requirements
 
