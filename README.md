@@ -273,6 +273,16 @@ current job for good, so the next start is a new one. Useful in automations
 that interrupt a job during the day and want tomorrow's run to start from
 scratch.
 
+Ending a job does not bring the mower home. It stops where it is and stays
+there, exactly as the app's *End* does — observed on an O1200 LiDAR
+(`2i0fns`), where the mower went `idle` on the lawn and no return-to-dock
+followed. The `lawn_mower` entity shows `paused` for a mower standing idle
+off the dock, which is correct but easy to misread as "resumable". An
+automation that wants the mower parked as well needs both actions, in
+either order: **End mowing task** and then *Return to base*, or *Return to
+base* first — the job stays resumable on the way home — and **End mowing
+task** once it is docked.
+
 The payload is confirmed on the G1-800 (`77atlz`), where the app's own
 request was captured ([#51](https://github.com/nord-/ha-ecovacs-mower/issues/51)).
 On the O-series and A-series mowers it sends the same shape those mowers
