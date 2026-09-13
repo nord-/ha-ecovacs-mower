@@ -251,6 +251,7 @@ async def test_apply_registers_the_message_handlers() -> None:
 
     from custom_components.ecovacs_mower.deebot_patch import apply
     from custom_components.ecovacs_mower.deebot_patch.messages import (
+        OnAreaParameter,
         OnChargeInfo,
         OnPos,
         OnProtectState,
@@ -258,6 +259,7 @@ async def test_apply_registers_the_message_handlers() -> None:
     )
 
     apply()
+    assert MESSAGES["onAreaParameter"] is OnAreaParameter
     assert MESSAGES["onChargeInfo"] is OnChargeInfo
     assert MESSAGES["onPos"] is OnPos
     assert MESSAGES["onProtectState"] is OnProtectState
