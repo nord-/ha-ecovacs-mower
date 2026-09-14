@@ -26,9 +26,9 @@ flips, and nothing had ever asked for the current value (issue #31).
 library just discards one of the three numbers it answers with (issue #39). Its
 counterpart for the unsolicited half, ``OnStatsMower``, is in ``messages.py``.
 
-``GetLifeSpanMower`` is a fourth: the command works, is answered in full, and
-one component of the answer makes the library abandon the rest of it (issue
-#40).
+``GetLifeSpanMower`` is a fourth: the command works, but it is only answered in
+full when it asks for everything (issue #100), and one component of that full
+answer makes the library abandon the rest of it (issue #40).
 
 ``GetRainDelay`` and ``SetRainDelay`` are the same kind as ``GetProtectState``
 — commands the library does not have at all — with the difference that this
@@ -748,12 +748,34 @@ class GetLifeSpanMower(GetLifeSpan):
     a value from before the beacons were paired and never moves again, and the
     beacons themselves are invisible (issue #40).
 
-    ``NAME`` is inherited on purpose, as in ``GetStatsMower``: the request is
-    unchanged. The device answers with every component it has whatever the
-    request lists — ``9bts2s`` and its siblings ask for ``blade`` and
-    ``lensBrush`` only, and the beacons come back regardless — so there is
-    nothing to add to the query, only something to stop dropping.
+    ``NAME`` is inherited on purpose, as in ``GetStatsMower``, but the request
+    is not: it lists no components at all (issue #100). The mower answers only
+    the components a request names, and the library names the ones it builds
+    entities for — ``blade`` and ``lensBrush`` on every GOAT — so the beacons
+    never came back from this command. They came back from the app, which asks
+    with an empty list and is answered with everything: blade, one ``uwbCell``
+    per beacon, lens brush, the order the fixture in the tests records. A
+    T90 vacuum on the same account behaves the same way, so this is how the
+    firmware reads the request rather than a quirk of one model.
+
+    Asking for everything costs nothing on a mower without beacons: the answer
+    carries the same two components, and anything else the firmware adds is
+    filtered out below before upstream's parser sees it.
     """
+
+    def __init__(self) -> None:
+        """Initialize the command, with no component list to send."""
+        super().__init__(())
+
+    def _get_payload(self) -> dict[str, Any]:
+        """Send the empty list the app sends, not a payload without a body.
+
+        ``JsonCommand._get_payload`` only adds ``body`` when there are args, so
+        an empty component list goes out as a header alone. That is not the
+        request the app makes, and how the mower answers it has not been seen;
+        ``{"data": []}`` has, and is answered in full.
+        """
+        return {**super()._get_payload(), "body": {"data": []}}
 
     @classmethod
     def _handle_body_data_list(

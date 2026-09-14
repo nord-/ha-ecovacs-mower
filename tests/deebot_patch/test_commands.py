@@ -279,9 +279,32 @@ _LIFE_SPANS_WITH_BEACONS = [
 
 
 def test_get_life_span_mower_asks_the_same_command_as_the_library() -> None:
-    # Issue #40. The device answers with every component it has whatever the
-    # request lists, so only the parsing is replaced.
+    # Issue #40. Same command name; the request body and the parsing are what
+    # differ.
     assert GetLifeSpanMower.NAME == GetLifeSpan.NAME == "getLifeSpan"
+
+
+def test_get_life_span_mower_asks_for_every_component_like_the_app() -> None:
+    # Issue #100. The body the Ecovacs app sends, captured on a G1-800: an
+    # empty list, answered with blade, every beacon and lens brush. A request
+    # listing blade and lensBrush is answered with those two and nothing else.
+    payload = GetLifeSpanMower()._get_payload()
+
+    assert payload["body"] == {"data": []}
+    # The header is still the library's, not something rebuilt here.
+    assert payload["header"].keys() == GetLifeSpan([])._get_payload()["header"].keys()
+
+
+def test_the_librarys_empty_request_carries_no_body() -> None:
+    """Documents why GetLifeSpanMower builds its own payload.
+
+    Handing the library an empty component list is not the same request:
+    JsonCommand._get_payload adds ``body`` only when there are args, so the
+    command would go out as a header alone — a request nobody has seen the
+    mower answer. If upstream starts sending the empty list itself, the override
+    becomes redundant, not wrong.
+    """
+    assert "body" not in GetLifeSpan([])._get_payload()
 
 
 def test_the_librarys_own_command_aborts_on_the_first_beacon() -> None:

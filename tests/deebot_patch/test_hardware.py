@@ -457,23 +457,28 @@ async def test_patch_swaps_in_the_life_span_command_that_survives_a_beacon(
     assert [type(c) for c in commands] == [GetLifeSpanMower]
 
 
+async def test_unpatched_library_never_asks_for_the_beacons() -> None:
+    # Documents issue #100: the mower answers only the components a request
+    # lists, and the library lists the two it builds entities for. On a G1-800
+    # with four beacons that request came back with blade and lens brush only.
+    info = await get_static_device_info(G1_800)
+    commands = info.capabilities.get_refresh_commands(LifeSpanEvent)
+    assert [c._args for c in commands] == [["blade", "lensBrush"]]
+
+
+@pytest.mark.parametrize("event", [LifeSpanEvent, MowerBeaconsEvent])
 @pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
-async def test_patch_asks_for_the_same_components_as_the_library(class_: str) -> None:
-    # Only the parsing is replaced. The device answers with every component it
-    # has whatever the request lists, so widening the request would change
-    # nothing except how far this diverges from upstream.
-    before = await get_static_device_info(class_)
-    args_before = [
-        c._args for c in before.capabilities.get_refresh_commands(LifeSpanEvent)
-    ]
-    _DEVICES.pop(class_, None)
-
+async def test_patch_asks_for_every_life_span_component(
+    class_: str, event: type
+) -> None:
+    # Both refresh paths, because either one answering is what creates the
+    # beacon entities after a restart: the blade sensor subscribes to
+    # LifeSpanEvent and the beacon platform to MowerBeaconsEvent, and whichever
+    # command still listed components would come back without the beacons.
     await patch_device_info(class_)
-    after = await get_static_device_info(class_)
-
-    assert [
-        c._args for c in after.capabilities.get_refresh_commands(LifeSpanEvent)
-    ] == args_before
+    info = await get_static_device_info(class_)
+    commands = info.capabilities.get_refresh_commands(event)
+    assert [c._get_payload()["body"] for c in commands] == [{"data": []}]
 
 
 @pytest.mark.parametrize("class_", SUPPORTED_CLASSES)

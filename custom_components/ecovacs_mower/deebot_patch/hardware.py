@@ -102,9 +102,11 @@ async def patch_device_info(class_: str) -> None:
       the mower answers at runtime — see ``families.py``.
     * ``stats.clean``: ``GetStats`` drops ``mowedArea``, the one number that
       moves while a job runs. Swapped for ``GetStatsMower``.
-    * ``life_span.get``: ``GetLifeSpan`` raises on the ``uwbCell`` entries a
-      beacon-guided mower reports, which loses the beacons and every component
-      listed after them. Swapped for ``GetLifeSpanMower``.
+    * ``life_span.get``: ``GetLifeSpan`` asks only for the components the
+      library has entities for, and the mower answers only what it is asked,
+      so the beacons never arrive (issue #100); when they do, it raises on the
+      ``uwbCell`` entries and loses every component listed after them. Swapped
+      for ``GetLifeSpanMower``, which asks for everything.
     * ``MowerProtectStateEvent``, ``MowerRainDelayEvent``, ``MowerStatsEvent``
       and ``MowerBeaconsEvent``: given the refresh commands they had none of.
     * ``MowerMapInfoEvent``: given ``GetMapInfoV2``, without which firmware
@@ -157,13 +159,14 @@ async def patch_device_info(class_: str) -> None:
         ),
         # Only the get command is replaced. types decides which lifespan
         # entities are built and reset is the button behind them; both are the
-        # library's own and are carried through by replace(). The request keeps
-        # the same component list for the same reason the stats request keeps
-        # its name: the device answers with everything it has regardless, so
-        # widening it would buy nothing and diverge further from upstream.
+        # library's own and are carried through by replace(). The request does
+        # not follow types: the mower answers only the components a request
+        # lists, and types never lists the beacons, so the command asks for
+        # everything and leaves the choosing to the entity platforms (issue
+        # #100).
         life_span=replace(
             capabilities.life_span,
-            get=[GetLifeSpanMower(capabilities.life_span.types)],
+            get=[GetLifeSpanMower()],
         ),
     )
     # Neither the protection flags nor the mowing progress is a library
@@ -222,7 +225,7 @@ async def patch_device_info(class_: str) -> None:
                 MowerProtectStateEvent: [GetProtectState()],
                 MowerRainDelayEvent: [GetRainDelay()],
                 MowerStatsEvent: [GetStatsMower()],
-                MowerBeaconsEvent: [GetLifeSpanMower(capabilities.life_span.types)],
+                MowerBeaconsEvent: [GetLifeSpanMower()],
                 MowerMapInfoEvent: [GetMapInfoV2()],
             }
         ),
