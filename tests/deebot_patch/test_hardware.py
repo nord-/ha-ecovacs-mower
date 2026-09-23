@@ -9,6 +9,7 @@ from deebot_client.hardware import _DEVICES, get_static_device_info
 
 from custom_components.ecovacs_mower.deebot_patch.commands import (
     CleanMower,
+    GetAnimProtect,
     GetLifeSpanMower,
     GetMapInfoV2,
     GetProtectState,
@@ -25,6 +26,7 @@ from custom_components.ecovacs_mower.deebot_patch.map_messages import (
 )
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     BEACON_COMPONENT,
+    MowerAnimProtectEvent,
     MowerBeaconsEvent,
     MowerProtectStateEvent,
     MowerRainDelayEvent,
@@ -177,6 +179,19 @@ async def test_patch_wires_a_refresh_command_for_the_rain_setting(
     info = await get_static_device_info(class_)
     commands = info.capabilities.get_refresh_commands(MowerRainDelayEvent)
     assert [type(c) for c in commands] == [GetRainDelay]
+
+
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_patch_wires_a_refresh_command_for_the_animal_setting(
+    class_: str,
+) -> None:
+    # Issue #45, the same trap again: onAnimProtect arrives only when the
+    # setting changes, so without an entry here the switch reads "unknown"
+    # until somebody touches animal protection in the app.
+    await patch_device_info(class_)
+    info = await get_static_device_info(class_)
+    commands = info.capabilities.get_refresh_commands(MowerAnimProtectEvent)
+    assert [type(c) for c in commands] == [GetAnimProtect]
 
 
 @pytest.mark.parametrize("class_", SUPPORTED_CLASSES)

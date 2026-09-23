@@ -50,7 +50,7 @@
   },
   "entity": {
     "binary_sensor": {
-      "animal_protect": { "name": "Animal protection" },
+      "animal_protect": { "name": "Animal protection active" },
       "emergency_stop": { "name": "Emergency stop" },
       "fault": { "name": "Fault" },
       "locked": { "name": "Locked" },
@@ -127,7 +127,8 @@
       "move_up_warning": { "name": "Lift warning" },
       "cross_map_border_warning": { "name": "Boundary crossing warning" },
       "safe_protect": { "name": "Safety protection" },
-      "rain_detection": { "name": "Rain detection" }
+      "rain_detection": { "name": "Rain detection" },
+      "animal_protection": { "name": "Animal protection" }
     }
   },
   "services": {

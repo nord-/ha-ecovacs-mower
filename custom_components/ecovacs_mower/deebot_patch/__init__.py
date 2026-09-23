@@ -43,6 +43,7 @@ from .map_messages import (
     OnSpecialContour,
 )
 from .messages import (
+    OnAnimProtect,
     OnAreaParameter,
     OnChargeInfo,
     OnChargeState,
@@ -112,6 +113,7 @@ def apply() -> None:
     # Mutated in place: messages/__init__.py holds a reference to the same
     # object, so a rebinding would not be visible in get_message().
     for message in (
+        OnAnimProtect,
         OnAreaParameter,
         OnChargeInfo,
         OnChargeState,

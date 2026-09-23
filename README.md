@@ -80,7 +80,8 @@ the mowing-progress sensor, the rain-delay switch and number, the volume
 number and the map decoding all cover the same ground — and what remains is:
 
 - [DeebotUniverse/client.py#1774](https://github.com/DeebotUniverse/client.py/pull/1774) — the names of the saved mowing areas, from `getAreaSet` with `type: "ar"`, on every model. Here they are read only on the A1600 LiDAR Pro, for its per-area parameter entities (see below), and the `mow_area` service takes area ids only.
-- [DeebotUniverse/client.py#1778](https://github.com/DeebotUniverse/client.py/pull/1778) — the remaining global settings as settable values: animal protection with its schedule, AI recognition, smart mowing with avoidance, narrow-passage adaptation and the lifted-alarm volume. Only the read-only protection flags exist here, as binary sensors.
+- [DeebotUniverse/client.py#1778](https://github.com/DeebotUniverse/client.py/pull/1778) — the remaining global settings as settable values: animal protection with its schedule, AI recognition, smart mowing with avoidance, narrow-passage adaptation and the lifted-alarm volume. Here animal protection can be switched on and off, and its window is shown but not editable; the rest exist only as the read-only protection flags.
+
 
 If one of these matters to you, open an issue and say so — that is how the
 order of work here gets decided.
@@ -193,8 +194,8 @@ stored, and the entry stops asking. There is no need to delete and re-add it.
 
 ## What you get
 
-Forty-three fixed entities on the mower's device page, across eight platforms —
-forty-four on the G1-800, which alone gets the "Mow border" button — plus four
+Forty-four fixed entities on the mower's device page, across eight platforms —
+forty-five on the G1-800, which alone gets the "Mow border" button — plus four
 writable entities per saved mowing area on the A1600 LiDAR Pro (`e4gqia`) and
 one per UWB beacon on the models that use them:
 
@@ -202,8 +203,8 @@ one per UWB beacon on the models that use them:
 |---|---|---|
 | `lawn_mower` | 1 | Real state (`mowing`, `paused`, `returning`, `docked`, `error`) that updates within seconds, plus working `start_mowing`, `pause`, and `dock` |
 | `sensor` | 16 + one per beacon | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowing progress (see below), job target area, job target duration, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name, and on a beacon-guided mower one battery percentage per UWB beacon (see below) |
-| `binary_sensor` | 6 | Fault — a latched problem that stays on until the mower recovers or you clear it (see below) — plus rain sensor, rain delay, emergency stop, locked, animal protection: the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
-| `switch` | 8 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection, rain detection (see below) |
+| `binary_sensor` | 6 | Fault — a latched problem that stays on until the mower recovers or you clear it (see below) — plus rain sensor, rain delay, emergency stop, locked, animal protection active: the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
+| `switch` | 9 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection, rain detection, animal protection (see below) |
 | `number` | 3 + four per saved area on the A1600 LiDAR Pro | Notification volume, cutting direction, rain delay duration, plus cutting height, mowing speed, obstacle height and cutting direction for each saved area (see below) |
 | `button` | 7, 8 on the G1-800 | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), "Clear fault" (releases the latched fault; see below), "End mowing task" (ends the current job for good; see below) and, on the G1-800, "Mow border" (starts a border job; see below) |
 | `event` | 1 | Last mowing job (finished / finished with warnings / manually stopped — see below) |
@@ -397,12 +398,12 @@ sample — a `getProtectState` answer from firmware 1.13.10 — also had
 "protection is enabled" reading out a second time — on a sibling flag rather
 than this one, so it leans on the five flags being the same kind of thing.
 
-That second witness cuts both ways: it means `animal_protect` is not the
-animal-protection setting either, so the entity still named **Animal
-protection** is named for something it is not. It is left alone because no
-positive reading is established — one sample cannot separate "an animal is
-detected" from "the mower is holding for an animal" — and a name that is
-merely imprecise beats one that is confidently wrong (issue #45).
+That second witness cuts both ways: `animal_protect` is not the
+animal-protection setting either. What it is has since been established
+(issue #45): whether animal protection is **in effect right now**, switched
+on and inside its nightly window. The entity is named **Animal protection
+active** for that reason, and the setting itself has a switch of its own —
+see [Animal protection](#animal-protection) below.
 
 What the samples do *not* separate is a wet sensor from a mower currently held
 for rain: both read `1` two seconds before a rain-stopped run and `0` on a dry
@@ -487,6 +488,31 @@ rather than guessed: a default would silently overwrite a hold the owner chose,
 or switch their rain sensor off.
 
 [goat-g1]: https://github.com/Janverhu/ecovacs-goat-g1
+
+### Animal protection
+
+`switch.<device>_animal_protection` is the setting: whether the mower holds off
+for animals at all. It comes from `onAnimProtect`, another message the library
+has no handler for, which carries the setting and the window it applies in:
+
+```
+{"enable": 1, "start": "19:00", "end": "07:00"}
+```
+
+The window is shown as the switch's `start` and `end` attributes. It is not
+editable from Home Assistant: `setAnimProtect` carries all three fields, so a
+toggle resends the window the mower last reported, the way the Ecovacs app
+does, and a toggle is refused while no window has been reported.
+
+`binary_sensor.<device>_animal_protect`, named **Animal protection active**, is
+a different thing: the setting *and* the clock inside the window. Toggled from
+the app on a G1-800, it followed every toggle made inside the window and did
+not move for one made outside it (issue #45). So a switch that reads on at
+noon, with a 19:00–07:00 window, sits next to a binary sensor that reads off
+until seven in the evening. Both are correct.
+
+Like the rain setting, the switch is read at startup with `getAnimProtect` and
+updated from the push after that, and it is disabled by default.
 
 ### When a job ends
 

@@ -24,6 +24,7 @@ from deebot_client.hardware import _DEVICES, get_static_device_info
 from .areas import MowerAreaEvent
 from .commands import (
     CleanMower,
+    GetAnimProtect,
     GetAreaParameter,
     GetAreaSet,
     GetLifeSpanMower,
@@ -35,6 +36,7 @@ from .commands import (
 )
 from .map_messages import MowerMapInfoEvent
 from .messages import (
+    MowerAnimProtectEvent,
     MowerBeaconsEvent,
     MowerProtectStateEvent,
     MowerRainDelayEvent,
@@ -159,8 +161,9 @@ async def patch_device_info(class_: str) -> None:
       so the beacons never arrive (issue #100); when they do, it raises on the
       ``uwbCell`` entries and loses every component listed after them. Swapped
       for ``GetLifeSpanMower``, which asks for everything.
-    * ``MowerProtectStateEvent``, ``MowerRainDelayEvent``, ``MowerStatsEvent``
-      and ``MowerBeaconsEvent``: given the refresh commands they had none of.
+    * ``MowerProtectStateEvent``, ``MowerRainDelayEvent``,
+      ``MowerAnimProtectEvent``, ``MowerStatsEvent`` and ``MowerBeaconsEvent``:
+      given the refresh commands they had none of.
     * ``MowerMapInfoEvent``: given ``GetMapInfoV2``, without which firmware
       1.36 never sends the lawn boundary at all — it answers the request and
       pushes at no other time (issue #81).
@@ -234,7 +237,8 @@ async def patch_device_info(class_: str) -> None:
     # read "unknown" until the weather changes (issue #31). MowerRainDelayEvent
     # is the same trap one setting over: onRainDelay arrives only when somebody
     # changes the rain sensor, so its switch and number would sit at "unknown"
-    # until the owner next opened the app (issue #54).
+    # until the owner next opened the app (issue #54). MowerAnimProtectEvent is
+    # the same trap again, for the animal-protection switch (issue #45).
     #
     # This has to stay below the replace() above and cannot move up: replace()
     # re-runs __post_init__, which rebuilds the mapping from the fields, and an
@@ -272,6 +276,7 @@ async def patch_device_info(class_: str) -> None:
         **patched._events,
         MowerProtectStateEvent: [GetProtectState()],
         MowerRainDelayEvent: [GetRainDelay()],
+        MowerAnimProtectEvent: [GetAnimProtect()],
         MowerStatsEvent: [GetStatsMower()],
         MowerBeaconsEvent: [GetLifeSpanMower()],
         MowerMapInfoEvent: [GetMapInfoV2()],
