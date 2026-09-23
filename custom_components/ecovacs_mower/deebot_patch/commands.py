@@ -33,11 +33,15 @@ answer makes the library abandon the rest of it (issue #40).
 ``GetRainDelay`` and ``SetRainDelay`` are the same kind as ``GetProtectState``
 — commands the library does not have at all — with the difference that this
 setting is writable, so it needs both halves (issue #54).
+
+``GetAnimProtect`` and ``SetAnimProtect`` are the same pair for the
+animal-protection setting and its window (issue #45).
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import time
 from typing import TYPE_CHECKING, Any
 
 from deebot_client.command import Command
@@ -62,6 +66,7 @@ from deebot_client.models import CleanAction, CleanMode, State
 from .families import Family, commit, note_attempt, selected
 from .messages import (
     BEACON_COMPONENT,
+    OnAnimProtect,
     OnProtectState,
     OnRainDelay,
     handle_clean_info,
@@ -656,6 +661,25 @@ class GetRainDelay(JsonCommandWithMessageHandling, OnRainDelay):
     NAME = "getRainDelay"
 
 
+class GetAnimProtect(JsonCommandWithMessageHandling, OnAnimProtect):
+    """Ask for the animal-protection setting instead of waiting for a push.
+
+    The same shape as ``GetRainDelay``: ``onAnimProtect`` is sent when somebody
+    changes the setting and never otherwise, so without this the switch would
+    read "unknown" from startup until the owner next touched it in the app.
+    ``OnAnimProtect`` is inherited for its handler, for the reason
+    ``GetRainDelay`` inherits ``OnRainDelay``.
+
+    Evidence that the command exists on the wire: the Ecovacs app asks for it in
+    the fourth of the ``getInfo`` batches it sends when the device page opens,
+    captured on a GOAT G1-800 (``77atlz``, fw 1.36.208), and the answer is the
+    push's payload — with the clock unpadded, ``"19:0"``, where the push reads
+    ``"19:00"``. It takes no arguments.
+    """
+
+    NAME = "getAnimProtect"
+
+
 class GetMapInfoV2(ExecuteCommand):
     """Ask for the lawn boundary, which is never pushed unasked.
 
@@ -718,6 +742,32 @@ class SetRainDelay(ExecuteCommand):
         # 0/1, not JSON booleans: that is what the app sends and what every
         # observed payload of this message carries.
         super().__init__({"enable": 1 if enable else 0, "delay": delay})
+
+
+class SetAnimProtect(ExecuteCommand):
+    """Write the animal-protection setting and its window.
+
+    The app sends all three fields on every toggle, the window unchanged, so
+    this does too: the switch holds the window the mower last reported and
+    resends it, the way the rain switch resends the delay it does not own.
+    ``ExecuteCommand`` for the reason ``SetRainDelay`` gives.
+
+    The clock goes out unpadded, ``"19:0"``, because that is the only form
+    captured from the app's own ``setAnimProtect``. The mower answers padded
+    either way, but a padded write has not been seen.
+    """
+
+    NAME = "setAnimProtect"
+
+    def __init__(self, *, enable: bool, start: time, end: time) -> None:
+        # 0/1 rather than JSON booleans, as captured from the app.
+        super().__init__(
+            {
+                "enable": 1 if enable else 0,
+                "start": f"{start.hour}:{start.minute}",
+                "end": f"{end.hour}:{end.minute}",
+            }
+        )
 
 
 class GetStatsMower(GetStats):

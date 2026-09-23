@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import time
 from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
@@ -18,6 +19,7 @@ from deebot_client.models import CleanAction, State
 
 from custom_components.ecovacs_mower.deebot_patch.commands import (
     CleanMower,
+    GetAnimProtect,
     GetChargeStateMower,
     GetCleanInfoMower,
     GetLifeSpanMower,
@@ -26,6 +28,7 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
     GetRainDelay,
     GetStatsMower,
     MowerStateRefresh,
+    SetAnimProtect,
     SetRainDelay,
     _CleanNonV2,
     _CleanV2Mower,
@@ -39,11 +42,13 @@ from custom_components.ecovacs_mower.deebot_patch.families import (
     selected,
 )
 from custom_components.ecovacs_mower.deebot_patch.messages import (
+    MowerAnimProtectEvent,
     MowerBeacon,
     MowerBeaconsEvent,
     MowerProtectStateEvent,
     MowerRainDelayEvent,
     MowerStatsEvent,
+    OnAnimProtect,
     OnProtectState,
     OnRainDelay,
 )
@@ -563,6 +568,56 @@ async def test_charging_sets_the_dock_and_still_publishes_docked() -> None:
     assert record.docked is True
     # Upstream's own behaviour is kept: nothing that works today changes.
     assert [event.state for event in published] == [State.DOCKED]
+
+
+def test_get_anim_protect_asks_on_the_command_name_not_the_message_name() -> None:
+    # Issue #45. The Ecovacs app asks for it in its getInfo batches, and the
+    # answer carries the onAnimProtect payload.
+    assert GetAnimProtect.NAME == "getAnimProtect"
+    assert OnAnimProtect.NAME == "onAnimProtect"
+
+
+def test_get_anim_protect_takes_no_arguments() -> None:
+    assert GetAnimProtect()._args == {}
+
+
+def test_get_anim_protect_parses_the_answer_with_the_message_handler() -> None:
+    assert (
+        GetAnimProtect._handle_body_data_dict.__func__
+        is OnAnimProtect._handle_body_data_dict.__func__
+    )
+
+
+def test_get_anim_protect_notifies_the_setting_from_the_unpadded_answer() -> None:
+    # The answer as the app received it in a getInfo batch on a G1-800.
+    event_bus = Mock()
+    GetAnimProtect._handle_body_data_dict(
+        event_bus, {"enable": 0, "start": "19:0", "end": "7:0"}
+    )
+    assert event_bus.notify.call_args_list == [
+        call(MowerAnimProtectEvent(enabled=False, start=time(19, 0), end=time(7, 0)))
+    ]
+
+
+def test_set_anim_protect_is_the_write_side_of_the_same_setting() -> None:
+    assert SetAnimProtect.NAME == "setAnimProtect"
+
+
+@pytest.mark.parametrize(("enable", "expected"), [(True, 1), (False, 0)])
+def test_set_anim_protect_sends_the_setting_with_its_window_unpadded(
+    enable: bool, expected: int
+) -> None:
+    # The app's own setAnimProtect, captured on a G1-800: all three fields,
+    # 0/1, and the clock without leading zeros.
+    command = SetAnimProtect(enable=enable, start=time(19, 0), end=time(7, 5))
+    assert command._args == {"enable": expected, "start": "19:0", "end": "7:5"}
+
+
+def test_set_anim_protect_reports_a_refusal_instead_of_claiming_success() -> None:
+    assert (
+        SetAnimProtect._handle_body(Mock(), {"code": 500, "msg": "fail"}).state
+        is HandlingState.FAILED
+    )
 
 
 async def test_not_charging_does_not_clear_the_dock() -> None:
