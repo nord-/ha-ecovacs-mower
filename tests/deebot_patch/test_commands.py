@@ -295,18 +295,6 @@ def test_get_life_span_mower_asks_for_every_component_like_the_app() -> None:
     assert payload["header"].keys() == GetLifeSpan([])._get_payload()["header"].keys()
 
 
-def test_the_librarys_empty_request_carries_no_body() -> None:
-    """Documents why GetLifeSpanMower builds its own payload.
-
-    Handing the library an empty component list is not the same request:
-    JsonCommand._get_payload adds ``body`` only when there are args, so the
-    command would go out as a header alone — a request nobody has seen the
-    mower answer. If upstream starts sending the empty list itself, the override
-    becomes redundant, not wrong.
-    """
-    assert "body" not in GetLifeSpan([])._get_payload()
-
-
 def test_the_librarys_own_command_aborts_on_the_first_beacon() -> None:
     """Documents the bug and its blast radius.
 
@@ -457,6 +445,51 @@ def test_get_life_span_mower_survives_a_component_it_has_never_heard_of() -> Non
     assert (
         call(LifeSpanEvent(LifeSpan.BLADE, 51.52, 2473))
         in event_bus.notify.call_args_list
+    )
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"type": "unitCare", "left": 0, "total": 0},
+        {"type": "unitCare", "left": 5, "total": -1},
+        {"type": "unitCare", "left": 5, "total": "n/a"},
+        {"type": "unitCare", "left": 5, "total": None},
+        {"type": "unitCare", "total": 100},
+        {"type": "unitCare", "left": 5},
+    ],
+)
+def test_get_life_span_mower_drops_a_known_component_it_cannot_divide(
+    broken: dict[str, object], caplog: pytest.LogCaptureFixture
+) -> None:
+    # Issue #100 widened the request, so the answer can now carry a component
+    # the library has a member for but nobody asked for. Handed to upstream with
+    # a total it cannot divide, it raises mid-loop and takes every entry after it
+    # along, the lens brush here: issue #40 again, one level down.
+    event_bus = Mock()
+    with caplog.at_level(logging.DEBUG):
+        GetLifeSpanMower._handle_body_data_list(
+            event_bus,
+            [
+                {"type": "blade", "left": 2473, "total": 4800},
+                {"type": "uwbCell", "sn": "BEACON-1", "left": 83, "total": 100},
+                broken,
+                {"type": "lensBrush", "left": 1000, "total": 1000},
+            ],
+        )
+
+    assert (
+        call(LifeSpanEvent(LifeSpan.LENS_BRUSH, 100.0, 1000))
+        in event_bus.notify.call_args_list
+    )
+    assert not any(
+        isinstance(notified.args[0], LifeSpanEvent)
+        and notified.args[0].type is LifeSpan.UNIT_CARE
+        for notified in event_bus.notify.call_args_list
+    )
+    assert any(
+        record.levelno == logging.DEBUG and "without a reading" in record.getMessage()
+        for record in caplog.records
     )
 
 

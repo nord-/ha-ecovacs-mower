@@ -82,6 +82,21 @@ _LOGGER = logging.getLogger(__name__)
 _KNOWN_COMPONENTS = frozenset(member.value for member in LifeSpan)
 
 
+def _upstream_can_parse(component: dict[str, Any]) -> bool:
+    """Whether upstream's ``GetLifeSpan`` can turn this entry into an event.
+
+    Mirrors its arithmetic: ``left`` and ``total`` go through ``int()``, and a
+    total that is not positive raises. It raises mid-loop, after publishing
+    every entry before this one, so an entry it cannot finish has to be caught
+    here rather than there.
+    """
+    try:
+        int(component["left"])
+        return int(component["total"]) > 0
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 class GetChargeStateMower(GetChargeState):
     """``getChargeState``, recording that the mower is on its charger.
 
@@ -751,16 +766,21 @@ class GetLifeSpanMower(GetLifeSpan):
     ``NAME`` is inherited on purpose, as in ``GetStatsMower``, but the request
     is not: it lists no components at all (issue #100). The mower answers only
     the components a request names, and the library names the ones it builds
-    entities for — ``blade`` and ``lensBrush`` on every GOAT — so the beacons
-    never came back from this command. They came back from the app, which asks
-    with an empty list and is answered with everything: blade, one ``uwbCell``
-    per beacon, lens brush, the order the fixture in the tests records. A
-    T90 vacuum on the same account behaves the same way, so this is how the
-    firmware reads the request rather than a quirk of one model.
+    entities for — ``blade`` and ``lensBrush`` on the beacon-guided classes,
+    those two plus ``weedRope`` and ``trimmerBrush`` on the O1200 — and never a
+    beacon, so the beacons never came back from this command. They came back
+    from the app, which asks with an empty list and is answered with
+    everything: blade, one ``uwbCell`` per beacon, lens brush, the order the
+    fixture in the tests records. A T90 vacuum on the same account behaves the
+    same way, so this is how the firmware reads the request rather than a
+    quirk of one model.
 
-    Asking for everything costs nothing on a mower without beacons: the answer
-    carries the same two components, and anything else the firmware adds is
-    filtered out below before upstream's parser sees it.
+    What the full answer carries on a mower without beacons has not been
+    captured. Whatever it is, anything the library has no member for is
+    filtered out below before upstream's parser sees it, and a component the
+    library does know reaches that parser only with numbers it can divide. The
+    narrow request used to guarantee the second part by asking only for the
+    components the library builds entities for; the full answer no longer does.
     """
 
     def __init__(self) -> None:
@@ -787,6 +807,11 @@ class GetLifeSpanMower(GetLifeSpan):
         components handed to ``super()`` are parsed with upstream's own
         arithmetic, which raises on a non-positive total, and a beacon reading
         should not be lost to a blade entry the library cannot divide.
+
+        Only the entries that arithmetic can finish are handed on. It publishes
+        as it goes, so one it cannot finish would otherwise lose every entry
+        after it too, the failure ``notify_mower_beacons`` guards against for
+        the beacons one entry at a time.
         """
         notify_mower_beacons(event_bus, data)
 
@@ -799,11 +824,15 @@ class GetLifeSpanMower(GetLifeSpan):
             # rest of the answer arrives, which is the whole point.
             _LOGGER.debug("Life span components without a handler: %s", unhandled)
 
-        return super()._handle_body_data_list(
-            event_bus,
-            [
-                component
-                for component in data
-                if component.get("type") in _KNOWN_COMPONENTS
-            ],
-        )
+        parseable: list[dict[str, Any]] = []
+        for component in data:
+            if component.get("type") not in _KNOWN_COMPONENTS:
+                continue
+            if _upstream_can_parse(component):
+                parseable.append(component)
+            else:
+                # Debug for the same reason as above: it would repeat on every
+                # poll, and only this entry is lost.
+                _LOGGER.debug("Life span component without a reading: %s", component)
+
+        return super()._handle_body_data_list(event_bus, parseable)

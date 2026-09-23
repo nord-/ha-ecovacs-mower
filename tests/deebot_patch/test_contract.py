@@ -270,6 +270,20 @@ def test_get_life_span_parses_the_answer_as_a_list() -> None:
     assert issubclass(GetLifeSpan, MessageBodyDataList)
 
 
+def test_the_librarys_empty_request_carries_no_body() -> None:
+    """Documents why GetLifeSpanMower builds its own payload.
+
+    Handing the library an empty component list is not the same request:
+    JsonCommand._get_payload adds ``body`` only when there are args, so the
+    command would go out as a header alone — a request nobody has seen the
+    mower answer. If upstream starts sending the empty list itself, the override
+    becomes redundant, not wrong.
+    """
+    from deebot_client.commands.json.life_span import GetLifeSpan
+
+    assert "body" not in GetLifeSpan([])._get_payload()
+
+
 def test_get_charge_state_publishes_docked_from_the_bypassing_success_path() -> None:
     # GetChargeStateMower._handle_body docks the state_precedence record
     # whenever super()._handle_body returns SUCCESS together with a non-zero

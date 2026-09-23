@@ -551,8 +551,9 @@ answer.
 
 Parsing the beacons is only half of it: they also have to be asked for. The
 mower answers `getLifeSpan` with the components the request lists, and the
-library lists the ones it builds entities for — blade and lens brush — so its
-own poll never came back with a beacon in it. The Ecovacs app asks with an empty
+library lists the ones it builds entities for — blade and lens brush on the
+beacon-guided models, never a beacon — so its own poll never came back with a
+beacon in it. The Ecovacs app asks with an empty
 list and gets everything, and so does this integration (issue #100). Until that
 was fixed, the beacon sensors only appeared if an `onUWB` push (below) arrived
 after a restart, and stayed unavailable until one did.

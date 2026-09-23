@@ -24,6 +24,7 @@ from custom_components.ecovacs_mower.deebot_patch.map_messages import (
     MowerMapInfoEvent,
 )
 from custom_components.ecovacs_mower.deebot_patch.messages import (
+    BEACON_COMPONENT,
     MowerBeaconsEvent,
     MowerProtectStateEvent,
     MowerRainDelayEvent,
@@ -457,13 +458,17 @@ async def test_patch_swaps_in_the_life_span_command_that_survives_a_beacon(
     assert [type(c) for c in commands] == [GetLifeSpanMower]
 
 
-async def test_unpatched_library_never_asks_for_the_beacons() -> None:
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_unpatched_library_never_asks_for_the_beacons(class_: str) -> None:
     # Documents issue #100: the mower answers only the components a request
-    # lists, and the library lists the two it builds entities for. On a G1-800
+    # lists, and the library lists the ones it builds entities for. On a G1-800
     # with four beacons that request came back with blade and lens brush only.
-    info = await get_static_device_info(G1_800)
+    # Every class, because the lists differ: the O1200 also asks for weed rope
+    # and trimmer brush. None of them asks for a beacon.
+    info = await get_static_device_info(class_)
     commands = info.capabilities.get_refresh_commands(LifeSpanEvent)
-    assert [c._args for c in commands] == [["blade", "lensBrush"]]
+    assert [c._args for c in commands] == [list(info.capabilities.life_span.types)]
+    assert BEACON_COMPONENT not in commands[0]._args
 
 
 @pytest.mark.parametrize("event", [LifeSpanEvent, MowerBeaconsEvent])
