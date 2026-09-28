@@ -213,6 +213,8 @@ _SUPPORTED = (
     "e4gqia",
     "xmp9ds",
     "o4kvvk",
+    "6n9pcz",
+    "0jbd6s",
 )
 
 
