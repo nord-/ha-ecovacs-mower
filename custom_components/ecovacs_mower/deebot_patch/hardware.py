@@ -64,7 +64,21 @@ _LOGGER = logging.getLogger(__name__)
 #            xmp9ds.py is byte-identical to 9bts2s.py apart from the docstring,
 #            which here names the model outright ("DEEBOT GOAT A1600 RTK
 #            Capabilities"), so the O800 RTK's patch applies unchanged.
-SUPPORTED_CLASSES = ("2i0fns", "9bts2s", "2px96q", "77atlz", "e4gqia", "xmp9ds")
+#   o4kvvk — GOAT A3000 LiDAR (reported in issue #106, firmware 1.13.31 — the
+#            reporter ran it unpatched, so the patch itself is not confirmed
+#            yet). Upstream's docstring calls it "GOAT G1", the same kind of
+#            misnaming as e4gqia above; its module is byte-identical to
+#            9bts2s.py, docstring aside, so the O800 RTK's patch applies
+#            unchanged.
+SUPPORTED_CLASSES = (
+    "2i0fns",
+    "9bts2s",
+    "2px96q",
+    "77atlz",
+    "e4gqia",
+    "xmp9ds",
+    "o4kvvk",
+)
 
 # ``spotArea`` has only been verified on the A1600 LiDAR Pro. Keep it limited to
 # that class until the payload shape has been verified on other firmware/classes.

@@ -111,6 +111,7 @@ merely that the class string was seen:
 | **Ecovacs GOAT G1-800** | `77atlz` | a user, firmware 1.36.208 — the protection-flag sensors in [#30](https://github.com/nord-/ha-ecovacs-mower/issues/30), start/pause/resume/dock from the `lawn_mower` entity in [#74](https://github.com/nord-/ha-ecovacs-mower/issues/74). That firmware branch answers the `V2` command family instead of the one every other confirmed mower uses, and the integration detects and switches to it automatically, so no manual configuration is needed ([#42](https://github.com/nord-/ha-ecovacs-mower/issues/42)); border mowing is built for this class from the request captured in [#12](https://github.com/nord-/ha-ecovacs-mower/issues/12) and awaits confirmation on hardware |
 | **Ecovacs GOAT A1600 LiDAR Pro** | `e4gqia` | a user, firmware 1.11.31 ([#29](https://github.com/nord-/ha-ecovacs-mower/pull/29)) — zone mowing confirmed ([#78](https://github.com/nord-/ha-ecovacs-mower/pull/78)) |
 | **Ecovacs GOAT A1600 RTK** | `xmp9ds` | reported, patch not yet confirmed — firmware 1.17.9 ([#43](https://github.com/nord-/ha-ecovacs-mower/issues/43)) |
+| **Ecovacs GOAT A3000 LiDAR** | `o4kvvk` | reported working unpatched, patch not yet confirmed — firmware 1.13.31 ([#106](https://github.com/nord-/ha-ecovacs-mower/issues/106)) |
 
 The A1600 ships as two machines, and they report different device classes:
 the LiDAR Pro is `e4gqia`, the RTK is `xmp9ds`. Both rows above are real, and

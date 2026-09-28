@@ -49,6 +49,10 @@ A1600_LIDAR = "e4gqia"
 # byte-identical to 9bts2s.py apart from the docstring, which names the model
 # outright.
 A1600_RTK = "xmp9ds"
+# A sixth, reported as a GOAT A3000 LiDAR (issue #106); upstream's docstring
+# calls it GOAT G1 instead. Its module is byte-identical to 9bts2s.py apart
+# from the docstring.
+A3000_LIDAR = "o4kvvk"
 
 
 def test_supported_classes_are_the_ones_we_patch() -> None:
@@ -61,6 +65,7 @@ def test_supported_classes_are_the_ones_we_patch() -> None:
         G1_800,
         A1600_LIDAR,
         A1600_RTK,
+        A3000_LIDAR,
     }
 
 
