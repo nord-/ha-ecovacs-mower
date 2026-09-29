@@ -195,6 +195,10 @@ class _OnMowJobEdge(MessageBody, ABC):
         if not isinstance(trigger, str) or not trigger:
             return HandlingResult.analyse()
 
+        if cls.PHASE == "stop" and trigger == "workComplete":
+            if (record := record_for(event_bus)) is not None:
+                record.end_job()
+
         event_bus.notify(
             MowerJobEdgeEvent(
                 phase=cls.PHASE,
