@@ -13,9 +13,13 @@ sensor is the one row of the app's Configuration page with no entity behind it
 (issue #54). It sits outside ``ENTITY_DESCRIPTIONS`` because the setting is not
 a deebot-client capability, the same position the protection-flag binary
 sensors are in.
+
+``EcovacsAnimalProtectionSwitch`` is an addition of the same kind, for the
+animal-protection setting (issue #45).
 """
 
 from dataclasses import dataclass
+from datetime import time
 from typing import Any, override
 
 from deebot_client.capabilities import Capabilities, CapabilitySetEnable, DeviceType
@@ -29,8 +33,8 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EcovacsMowerConfigEntry
-from .deebot_patch.commands import SetRainDelay
-from .deebot_patch.messages import MowerRainDelayEvent
+from .deebot_patch.commands import SetAnimProtect, SetRainDelay
+from .deebot_patch.messages import MowerAnimProtectEvent, MowerRainDelayEvent
 from .entity import (
     EcovacsCapabilityEntityDescription,
     EcovacsDescriptionEntity,
@@ -110,11 +114,10 @@ async def async_setup_entry(
     entities: list[EcovacsEntity] = get_supported_entities(
         controller, EcovacsSwitchEntity, ENTITY_DESCRIPTIONS
     )
-    entities.extend(
-        EcovacsRainDetectionSwitch(device)
-        for device in controller.devices
-        if device.capabilities.device_type is DeviceType.MOWER
-    )
+    for device in controller.devices:
+        if device.capabilities.device_type is DeviceType.MOWER:
+            entities.append(EcovacsRainDetectionSwitch(device))
+            entities.append(EcovacsAnimalProtectionSwitch(device))
     if entities:
         async_add_entities(entities)
 
@@ -233,3 +236,89 @@ class EcovacsRainDetectionSwitch(
 
         await self._execute_command(SetRainDelay(enable=enable, delay=self._delay))
         self._device.events.request_refresh(MowerRainDelayEvent)
+
+
+class EcovacsAnimalProtectionSwitch(
+    EcovacsEntity[Capabilities],
+    SwitchEntity,
+):
+    """Whether animal protection is switched on.
+
+    The setting, not ``binary_sensor.<device>_animal_protect``: that one is
+    whether the protection is in effect right now, which it is only inside the
+    nightly window this switch's attributes show. Turned on at noon, the switch
+    reads on and the binary sensor stays off until the window opens.
+
+    Only the toggle is exposed. The window is shown, not editable: it is
+    resent unchanged on every toggle, as the app does, and editing it is left
+    to the app.
+
+    Disabled by default, like every other settings switch here.
+    """
+
+    entity_description = SwitchEntityDescription(
+        key="animal_protection",
+        translation_key="animal_protection",
+        entity_registry_enabled_default=False,
+        entity_category=EntityCategory.CONFIG,
+    )
+
+    def __init__(self, device: Device) -> None:
+        """Initialize entity."""
+        super().__init__(device, device.capabilities)
+        # The window half of the same setting. Held here because
+        # ``setAnimProtect`` carries all three fields — see ``_set``.
+        self._start: time | None = None
+        self._end: time | None = None
+
+    @property
+    @override
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The window the protection applies in, as the app shows it."""
+        return {
+            "start": self._start.strftime("%H:%M") if self._start else None,
+            "end": self._end.strftime("%H:%M") if self._end else None,
+        }
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listeners now that hass is ready."""
+        await super().async_added_to_hass()
+
+        async def on_event(event: MowerAnimProtectEvent) -> None:
+            self._attr_is_on = event.enabled
+            self._start = event.start
+            self._end = event.end
+            self.async_write_ha_state()
+
+        self._subscribe(MowerAnimProtectEvent, on_event)
+
+    @override
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn the entity on."""
+        await self._set(True)
+
+    @override
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn the entity off."""
+        await self._set(False)
+
+    async def _set(self, enable: bool) -> None:
+        """Send the toggle, with the window the device last reported.
+
+        Refused while the window is unknown, for the reason the rain switch
+        refuses without a delay: any default is a window the owner never
+        chose, written to the mower as if they had. A refresh follows the
+        write for the same reason as there, too.
+        """
+        if self._start is None or self._end is None:
+            raise HomeAssistantError(
+                "The mower has not reported its animal protection window, so "
+                "the setting cannot be switched without overwriting it. Wait "
+                "for the mower to report it, or change it in the Ecovacs app"
+            )
+
+        await self._execute_command(
+            SetAnimProtect(enable=enable, start=self._start, end=self._end)
+        )
+        self._device.events.request_refresh(MowerAnimProtectEvent)

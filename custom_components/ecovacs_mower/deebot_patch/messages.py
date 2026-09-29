@@ -67,6 +67,11 @@ any beacon the two sources number differently, so the polled reading wins and a 
 one is only ever a floor under a serial the poll has not delivered — see the
 class for the samples that establish the disagreement, and
 ``_LIFE_SPAN_READINGS`` for the record that decides it.
+
+``MowerAnimProtectEvent`` carries the animal-protection setting and its window,
+from ``onAnimProtect``, a seventh. It is the setting ``isAnimProtect`` was long
+mistaken for (issue #45), and like the rain setting it has a refresh command,
+``GetAnimProtect``, and a write side, ``SetAnimProtect``, in ``commands.py``.
 """
 
 from __future__ import annotations
@@ -75,6 +80,7 @@ import itertools
 import logging
 from abc import ABC
 from dataclasses import dataclass, field
+from datetime import time
 from typing import TYPE_CHECKING, Any, ClassVar
 from weakref import WeakKeyDictionary
 
@@ -884,6 +890,11 @@ class MowerProtectStateEvent(Event):
     gives ``rain_protect`` the ``moisture`` device class on the strength of
     this.
 
+    ``animal_protect`` has since had its positive reading (issue #45): it is
+    the animal-protection setting *in effect right now*, on and inside its
+    nightly window. The sample above fits it, as a reading taken outside the
+    window. ``MowerAnimProtectEvent`` has the evidence, and the setting.
+
     What the samples do *not* separate is "the rain sensor is wet" from "the
     mower is currently held for rain": both are 1 two seconds before a
     rain-stopped run and 0 on a dry day under cover. ``moisture`` is the right
@@ -1027,6 +1038,87 @@ class OnRainDelay(MessageBodyDataDict):
             delay = None
 
         event_bus.notify(MowerRainDelayEvent(enabled=bool(enable), delay=delay))
+        return HandlingResult.success()
+
+
+def _as_clock(value: Any) -> time | None:
+    """Read an ``"H:M"`` clock reading, padded or not, or ``None``.
+
+    The mower writes it both ways for the same setting: the answer to
+    ``getAnimProtect`` reads ``"19:0"``, the ``onAnimProtect`` push that
+    follows a change reads ``"19:00"``. Anything that is not two whole numbers
+    in range is ``None`` rather than a guess.
+    """
+    if not isinstance(value, str):
+        return None
+    hour, sep, minute = value.partition(":")
+    if not sep or not hour.isdecimal() or not minute.isdecimal():
+        return None
+    try:
+        return time(int(hour), int(minute))
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True)
+class MowerAnimProtectEvent(Event):
+    """The animal-protection setting and the nightly window it applies in.
+
+    ``onAnimProtect`` is a seventh unhandled message, and the setting behind a
+    flag that has been misread since the protection flags were first exposed
+    (issue #45). The payload is the setting and nothing else:
+
+        {"enable": 1, "start": "19:00", "end": "07:00"}
+
+    Toggled from the app on a GOAT G1-800 (``77atlz``, fw 1.36.208), seven
+    times across two windows, this field followed every toggle and
+    ``isAnimProtect`` in ``onProtectState`` did not: with the window covering
+    the time of the toggle the flag followed it, with the window moved to end
+    before it the flag stayed silent. ``isAnimProtect`` is therefore whether
+    the protection is *in effect right now*, ``enable`` and the clock inside
+    ``[start, end]``, and this event is the switch.
+
+    ``start`` and ``end`` are optional for the same reason ``delay`` is on the
+    rain setting: a firmware that leaves them out should leave them unknown,
+    not claim a window nobody configured.
+    """
+
+    enabled: bool
+    start: time | None
+    end: time | None
+
+
+class OnAnimProtect(MessageBodyDataDict):
+    """The animal-protection setting and its window."""
+
+    NAME = "onAnimProtect"
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data.
+
+        ``enable`` gets the treatment ``OnRainDelay`` gives it, for the same
+        reason: ``setAnimProtect`` carries all three fields, so a misread
+        ``enable`` is written back to the mower the next time the switch is
+        used. Only ``bool`` or the ints ``0``/``1`` are accepted, and anything
+        else drops the whole payload.
+        """
+        enable = data.get("enable")
+        if enable is None or (
+            not isinstance(enable, bool) and enable not in (0, 1)
+        ):
+            _LOGGER.warning("onAnimProtect without a usable enable field: %s", data)
+            return HandlingResult.analyse()
+
+        event_bus.notify(
+            MowerAnimProtectEvent(
+                enabled=bool(enable),
+                start=_as_clock(data.get("start")),
+                end=_as_clock(data.get("end")),
+            )
+        )
         return HandlingResult.success()
 
 
