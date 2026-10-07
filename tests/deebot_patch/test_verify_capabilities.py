@@ -52,11 +52,12 @@ async def test_verify_capabilities_rejects_a_zone_device_without_mow_area() -> N
         verify_capabilities(capabilities, A1600_LIDAR)
 
 
-async def test_zone_device_receives_mow_area() -> None:
+@pytest.mark.parametrize("zone_class", [A1600_LIDAR, "77atlz"])
+async def test_zone_device_receives_mow_area(zone_class: str) -> None:
     """The zone class carries MowArea while the O800 keeps its library area."""
-    await patch_device_info(A1600_LIDAR)
+    await patch_device_info(zone_class)
     await patch_device_info(O800)
-    zone = await get_static_device_info(A1600_LIDAR)
+    zone = await get_static_device_info(zone_class)
     non_zone = await get_static_device_info(O800)
 
     assert zone.capabilities.clean.action.area is MowArea

@@ -547,6 +547,18 @@ async def test_patch_preserves_the_other_life_span_capabilities(class_: str) -> 
     assert after.capabilities.life_span.event is event_before
 
 
+def test_zone_area_classes_are_the_ones_with_a_confirmed_zone_job() -> None:
+    # Membership means "spotArea is confirmed on this class", not "we patch
+    # it" — the same sense as BORDER_CLASSES below. The A1600 LiDAR Pro was
+    # the first (PR #29); the G1-800 followed, on clean_V2.
+    from custom_components.ecovacs_mower.deebot_patch.hardware import (
+        ZONE_AREA_CLASSES,
+    )
+
+    assert set(ZONE_AREA_CLASSES) == {A1600_LIDAR, G1_800}
+    assert set(ZONE_AREA_CLASSES) <= set(SUPPORTED_CLASSES)
+
+
 def test_border_classes_are_the_ones_with_a_captured_request() -> None:
     # Membership means "the border request shape is confirmed on this class",
     # not "we patch it" — the opposite sense from SUPPORTED_CLASSES, the same
