@@ -1,9 +1,9 @@
 """Password-free renewal of the portal credentials.
 
 Backport of the still-unreleased upstream fix (DeebotUniverse/client.py#1743,
-wired into the core integration by home-assistant/core#178558) onto the pinned
-deebot-client 18.6.0, which has neither an ``account_credentials`` seed nor
-``login_with_account``.
+wired into the core integration by home-assistant/core#178558) onto
+deebot-client 18.6.0, the lowest version the manifest accepts, which has
+neither an ``account_credentials`` seed nor ``login_with_account``.
 
 Why it is needed: for some accounts Ecovacs answers ``user/login`` with code
 1013 ("Please update to the latest version to continue") even for a device ID

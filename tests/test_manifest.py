@@ -9,6 +9,7 @@ MANIFEST = (
     / "ecovacs_mower"
     / "manifest.json"
 )
+REQUIREMENTS_TEST = Path(__file__).parent.parent / "requirements-test.txt"
 
 
 def _manifest() -> dict:
@@ -24,8 +25,17 @@ def test_version_present() -> None:
     assert _manifest()["version"]
 
 
-def test_deebot_client_pinned_exactly() -> None:
-    assert _manifest()["requirements"] == ["deebot-client==18.6.0"]
+def test_deebot_client_floor_is_the_tested_version() -> None:
+    # A minimum, not an exact pin: hassfest rejects `==` on a package Home
+    # Assistant itself depends on. The floor is the version CI tests against,
+    # which requirements-test.txt pins exactly.
+    tested = next(
+        line
+        for line in REQUIREMENTS_TEST.read_text(encoding="utf-8").splitlines()
+        if line.startswith("deebot-client==")
+    )
+    floor = tested.removeprefix("deebot-client==")
+    assert _manifest()["requirements"] == [f"deebot-client>={floor}"]
 
 
 def test_no_sucks_dependency() -> None:

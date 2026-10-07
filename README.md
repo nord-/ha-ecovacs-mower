@@ -89,12 +89,12 @@ order of work here gets decided.
 ## Requirements
 
 - **Home Assistant 2026.7 or later.** This is a hard floor, not a
-  suggestion. `deebot-client==18.6.0` (what this integration pins) requires
-  `cryptography>=48.0.1` for its device-verification flow. Home Assistant
-  2026.4.4 pins `cryptography==46.0.7`. Those two requirements cannot
-  coexist, so the integration cannot load at all on HA 2026.4.4 or older —
-  it will fail to install, not fail at runtime. If you're on an older
-  release, upgrade Home Assistant first.
+  suggestion. `deebot-client` 18.6.0, the lowest version this integration
+  accepts, requires `cryptography>=48.0.1` for its device-verification flow.
+  Home Assistant 2026.4.4 pins `cryptography==46.0.7`. Those two
+  requirements cannot coexist, so the integration cannot load at all on
+  HA 2026.4.4 or older — it will fail to install, not fail at runtime. If
+  you're on an older release, upgrade Home Assistant first.
 - HACS, if installing that way (see below). Not required for manual install.
 
 ## Hardware support
