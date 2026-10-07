@@ -15,6 +15,7 @@ from typing import Any
 
 from deebot_client.api_client import ApiClient
 from deebot_client.authentication import create_rest_config
+from deebot_client.commands.json.pos import GetPos
 from deebot_client.capabilities import DeviceType
 from deebot_client.const import UNDEFINED, UndefinedType
 from deebot_client.device import Device
@@ -55,6 +56,7 @@ from .const import (
     DOMAIN,
     ISSUE_TRACKER_URL,
     POLL_INTERVAL,
+    POSITION_POLL_INTERVAL,
 )
 from .deebot_patch import (
     AccountAuthenticator,
@@ -231,6 +233,7 @@ class EcovacsController:
                         self._devices.append(device)
                         if device.capabilities.device_type is DeviceType.MOWER:
                             self._setup_polling(device)
+                            self._setup_position_polling(device)
                             self._setup_fault_latch(device)
                             # Map data is best effort; mower control is sacred.
                             # A failure here must not fail the TaskGroup and
@@ -369,6 +372,38 @@ class EcovacsController:
                 self.start_polling(device)
 
         device.events.subscribe(StateEvent, on_status)
+
+    def _setup_position_polling(self, device: Device) -> None:
+        """Ask for the mower's position while it is out, not while docked.
+
+        Separate from the state and stats poll above because it ticks every
+        few seconds rather than every few minutes, and it shares that poll's
+        dict of timers, under its own key, so ``teardown`` cancels both
+        without knowing there are two. See POSITION_POLL_INTERVAL for why the
+        position has to be asked for at all.
+        """
+        key = f"{device.device_info['did']}:position"
+
+        async def on_status(event: StateEvent) -> None:
+            if event.state is State.DOCKED:
+                if (unsub := self._unsub_polls.pop(key, None)) is not None:
+                    unsub()
+            elif key not in self._unsub_polls:
+                self._unsub_polls[key] = async_track_time_interval(
+                    self._hass,
+                    partial(self._poll_position, device),
+                    POSITION_POLL_INTERVAL,
+                )
+
+        device.events.subscribe(StateEvent, on_status)
+
+    async def _poll_position(self, device: Device, now: datetime) -> None:
+        """One tick: ask where the mower is.
+
+        The answer reaches the map through PositionsEvent like a pushed one;
+        a failure is logged by the library and just means one point less.
+        """
+        await device.execute_command(GetPos())
 
     def start_polling(self, device: Device) -> None:
         """Start asking for the mower's state and stats, unless already doing so.

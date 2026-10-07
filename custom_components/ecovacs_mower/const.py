@@ -59,3 +59,17 @@ SUPPORTED_LIFESPANS = (
 # and mowing_progress/stats can each be individually disabled in the entity
 # registry, and this has to keep running regardless of which of them are.
 POLL_INTERVAL = timedelta(minutes=5)
+
+# How often to ask a mower that is out where it is. The G1-800 (firmware
+# 1.36.208) does not push onPos unprompted: a zone run with nobody watching
+# in the Ecovacs app delivered onStats, onBattery and onMapTrace_V2 for
+# minutes and not one position, so the map marker stood in the dock while
+# the mower mowed. Its device definition in deebot-client has no map
+# capability either, so there is nothing to refresh through the event bus
+# and the position is asked for with a command of its own (the Ecovacs app
+# does the same while its live map is open).
+#
+# Fifteen seconds: close enough to draw a path (a mower covers a few metres
+# in that time), against one more command per interval on Ecovacs' cloud
+# API while it is out. Nothing is asked while it is docked.
+POSITION_POLL_INTERVAL = timedelta(seconds=15)
