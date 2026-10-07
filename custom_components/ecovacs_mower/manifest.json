@@ -8,6 +8,6 @@
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/nord-/ha-ecovacs-mower/issues",
   "loggers": ["deebot_client"],
-  "requirements": ["deebot-client==18.5.1"],
+  "requirements": ["deebot-client==18.6.0"],
   "version": "0.10.0"
 }

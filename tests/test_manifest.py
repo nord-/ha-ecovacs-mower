@@ -25,7 +25,7 @@ def test_version_present() -> None:
 
 
 def test_deebot_client_pinned_exactly() -> None:
-    assert _manifest()["requirements"] == ["deebot-client==18.5.1"]
+    assert _manifest()["requirements"] == ["deebot-client==18.6.0"]
 
 
 def test_no_sucks_dependency() -> None:

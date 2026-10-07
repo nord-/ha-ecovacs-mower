@@ -245,7 +245,7 @@ async def test_patch_is_idempotent() -> None:
 
 
 async def test_unknown_device_class_is_left_alone() -> None:
-    # An unknown class must not crash. Verified in 18.5.1: get_static_device_info
+    # An unknown class must not crash. Verified in 18.6.0: get_static_device_info
     # returns None on ModuleNotFoundError, there is no fallback definition.
     await patch_device_info("nonexistent_class")
     assert "nonexistent_class" not in _DEVICES

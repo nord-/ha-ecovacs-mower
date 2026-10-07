@@ -89,7 +89,7 @@ order of work here gets decided.
 ## Requirements
 
 - **Home Assistant 2026.7 or later.** This is a hard floor, not a
-  suggestion. `deebot-client==18.5.1` (what this integration pins) requires
+  suggestion. `deebot-client==18.6.0` (what this integration pins) requires
   `cryptography>=48.0.1` for its device-verification flow. Home Assistant
   2026.4.4 pins `cryptography==46.0.7`. Those two requirements cannot
   coexist, so the integration cannot load at all on HA 2026.4.4 or older —

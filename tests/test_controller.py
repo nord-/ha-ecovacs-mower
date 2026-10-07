@@ -197,7 +197,7 @@ def test_verification_reads_static_device_info() -> None:
 
 
 # A GOAT class outside SUPPORTED_CLASSES. All 25 MOWER classes in deebot-client
-# 18.5.1 carry the same CleanV2/GetCleanInfoV2 bugs, so this device becomes an
+# 18.6.0 carry the same CleanV2/GetCleanInfoV2 bugs, so this device becomes an
 # entity with dead controls.
 _OTHER_MOWER = "cr0e4u"
 # The T5PRO vacuum: a valid class, DeviceType.VACUUM, never becomes an entity.
