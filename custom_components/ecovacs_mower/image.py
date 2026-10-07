@@ -4,6 +4,10 @@ Not in HA core's ecovacs (whose vacuum map rendering was cut from this
 fork); this is a mower-specific replacement built on the decoded GOAT map
 messages. The SVG is rendered lazily when the frontend fetches the image;
 events only decide when the image counts as new.
+
+The mower's position and the dock also go out as attributes, in the map
+frame's own units (mm), so a card can draw the mower on something other
+than the SVG — an aerial photo, for instance.
 """
 
 from __future__ import annotations
@@ -38,6 +42,12 @@ _LOGGER = logging.getLogger(__name__)
 # would make the frontend re-fetch twice a second.
 POSITION_UPDATE_INTERVAL_SECONDS = 2
 
+ATTR_POSITION_X = "position_x"
+ATTR_POSITION_Y = "position_y"
+ATTR_HEADING = "heading"
+ATTR_DOCK_X = "dock_x"
+ATTR_DOCK_Y = "dock_y"
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -59,6 +69,11 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
     """The mower's map, rendered as SVG."""
 
     _attr_content_type = "image/svg+xml"
+    # The position moves every couple of seconds while mowing; the recorder
+    # has no use for a row per move.
+    _unrecorded_attributes = frozenset(
+        {ATTR_POSITION_X, ATTR_POSITION_Y, ATTR_HEADING}
+    )
     entity_description = ImageEntityDescription(key="map", translation_key="map")
 
     def __init__(
@@ -85,6 +100,27 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         self._subscribe(MowerCoveredAreaEvent, self._on_geometry)
         self._subscribe(MowerNoGoZonesEvent, self._on_geometry)
         self._subscribe(PositionsEvent, self._on_positions)
+
+    @property
+    @override
+    def extra_state_attributes(self) -> dict[str, int | None]:
+        """Where the mower and the dock are, in mm in the map frame.
+
+        Read from the map when the state is written rather than copied by
+        a handler, because the controller owns the map and updates it
+        independently of this entity. The position stays ``None`` until the
+        first fix of a session: unlike the SVG marker, which falls back to
+        the dock so there is always something to draw, a number that is
+        not known should not pass for one that is.
+        """
+        position = self._map.position
+        return {
+            ATTR_POSITION_X: position[0] if position else None,
+            ATTR_POSITION_Y: position[1] if position else None,
+            ATTR_HEADING: self._map.heading if position else None,
+            ATTR_DOCK_X: self._map.dock[0],
+            ATTR_DOCK_Y: self._map.dock[1],
+        }
 
     def _bump(self) -> None:
         self._attr_image_last_updated = dt_util.utcnow()

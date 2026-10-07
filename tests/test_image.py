@@ -134,3 +134,61 @@ async def test_position_bumps_are_throttled() -> None:
     await EcovacsMowerMap._on_positions(instance, MagicMock())
     assert instance._attr_image_last_updated >= now  # old enough, bumped
     instance.async_write_ha_state.assert_called_once()
+
+
+def test_attributes_before_the_first_position_fix() -> None:
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+    from custom_components.ecovacs_mower.map import MowerMap
+
+    instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
+    instance._map = MowerMap()
+
+    # The SVG marker falls back to the dock, but a number nobody measured
+    # must not look like one: position and heading stay None, the dock does
+    # not.
+    assert instance.extra_state_attributes == {
+        "position_x": None,
+        "position_y": None,
+        "heading": None,
+        "dock_x": 0,
+        "dock_y": 0,
+    }
+
+
+def test_attributes_follow_the_map() -> None:
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+    from custom_components.ecovacs_mower.map import MowerMap
+
+    instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
+    mower_map = MowerMap()
+    instance._map = mower_map
+
+    mower_map.update_position(1200, -3400, 90)
+    assert instance.extra_state_attributes == {
+        "position_x": 1200,
+        "position_y": -3400,
+        "heading": 90,
+        "dock_x": 0,
+        "dock_y": 0,
+    }
+
+    # The controller moves the map under the entity's feet; the attributes
+    # must reflect that without the entity being told.
+    mower_map.update_position(1500, -3000, 180)
+    mower_map.dock = (10, 20)
+    attributes = instance.extra_state_attributes
+    assert attributes["position_x"] == 1500
+    assert attributes["position_y"] == -3000
+    assert attributes["heading"] == 180
+    assert (attributes["dock_x"], attributes["dock_y"]) == (10, 20)
+
+
+def test_moving_attributes_are_not_recorded() -> None:
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+
+    # The dock is worth keeping in history, the position is not.
+    assert EcovacsMowerMap._unrecorded_attributes == {
+        "position_x",
+        "position_y",
+        "heading",
+    }
