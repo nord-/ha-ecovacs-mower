@@ -42,6 +42,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EcovacsMowerConfigEntry
+from .area_numbers import async_setup_area_numbers
 from .deebot_patch.commands import SetRainDelay
 from .deebot_patch.messages import MowerRainDelayEvent
 from .entity import (
@@ -108,6 +109,7 @@ async def async_setup_entry(
     )
     if entities:
         async_add_entities(entities)
+    await async_setup_area_numbers(config_entry, async_add_entities)
 
 
 class EcovacsNumberEntity[EventT: Event](

@@ -86,7 +86,7 @@ class EcovacsEntity[CapabilityEntityT](Entity):
 
             self._subscribe(AvailabilityEvent, on_available)
 
-    async def _execute_command(self, command: Command) -> None:
+    async def _execute_command(self, command: Command) -> bool:
         """Send *command* to the device, and log it here when it is not confirmed.
 
         ``Device.execute_command`` returns the raw response, which is an empty
@@ -116,6 +116,10 @@ class EcovacsEntity[CapabilityEntityT](Entity):
         on a double failure ``_AdaptiveFamily`` sends both delegates but
         commits neither, and a warning naming only the family that was
         current before the attempt would understate what was actually sent.
+
+        Returns whether the command was confirmed, for the caller that has to
+        know: an area write must not become the base of the next one when
+        the mower never took it.
         """
         if not await self._device.execute_command(command):
             family_suffix = (
@@ -130,6 +134,8 @@ class EcovacsEntity[CapabilityEntityT](Entity):
                 command.NAME,
                 family_suffix,
             )
+            return False
+        return True
 
     def _subscribe[EventT: Event](
         self,
