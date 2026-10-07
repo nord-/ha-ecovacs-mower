@@ -354,6 +354,23 @@ def test_the_first_fragment_of_a_map_message_teaches_the_map_id() -> None:
     assert map_id_for(event_bus) == "123456789"
 
 
+def test_learning_the_map_id_requests_the_area_refresh_once() -> None:
+    # GetAreaSet sends nothing until the id is known, so learning it is what
+    # gets the area names asked for; a repeat of the same id asks again for
+    # nothing.
+    from custom_components.ecovacs_mower.deebot_patch.areas import MowerAreaEvent
+    from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
+        register,
+    )
+
+    event_bus = Mock()
+    register(event_bus)
+    for _ in range(2):
+        OnMI.handle(event_bus, deepcopy(FIXTURES["on_mi_full"][0]["payload"]))
+
+    event_bus.request_refresh.assert_called_once_with(MowerAreaEvent)
+
+
 def test_a_map_id_of_zero_teaches_nothing() -> None:
     from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
         map_id_for,

@@ -244,6 +244,19 @@ async def test_patch_is_idempotent() -> None:
     assert info.capabilities.clean.action.command is CleanMower
 
 
+async def test_a_second_patch_of_the_area_class_changes_nothing() -> None:
+    # The class with area parameters takes the same early return as every
+    # other: a second call must not mint a second set of refresh commands.
+    from custom_components.ecovacs_mower.deebot_patch.areas import MowerAreaEvent
+
+    await patch_device_info("e4gqia")
+    first = _DEVICES["e4gqia"]
+    await patch_device_info("e4gqia")
+
+    assert _DEVICES["e4gqia"] is first
+    assert first.capabilities.get_refresh_commands(MowerAreaEvent)
+
+
 async def test_unknown_device_class_is_left_alone() -> None:
     # An unknown class must not crash. Verified in 18.6.0: get_static_device_info
     # returns None on ModuleNotFoundError, there is no fallback definition.
@@ -266,6 +279,7 @@ async def test_apply_registers_the_message_handlers() -> None:
 
     from custom_components.ecovacs_mower.deebot_patch import apply
     from custom_components.ecovacs_mower.deebot_patch.messages import (
+        OnAreaParameter,
         OnChargeInfo,
         OnPos,
         OnProtectState,
@@ -273,6 +287,7 @@ async def test_apply_registers_the_message_handlers() -> None:
     )
 
     apply()
+    assert MESSAGES["onAreaParameter"] is OnAreaParameter
     assert MESSAGES["onChargeInfo"] is OnChargeInfo
     assert MESSAGES["onPos"] is OnPos
     assert MESSAGES["onProtectState"] is OnProtectState

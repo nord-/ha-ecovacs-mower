@@ -4,11 +4,16 @@
 device module. By letting the library build its own definition, swapping out
 the broken parts and putting the result back, we avoid monkeypatching any
 function — we use the same mechanism the library itself uses.
+
+This module also owns the supported mower-class profiles. The profile records
+only integration capabilities that have been independently validated for a
+specific class; raw protocol parsing remains in the patch layer and
+human-facing interpretation remains in the HA layer.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import logging
 from types import MappingProxyType
 
@@ -16,8 +21,11 @@ from deebot_client.capabilities import CapabilityEvent
 from deebot_client.events import StateEvent, StatsEvent
 from deebot_client.hardware import _DEVICES, get_static_device_info
 
+from .areas import MowerAreaEvent
 from .commands import (
     CleanMower,
+    GetAreaParameter,
+    GetAreaSet,
     GetLifeSpanMower,
     GetMapInfoV2,
     GetProtectState,
@@ -35,6 +43,15 @@ from .messages import (
 from .zonal import MowArea
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class MowerProfile:
+    """Validated integration capabilities for one supported mower class."""
+
+    device_class: str
+    area_parameters: bool = False
+
 
 # Device classes this integration patches, and how each one was confirmed:
 #   2i0fns — GOAT O1200 LiDAR Pro (owner-verified)
@@ -78,17 +95,23 @@ _LOGGER = logging.getLogger(__name__)
 #            GOAT_INT_O1200_LIDAR_PLUS_NA, and upstream's 0jbd6s.py is
 #            byte-identical to 2i0fns.py, docstring included — so the O1200's
 #            patch applies unchanged, not the O800's.
-SUPPORTED_CLASSES = (
-    "2i0fns",
-    "9bts2s",
-    "2px96q",
-    "77atlz",
-    "e4gqia",
-    "xmp9ds",
-    "o4kvvk",
-    "6n9pcz",
-    "0jbd6s",
-)
+#
+# Presence in this mapping means the class is supported by the integration.
+# Capability flags are deliberately narrower: they are enabled only where the
+# corresponding behavior or raw-value semantics have been independently
+# validated on that class. Similar protocol field names on another class are
+# not sufficient evidence to enable a capability there.
+SUPPORTED_CLASSES: dict[str, MowerProfile] = {
+    "2i0fns": MowerProfile("2i0fns"),
+    "9bts2s": MowerProfile("9bts2s"),
+    "2px96q": MowerProfile("2px96q"),
+    "77atlz": MowerProfile("77atlz"),
+    "e4gqia": MowerProfile("e4gqia", area_parameters=True),
+    "xmp9ds": MowerProfile("xmp9ds"),
+    "o4kvvk": MowerProfile("o4kvvk"),
+    "6n9pcz": MowerProfile("6n9pcz"),
+    "0jbd6s": MowerProfile("0jbd6s"),
+}
 
 # ``spotArea`` has only been verified on the A1600 LiDAR Pro. Keep it limited to
 # that class until the payload shape has been verified on other firmware/classes.
@@ -102,6 +125,11 @@ ZONE_AREA_CLASSES = ("e4gqia",)
 #   77atlz — GOAT G1-800, firmware 1.36.208: clean_V2 with
 #            {"type": "border", "value": "mid:<mid>"}, acknowledged code 0.
 BORDER_CLASSES = ("77atlz",)
+
+
+def profile_for_class(class_: str) -> MowerProfile | None:
+    """Return the validated integration profile for a device class."""
+    return SUPPORTED_CLASSES.get(class_)
 
 
 async def patch_device_info(class_: str) -> None:
@@ -240,20 +268,21 @@ async def patch_device_info(class_: str) -> None:
     # command firing before the device exists. The answer is an ack; the
     # payload lands separately in OnMapInfo, which is why this refresh
     # publishes no event of its own and why that is fine — see GetMapInfoV2.
-    object.__setattr__(
-        patched,
-        "_events",
-        MappingProxyType(
-            {
-                **patched._events,
-                MowerProtectStateEvent: [GetProtectState()],
-                MowerRainDelayEvent: [GetRainDelay()],
-                MowerStatsEvent: [GetStatsMower()],
-                MowerBeaconsEvent: [GetLifeSpanMower()],
-                MowerMapInfoEvent: [GetMapInfoV2()],
-            }
-        ),
-    )
+    events = {
+        **patched._events,
+        MowerProtectStateEvent: [GetProtectState()],
+        MowerRainDelayEvent: [GetRainDelay()],
+        MowerStatsEvent: [GetStatsMower()],
+        MowerBeaconsEvent: [GetLifeSpanMower()],
+        MowerMapInfoEvent: [GetMapInfoV2()],
+    }
+    profile = profile_for_class(class_)
+    if profile is not None and profile.area_parameters:
+        # One area event represents the whole area capability. The two protocol
+        # reads populate one authoritative raw snapshot before notifying it.
+        events[MowerAreaEvent] = [GetAreaParameter(), GetAreaSet()]
+
+    object.__setattr__(patched, "_events", MappingProxyType(events))
 
     _DEVICES[class_] = replace(base, capabilities=patched)
     _LOGGER.debug("Patched capabilities for %s", class_)

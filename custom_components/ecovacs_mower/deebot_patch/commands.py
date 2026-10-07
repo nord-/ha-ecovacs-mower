@@ -33,6 +33,13 @@ answer makes the library abandon the rest of it (issue #40).
 ``GetRainDelay`` and ``SetRainDelay`` are the same kind as ``GetProtectState``
 — commands the library does not have at all — with the difference that this
 setting is writable, so it needs both halves (issue #54).
+
+The area commands are also defined here because they are protocol commands,
+not area state. ``GetAreaParameter`` and ``GetAreaSet`` populate the raw area
+snapshot owned by ``areas.py``; ``SetAreaParameter`` writes one complete raw
+area parameter set. Keeping the command definitions beside the other patch
+commands follows the library's command-module ownership while leaving all
+Home Assistant value conversion in ``area_numbers.py``.
 """
 
 from __future__ import annotations
@@ -52,13 +59,22 @@ from deebot_client.commands.json.common import (
     ExecuteCommand,
     JsonCommandWithMessageHandling,
 )
+from deebot_client.commands.json.custom import CustomCommand
 from deebot_client.commands.json.life_span import GetLifeSpan
 from deebot_client.commands.json.stats import GetStats
 from deebot_client.const import DataType
 from deebot_client.events import LifeSpan, StateEvent
 from deebot_client.message import HandlingResult, HandlingState
 from deebot_client.models import CleanAction, CleanMode, State
+import orjson
 
+from .areas import (
+    MowerArea,
+    _areas_for,
+    _notify,
+    apply_area_parameters,
+    fragments_for,
+)
 from .families import Family, commit, note_attempt, selected
 from .messages import (
     BEACON_COMPONENT,
@@ -68,7 +84,7 @@ from .messages import (
     notify_mower_beacons,
     notify_mower_stats,
 )
-from .state_precedence import record_for
+from .state_precedence import map_id_for, record_for
 
 if TYPE_CHECKING:
     from deebot_client.authentication import Authenticator
@@ -718,6 +734,165 @@ class SetRainDelay(ExecuteCommand):
         # 0/1, not JSON booleans: that is what the app sends and what every
         # observed payload of this message carries.
         super().__init__({"enable": 1 if enable else 0, "delay": delay})
+
+
+class GetAreaParameter(CustomCommand):
+    """Read all raw per-area mowing parameters from the mower."""
+
+    NAME = "getAreaParameter"
+
+    def __init__(self) -> None:
+        super().__init__(self.NAME, {})
+
+    def _handle_response(
+        self, event_bus: Any, response: dict[str, Any]
+    ) -> HandlingResult:
+        if response.get("ret") != "ok":
+            return super()._handle_response(event_bus, response)
+        try:
+            parameters = response["resp"]["body"]["data"]["areaParameters"]
+        except (KeyError, TypeError):
+            _LOGGER.debug("Unexpected getAreaParameter response: %r", response)
+            return HandlingResult.analyse()
+        if not apply_area_parameters(event_bus, parameters):
+            return HandlingResult.analyse()
+        return HandlingResult.success()
+
+
+class GetAreaSet(CustomCommand):
+    """Read the mower's area inventory and friendly names.
+
+    ``mid`` names the map in use, which the mower reports in every map
+    message's envelope and ``state_precedence.map_id_for`` remembers, the
+    same id ``MowBorder`` names. A constant would ask a re-mapped mower about
+    a map it does not have. The refresh entry is built once per device class,
+    before any id is known, so it carries none: it reads the id when the
+    request goes out and sends a command built for that map. Until the id is
+    known it sends nothing rather than guess, and ``map_messages`` requests
+    the area refresh again the moment one arrives.
+    """
+
+    NAME = "getAreaSet"
+
+    def __init__(self, map_id: str | None = None) -> None:
+        super().__init__(self.NAME, {"mid": map_id, "aid": "0", "type": "ar"})
+        self._map_id = map_id
+
+    async def _execute(
+        self,
+        authenticator: Authenticator,
+        device_info: ApiDeviceInfo,
+        event_bus: EventBus,
+    ) -> tuple[HandlingResult, dict[str, Any]]:
+        """Send the request for the map in use, or nothing while it is unknown."""
+        if self._map_id is not None:
+            return await super()._execute(authenticator, device_info, event_bus)
+        map_id = map_id_for(event_bus)
+        if map_id is None:
+            _LOGGER.debug("Not sending getAreaSet: the map in use is not known yet")
+            # FAILED rather than success: a request that never went out must
+            # not count as the mower having answered (device_reached).
+            return HandlingResult(HandlingState.FAILED), {}
+        return await GetAreaSet(map_id)._execute(
+            authenticator, device_info, event_bus
+        )
+
+    def _handle_response(
+        self, event_bus: Any, response: dict[str, Any]
+    ) -> HandlingResult:
+        if response.get("ret") != "ok":
+            return super()._handle_response(event_bus, response)
+        try:
+            data = response["resp"]["body"]["data"]
+            info = data["subsets"]
+        except (KeyError, TypeError):
+            _LOGGER.debug("Unexpected getAreaSet response: %r", response)
+            return HandlingResult.analyse()
+        if not isinstance(info, str):
+            return HandlingResult.analyse()
+        try:
+            index = int(data.get("index", 0))
+            info_size = int(data.get("infoSize", -1))
+        except (TypeError, ValueError):
+            return HandlingResult.analyse()
+
+        blob = fragments_for(event_bus).add(
+            str(data.get("batid", "")), index, info, info_size
+        )
+        if blob is None:
+            return HandlingResult.success()
+        try:
+            decoded = orjson.loads(blob)
+        except (orjson.JSONDecodeError, TypeError):
+            _LOGGER.debug("Could not decode getAreaSet payload")
+            return HandlingResult.analyse()
+        if not isinstance(decoded, list):
+            return HandlingResult.analyse()
+
+        areas = _areas_for(event_bus)
+        reported_ids: set[str] = set()
+        for row in decoded:
+            if not isinstance(row, list) or len(row) < 2:
+                continue
+            area_id = str(row[1]).strip()
+            if not area_id:
+                continue
+            reported_ids.add(area_id)
+            name = row[2] if len(row) >= 3 else None
+            name = name.strip() if isinstance(name, str) else None
+            current = areas.get(area_id, MowerArea(area_id))
+            areas[area_id] = MowerArea(
+                area_id=current.area_id,
+                name=name or current.name,
+                mow_height_level=current.mow_height_level,
+                cut_mode=current.cut_mode,
+                obstacle_height=current.obstacle_height,
+                angle=current.angle,
+            )
+
+        if not reported_ids:
+            # Not pruned: an empty list is also what the mower answers for a
+            # map it does not have, and wiping the inventory on it would make
+            # every area's entities unavailable.
+            _LOGGER.debug("Could not find area IDs in getAreaSet payload")
+            return HandlingResult.analyse()
+        for area_id in tuple(areas):
+            if area_id not in reported_ids:
+                del areas[area_id]
+        _notify(event_bus)
+        return HandlingResult.success()
+
+
+class SetAreaParameter(ExecuteCommand):
+    """Set the complete raw parameter set for one mower area.
+
+    ``ExecuteCommand`` for the same reason as ``SetRainDelay``: a non-zero
+    ``code`` in the reply is a refusal, and ``CustomCommand`` checks only the
+    transport's ``ret``. Reported as a failure, it reaches the warning
+    ``EcovacsEntity._execute_command`` logs (issue #26) instead of passing for
+    success.
+    """
+
+    NAME = "setAreaParameter"
+
+    def __init__(
+        self,
+        *,
+        area_id: str,
+        mow_height_level: int,
+        cut_mode: int,
+        obstacle_height: int,
+        angle: int,
+    ) -> None:
+        super().__init__(
+            {
+                "areaID": area_id,
+                "mowHeightLevel": mow_height_level,
+                "cutMode": cut_mode,
+                "obstacleHeight": obstacle_height,
+                "angle": angle,
+            }
+        )
 
 
 class GetStatsMower(GetStats):
