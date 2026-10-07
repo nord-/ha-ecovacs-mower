@@ -116,7 +116,7 @@ def test_no_stale_image_translations_or_icons() -> None:
 
 async def test_position_bumps_are_throttled() -> None:
     from datetime import timedelta
-    from unittest.mock import MagicMock
+    from unittest.mock import MagicMock, patch
 
     from homeassistant.util import dt as dt_util
 
@@ -127,13 +127,96 @@ async def test_position_bumps_are_throttled() -> None:
 
     now = dt_util.utcnow()
     instance._attr_image_last_updated = now
-    await EcovacsMowerMap._on_positions(instance, MagicMock())
+    with patch(
+        "custom_components.ecovacs_mower.image.async_call_later"
+    ) as call_later:
+        await EcovacsMowerMap._on_positions(instance, MagicMock())
     assert instance._attr_image_last_updated == now  # too soon, no bump
+    instance.async_write_ha_state.assert_not_called()
+    call_later.assert_called_once()  # but the last word is not lost
 
     instance._attr_image_last_updated = now - timedelta(seconds=3)
     await EcovacsMowerMap._on_positions(instance, MagicMock())
     assert instance._attr_image_last_updated >= now  # old enough, bumped
     instance.async_write_ha_state.assert_called_once()
+
+
+async def test_a_skipped_position_is_published_when_the_interval_is_up() -> None:
+    # The mower stops: no position follows the one that was skipped, so
+    # without a trailing refresh the state would stay behind for good.
+    from unittest.mock import MagicMock, patch
+
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.ecovacs_mower.image import (
+        POSITION_UPDATE_INTERVAL_SECONDS,
+        EcovacsMowerMap,
+    )
+
+    instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
+    instance.hass = MagicMock()
+    instance.async_write_ha_state = MagicMock()
+    instance._attr_image_last_updated = dt_util.utcnow()
+
+    with patch(
+        "custom_components.ecovacs_mower.image.async_call_later"
+    ) as call_later:
+        await EcovacsMowerMap._on_positions(instance, MagicMock())
+        await EcovacsMowerMap._on_positions(instance, MagicMock())
+
+    # A burst of skipped positions leaves exactly one refresh behind, due
+    # within the interval.
+    call_later.assert_called_once()
+    _hass, delay, action = call_later.call_args.args
+    assert 0 < delay <= POSITION_UPDATE_INTERVAL_SECONDS
+    instance.async_write_ha_state.assert_not_called()
+
+    before = instance._attr_image_last_updated
+    await action(dt_util.utcnow())
+    instance.async_write_ha_state.assert_called_once()
+    assert instance._attr_image_last_updated > before
+    assert instance._trailing_bump is None
+
+
+async def test_a_bump_that_is_due_cancels_the_pending_refresh() -> None:
+    from datetime import timedelta
+    from unittest.mock import MagicMock
+
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+
+    instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
+    instance.async_write_ha_state = MagicMock()
+    cancel = MagicMock()
+    instance._trailing_bump = cancel
+    instance._attr_image_last_updated = dt_util.utcnow() - timedelta(seconds=3)
+
+    await EcovacsMowerMap._on_positions(instance, MagicMock())
+
+    # The refresh would only repeat what this bump just wrote.
+    cancel.assert_called_once()
+    assert instance._trailing_bump is None
+    instance.async_write_ha_state.assert_called_once()
+
+
+async def test_removal_drops_the_pending_refresh() -> None:
+    from unittest.mock import MagicMock, patch
+
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+
+    instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
+    cancel = MagicMock()
+    instance._trailing_bump = cancel
+
+    with patch(
+        "custom_components.ecovacs_mower.entity.EcovacsEntity"
+        ".async_will_remove_from_hass"
+    ):
+        await EcovacsMowerMap.async_will_remove_from_hass(instance)
+
+    cancel.assert_called_once()
+    assert instance._trailing_bump is None
 
 
 def test_attributes_before_the_first_position_fix() -> None:

@@ -13,6 +13,7 @@ than the SVG — an aerial photo, for instance.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import override
 
 from deebot_client.capabilities import Capabilities, DeviceType
@@ -20,8 +21,9 @@ from deebot_client.device import Device
 from deebot_client.events.map import PositionsEvent
 
 from homeassistant.components.image import ImageEntity, ImageEntityDescription
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
 from . import EcovacsMowerConfigEntry
@@ -75,6 +77,9 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         {ATTR_POSITION_X, ATTR_POSITION_Y, ATTR_HEADING}
     )
     entity_description = ImageEntityDescription(key="map", translation_key="map")
+    # The pending refresh for a position that arrived inside the throttle
+    # window; at most one is ever scheduled.
+    _trailing_bump: CALLBACK_TYPE | None = None
 
     def __init__(
         self, device: Device, mower_map: MowerMap, hass: HomeAssistant
@@ -100,6 +105,12 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         self._subscribe(MowerCoveredAreaEvent, self._on_geometry)
         self._subscribe(MowerNoGoZonesEvent, self._on_geometry)
         self._subscribe(PositionsEvent, self._on_positions)
+
+    @override
+    async def async_will_remove_from_hass(self) -> None:
+        """Drop the pending refresh, if there is one."""
+        self._cancel_trailing_bump()
+        await super().async_will_remove_from_hass()
 
     @property
     @override
@@ -137,11 +148,30 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         self._bump()
 
     async def _on_positions(self, event: PositionsEvent) -> None:
-        # Throttled: a skipped bump is corrected by the next position half
-        # a second later, or by the next geometry event.
-        elapsed = dt_util.utcnow() - self._attr_image_last_updated
-        if elapsed.total_seconds() >= POSITION_UPDATE_INTERVAL_SECONDS:
+        # Throttled, but the last position of a burst must still land: when
+        # the mower stops there is no next position to correct a skipped
+        # one, and the state would stay behind by up to the interval. So a
+        # skipped update leaves one refresh behind for when the interval is
+        # up, and that refresh reads the map as it is by then.
+        elapsed = (dt_util.utcnow() - self._attr_image_last_updated).total_seconds()
+        if elapsed >= POSITION_UPDATE_INTERVAL_SECONDS:
+            self._cancel_trailing_bump()
             self._bump()
+        elif self._trailing_bump is None:
+            self._trailing_bump = async_call_later(
+                self.hass,
+                POSITION_UPDATE_INTERVAL_SECONDS - elapsed,
+                self._on_trailing_bump,
+            )
+
+    async def _on_trailing_bump(self, _now: datetime) -> None:
+        self._trailing_bump = None
+        self._bump()
+
+    def _cancel_trailing_bump(self) -> None:
+        if self._trailing_bump is not None:
+            self._trailing_bump()
+            self._trailing_bump = None
 
     @override
     async def async_image(self) -> bytes | None:
