@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from custom_components.ecovacs_mower.map import MowerMap
 from custom_components.ecovacs_mower.map_svg import render
 
@@ -58,31 +60,48 @@ def _mower_and_heading_endpoint(svg: str) -> tuple[float, float, float, float]:
     return float(mower_cx), float(mower_cy), float(line_x2), float(line_y2)
 
 
-def test_heading_arrow_points_forward_not_backward() -> None:
-    # Regression for issue #41: at heading 0 the arrow pointed to the
-    # mower's back (screen "up" instead of "down") because the assumed
-    # heading convention was never verified against real hardware.
+@pytest.mark.parametrize(
+    ("heading", "dx", "dy"),
+    [
+        (0, 1, 0),  # +x: screen right
+        (90, 0, -1),  # +y: screen up, the SVG y axis grows downwards
+        (180, -1, 0),
+        (-90, 0, 1),
+    ],
+)
+def test_heading_arrow_points_along_the_reported_heading(
+    heading: int, dx: int, dy: int
+) -> None:
+    # The heading is degrees counter-clockwise from the frame's +x axis.
+    # Measured on a G1-800 (firmware 1.36.208): it matched the direction of
+    # travel to within a few degrees (issue #41 worked it out from symptoms
+    # and ended up 90 degrees off).
     mower_map = MowerMap()
     mower_map.update_map_info(BOUNDARY, None, None)
-    mower_map.update_position(1000, 1000, 0)
+    mower_map.update_position(1000, 1000, heading)
     mower_cx, mower_cy, line_x2, line_y2 = _mower_and_heading_endpoint(
         render(mower_map)
     )
-    assert line_x2 == mower_cx
-    assert line_y2 > mower_cy
+    # The arrow is 10 px long, and coordinates are written with one decimal.
+    assert line_x2 - mower_cx == pytest.approx(10 * dx, abs=0.2)
+    assert line_y2 - mower_cy == pytest.approx(10 * dy, abs=0.2)
 
 
-def test_heading_arrow_rotates_with_real_turn_direction() -> None:
-    # Regression for issue #41: a turn that increases the reported
-    # heading rendered as a mirror-image turn on screen.
-    mower_map = MowerMap()
-    mower_map.update_map_info(BOUNDARY, None, None)
-    mower_map.update_position(1000, 1000, 90)
-    mower_cx, mower_cy, line_x2, line_y2 = _mower_and_heading_endpoint(
-        render(mower_map)
-    )
-    assert line_x2 > mower_cx
-    assert line_y2 == mower_cy
+def test_heading_arrow_turns_the_way_the_mower_turns() -> None:
+    # An increasing heading is a counter-clockwise turn of the mower as seen
+    # on the map, so the arrow must go from pointing right (0) via up (90)
+    # to left (180), never the mirror image.
+    def endpoint(heading: int) -> tuple[float, float]:
+        mower_map = MowerMap()
+        mower_map.update_map_info(BOUNDARY, None, None)
+        mower_map.update_position(1000, 1000, heading)
+        cx, cy, x2, y2 = _mower_and_heading_endpoint(render(mower_map))
+        return x2 - cx, y2 - cy
+
+    right, up, left = endpoint(0), endpoint(90), endpoint(180)
+    assert right[0] > 0 and abs(right[1]) < 0.1
+    assert up[1] < 0 and abs(up[0]) < 0.1
+    assert left[0] < 0 and abs(left[1]) < 0.1
 
 
 def test_svg_is_valid_xml() -> None:
