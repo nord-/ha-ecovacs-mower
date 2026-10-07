@@ -5,9 +5,9 @@ fork); this is a mower-specific replacement built on the decoded GOAT map
 messages. The SVG is rendered lazily when the frontend fetches the image;
 events only decide when the image counts as new.
 
-The mower's position and the dock also go out as attributes, in the map
-frame's own units (mm), so a card can draw the mower on something other
-than the SVG — an aerial photo, for instance.
+The mower's position, the dock and the path it has driven also go out as
+attributes, in the map frame's own units (mm), so a card can draw the mower
+on something other than the SVG — an aerial photo, for instance.
 """
 
 from __future__ import annotations
@@ -49,6 +49,11 @@ ATTR_POSITION_Y = "position_y"
 ATTR_HEADING = "heading"
 ATTR_DOCK_X = "dock_x"
 ATTR_DOCK_Y = "dock_y"
+ATTR_TRACK = "track"
+
+# The attribute is sent to every client on each change, so it carries a
+# thinned copy of the track rather than the 2000 points the map keeps.
+TRACK_ATTRIBUTE_POINTS = 250
 
 
 async def async_setup_entry(
@@ -74,7 +79,7 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
     # The position moves every couple of seconds while mowing; the recorder
     # has no use for a row per move.
     _unrecorded_attributes = frozenset(
-        {ATTR_POSITION_X, ATTR_POSITION_Y, ATTR_HEADING}
+        {ATTR_POSITION_X, ATTR_POSITION_Y, ATTR_HEADING, ATTR_TRACK}
     )
     entity_description = ImageEntityDescription(key="map", translation_key="map")
     # The pending refresh for a position that arrived inside the throttle
@@ -114,15 +119,16 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
 
     @property
     @override
-    def extra_state_attributes(self) -> dict[str, int | None]:
-        """Where the mower and the dock are, in mm in the map frame.
+    def extra_state_attributes(self) -> dict[str, int | list[list[int]] | None]:
+        """Where the mower and the dock are, in mm in the map frame, and its path.
 
         Read from the map when the state is written rather than copied by
         a handler, because the controller owns the map and updates it
         independently of this entity. The position stays ``None`` until the
         first fix of a session: unlike the SVG marker, which falls back to
         the dock so there is always something to draw, a number that is
-        not known should not pass for one that is.
+        not known should not pass for one that is. The track is the one
+        the SVG draws, thinned, and starts empty after a restart.
         """
         position = self._map.position
         return {
@@ -131,6 +137,9 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
             ATTR_HEADING: self._map.heading if position else None,
             ATTR_DOCK_X: self._map.dock[0],
             ATTR_DOCK_Y: self._map.dock[1],
+            ATTR_TRACK: [
+                [x, y] for x, y in self._map.sampled_track(TRACK_ATTRIBUTE_POINTS)
+            ],
         }
 
     def _bump(self) -> None:

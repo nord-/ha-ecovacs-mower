@@ -101,6 +101,22 @@ class MowerMap:
             dense = TRACK_MAX_POINTS // 2
             self.track = self.track[:-dense:2] + self.track[-dense:]
 
+    def sampled_track(self, limit: int) -> list[Point]:
+        """The track thinned to roughly ``limit`` points, last point included.
+
+        For consumers that cannot take the full track — a state attribute is
+        sent to every client on each change. Evenly spaced, so the shape is
+        kept; the newest point is always there so the path ends where the
+        mower is.
+        """
+        if len(self.track) <= limit:
+            return list(self.track)
+        step = -(-len(self.track) // limit)
+        points = self.track[::step]
+        if points[-1] != self.track[-1]:
+            points.append(self.track[-1])
+        return points
+
     def as_dict(self) -> dict[str, Any]:
         """Serializable snapshot for Store. Track/position stay volatile."""
         return {

@@ -235,6 +235,7 @@ def test_attributes_before_the_first_position_fix() -> None:
         "heading": None,
         "dock_x": 0,
         "dock_y": 0,
+        "track": [],
     }
 
 
@@ -253,6 +254,7 @@ def test_attributes_follow_the_map() -> None:
         "heading": 90,
         "dock_x": 0,
         "dock_y": 0,
+        "track": [[1200, -3400]],
     }
 
     # The controller moves the map under the entity's feet; the attributes
@@ -274,4 +276,29 @@ def test_moving_attributes_are_not_recorded() -> None:
         "position_x",
         "position_y",
         "heading",
+        "track",
     }
+
+
+def test_track_attribute_is_thinned_and_ends_at_the_mower() -> None:
+    # The attribute goes to every client on each change; the map keeps up to
+    # 2000 points, which is far more than a card needs.
+    from custom_components.ecovacs_mower.image import (
+        TRACK_ATTRIBUTE_POINTS,
+        EcovacsMowerMap,
+    )
+    from custom_components.ecovacs_mower.map import MowerMap
+
+    instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
+    mower_map = MowerMap()
+    instance._map = mower_map
+    for i in range(1500):
+        mower_map.update_position(i * 10, -i, 0)
+
+    track = instance.extra_state_attributes["track"]
+
+    assert len(track) <= TRACK_ATTRIBUTE_POINTS + 1
+    assert track[0] == [0, 0]
+    assert track[-1] == [14990, -1499]  # where the mower is now
+    # JSON-friendly: lists, not tuples.
+    assert all(isinstance(point, list) for point in track)
