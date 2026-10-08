@@ -71,5 +71,6 @@ POLL_INTERVAL = timedelta(minutes=5)
 #
 # Fifteen seconds: close enough to draw a path (a mower covers a few metres
 # in that time), against one more command per interval on Ecovacs' cloud
-# API while it is out. Nothing is asked while it is docked.
+# API while it is out. Nothing is asked while it is docked, and nothing while
+# the mower is pushing positions by itself (see _poll_position).
 POSITION_POLL_INTERVAL = timedelta(seconds=15)

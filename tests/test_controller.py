@@ -854,6 +854,7 @@ async def test_position_polling_starts_on_leaving_and_stops_on_docking() -> None
     controller = EcovacsController.__new__(EcovacsController)
     controller._hass = MagicMock()
     controller._unsub_polls = {}
+    controller._last_pushed_position = {}
 
     device = MagicMock()
     device.device_info = {"did": "did-1"}
@@ -903,13 +904,93 @@ async def test_poll_position_asks_the_mower_where_it_is() -> None:
     from custom_components.ecovacs_mower.controller import EcovacsController
 
     controller = EcovacsController.__new__(EcovacsController)
+    controller._last_pushed_position = {}
+    controller._asking_position = set()
     device = MagicMock()
+    device.device_info = {"did": "did-1"}
     device.execute_command = AsyncMock(return_value={})  # an unanswered ask
 
     await controller._poll_position(device, None)
 
     device.execute_command.assert_awaited_once()
     assert isinstance(device.execute_command.await_args.args[0], GetPos)
+    assert controller._asking_position == set()
+
+
+async def test_poll_position_stays_quiet_while_the_mower_pushes_positions() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from custom_components.ecovacs_mower.const import POSITION_POLL_INTERVAL
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._asking_position = set()
+    device = MagicMock()
+    device.device_info = {"did": "did-1"}
+    device.execute_command = AsyncMock(return_value={})
+    interval = POSITION_POLL_INTERVAL.total_seconds()
+
+    with patch(
+        "custom_components.ecovacs_mower.controller.monotonic"
+    ) as clock:
+        # A push from a few seconds ago: it is telling us, nothing to ask.
+        controller._last_pushed_position = {"did-1": 100.0}
+        clock.return_value = 100.0 + interval - 1
+        await controller._poll_position(device, None)
+        device.execute_command.assert_not_awaited()
+
+        # The pushes went quiet for a whole interval: ask again.
+        clock.return_value = 100.0 + interval + 1
+        await controller._poll_position(device, None)
+        device.execute_command.assert_awaited_once()
+
+        # Another mower's pushes do not silence this one.
+        device.execute_command.reset_mock()
+        controller._last_pushed_position = {"did-2": 100.0 + interval}
+        clock.return_value = 100.0 + interval + 2
+        await controller._poll_position(device, None)
+        device.execute_command.assert_awaited_once()
+
+
+async def test_the_answer_to_our_own_ask_does_not_count_as_a_push() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from deebot_client.events import Position, PositionsEvent
+    from deebot_client.rs.map import PositionType
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = MagicMock()
+    controller._last_pushed_position = {}
+    controller._asking_position = set()
+    controller.maps = {}
+    controller._map_stores = {}
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1"}
+    callbacks: dict[type, object] = {}
+    device.events.subscribe = lambda event_type, callback: callbacks.setdefault(
+        event_type, callback
+    )
+
+    with patch("custom_components.ecovacs_mower.controller.Store") as store_cls:
+        store_cls.return_value.async_load = AsyncMock(return_value=None)
+        await controller._setup_map(device)
+
+    on_positions = callbacks[PositionsEvent]
+    event = PositionsEvent([Position(type=PositionType.DEEBOT, x=1, y=2, a=3)])
+
+    async def answer(_command) -> dict:
+        await on_positions(event)  # the reply to getPos, while we are asking
+        return {}
+
+    device.execute_command = AsyncMock(side_effect=answer)
+    await controller._poll_position(device, None)
+    assert controller._last_pushed_position == {}
+
+    await on_positions(event)  # nobody asked: the mower pushed this one
+    assert "did-1" in controller._last_pushed_position
 
 
 async def test_teardown_cancels_the_position_poll_too() -> None:
