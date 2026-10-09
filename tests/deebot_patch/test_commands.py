@@ -557,6 +557,8 @@ def test_set_rain_delay_reports_a_refusal_instead_of_claiming_success() -> None:
         SetRainDelay._handle_body(Mock(), {"code": 0, "msg": "ok"}).state
         is HandlingState.SUCCESS
     )
+
+
 async def test_charging_sets_the_dock_and_still_publishes_docked() -> None:
     bus = _bus()
     record = register(bus)
@@ -1187,3 +1189,57 @@ async def test_the_v2_delegate_still_sends_no_type_on_resume() -> None:
         await CleanMower(CleanAction.RESUME)._execute(AsyncMock(), _DEVICE_INFO, bus)
 
     assert sent == [{"act": "resume", "content": {}}]
+
+
+async def test_start_becomes_resume_when_docked_with_a_recorded_job_type() -> None:
+    # Issue #104. The sequence: mower mows (onCleanInfo sets record.job_type),
+    # HA sends act:go mid-job, mower returns home and docks. No paused
+    # onCleanInfo push arrives, so record.suppressed stays None. start_mowing
+    # must still send RESUME because record.job_type signals a suspended job.
+    # command (move() clears record.suppressed, record.dock() sets record.docked).
+    # Result: record.docked=True, record.job_type="auto", record.suppressed=None.
+    #
+    # Without this check, _effective_action found suppressed=None, fell through
+    # to the last StateEvent (DOCKED), and returned START. The firmware acks
+    # a start while docked with a paused job with code:0 but ignores it silently.
+    #
+    # note_job() is the same path onCleanInfo takes: handle_clean_info() calls
+    # record.note_job(data["cleanState"]["content"]), and the captures in #104
+    # show content={"type": "auto"} on every working and paused push.
+    bus = _bus()
+    record = register(bus)
+    record.dock()
+    record.note_job({"type": "auto"})
+
+    fake, _ = _transport(_OK)
+    with patch.object(Command, "_execute", fake):
+        command = CleanMower(CleanAction.START)
+        await command._execute(AsyncMock(), _DEVICE_INFO, bus)
+
+    assert command._delegate(Family.NON_V2)._args["act"] == "resume"
+
+
+async def test_start_stays_start_after_work_complete() -> None:
+    # After a completed job (workComplete bury point), end_job() clears
+    # job_type. A subsequent start_mowing must send "start", not "resume".
+    # Without the end_job() call in _OnMowJobEdge._handle_body, job_type
+    # would survive the completion and the new branch in _effective_action
+    # would send resume — a no-op at best, but wrong.
+    from custom_components.ecovacs_mower.deebot_patch.messages import OnMowAutoStop
+
+    bus = _bus()
+    record = register(bus)
+    record.dock()
+    record.note_job({"type": "auto"})
+
+    # The bury point the firmware sends when a job finishes naturally.
+    OnMowAutoStop._handle_body(bus, {"trigger": "workComplete", "workArea": 320.5})
+
+    assert record.job_type is None
+
+    fake, _ = _transport(_OK)
+    with patch.object(Command, "_execute", fake):
+        command = CleanMower(CleanAction.START)
+        await command._execute(AsyncMock(), _DEVICE_INFO, bus)
+
+    assert command._delegate(Family.NON_V2)._args["act"] == "start"

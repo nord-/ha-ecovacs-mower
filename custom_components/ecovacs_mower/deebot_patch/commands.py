@@ -475,6 +475,14 @@ class CleanMower(_AdaptiveFamily, Clean):
         A pause the gate suppressed still has to reach this decision: the
         entity reads docked, but the plan is paused and the mower wants
         ``resume``. Nothing else reads ``record.suppressed``.
+
+        If the mower docked mid-job via ``act:go``, the job is suspended on the
+        dock but the mower pushes no paused ``onCleanInfo`` for the gate to
+        withhold, so ``suppressed`` stays ``None``. ``record.job_type`` is set
+        from the last ``onCleanInfo`` that carried ``cleanState.content``, and is
+        cleared by ``end_job()`` when the job ends (either the app's End button
+        or a ``workComplete`` bury point). A set ``job_type`` on a docked mower
+        is therefore evidence that a suspended job exists (issue #104).
         """
         if self._action not in (CleanAction.START, CleanAction.RESUME):
             return self._action
@@ -482,6 +490,8 @@ class CleanMower(_AdaptiveFamily, Clean):
         state = None
         if (record := record_for(event_bus)) is not None:
             state = record.suppressed
+            if state is None and record.docked and record.job_type is not None:
+                return CleanAction.RESUME
         if state is None and (last := event_bus.get_last_event(StateEvent)):
             state = last.state
 
