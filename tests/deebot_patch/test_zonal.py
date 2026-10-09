@@ -23,10 +23,10 @@ from .test_commands import _DEVICE_INFO, _OK, _NO_ANSWER, _bus, _transport
 @pytest.fixture(autouse=True)
 def _clear_cache():
     """Empty the library's cache between tests."""
-    for class_ in ("e4gqia",):
+    for class_ in ("e4gqia", "77atlz"):
         _DEVICES.pop(class_, None)
     yield
-    for class_ in ("e4gqia",):
+    for class_ in ("e4gqia", "77atlz"):
         _DEVICES.pop(class_, None)
 
 
@@ -77,9 +77,10 @@ def test_mow_area_equality_includes_area_ids() -> None:
     )
 
 
-async def test_patch_exposes_the_area_command() -> None:
-    await patch_device_info("e4gqia")
-    info = await get_static_device_info("e4gqia")
+@pytest.mark.parametrize("class_", ["e4gqia", "77atlz"])
+async def test_patch_exposes_the_area_command(class_: str) -> None:
+    await patch_device_info(class_)
+    info = await get_static_device_info(class_)
     assert info.capabilities.clean.action.area is MowArea
 
 

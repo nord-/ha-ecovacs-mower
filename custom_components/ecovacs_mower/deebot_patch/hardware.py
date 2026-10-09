@@ -69,7 +69,9 @@ class MowerProfile:
 #            and clean is never acknowledged; unpatched, getCleanInfo_V2
 #            answers first try and clean_V2 is acked in 526 ms. The class
 #            stays here because the family is now chosen at runtime rather
-#            than by this tuple — see families.py.
+#            than by this tuple — see families.py. Zone mowing is confirmed
+#            on it too (``mow_area``, firmware 1.36.208), see
+#            ZONE_AREA_CLASSES.
 #   e4gqia — GOAT A1600 LiDAR Pro (confirmed, PR #29, firmware 1.11.31).
 #            Upstream names this A3000 LiDAR Pro; its module is byte-identical
 #            to 9bts2s.py apart from the docstring, so the O800's patch
@@ -113,9 +115,11 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "0jbd6s": MowerProfile("0jbd6s"),
 }
 
-# ``spotArea`` has only been verified on the A1600 LiDAR Pro. Keep it limited to
-# that class until the payload shape has been verified on other firmware/classes.
-ZONE_AREA_CLASSES = ("e4gqia",)
+# ``spotArea`` has been verified on the A1600 LiDAR Pro and on the G1-800 (the
+# latter on clean_V2, firmware 1.36.208). Keep it limited to the classes where
+# it has been verified until the payload shape has been verified on other
+# firmware/classes.
+ZONE_AREA_CLASSES = ("e4gqia", "77atlz")
 
 # Classes on which the border-job request shape has been captured from the
 # app (issue #12). Like ZONE_AREA_CLASSES, membership means "confirmed", not
