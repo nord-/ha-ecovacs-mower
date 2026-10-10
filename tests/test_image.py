@@ -200,6 +200,24 @@ async def test_a_bump_that_is_due_cancels_the_pending_refresh() -> None:
     instance.async_write_ha_state.assert_called_once()
 
 
+async def test_a_geometry_event_cancels_the_pending_refresh() -> None:
+    from unittest.mock import MagicMock
+
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+
+    instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
+    instance.async_write_ha_state = MagicMock()
+    cancel = MagicMock()
+    instance._trailing_bump = cancel
+
+    await EcovacsMowerMap._on_geometry(instance, MagicMock())
+
+    # The geometry write already carries the latest position.
+    cancel.assert_called_once()
+    assert instance._trailing_bump is None
+    instance.async_write_ha_state.assert_called_once()
+
+
 async def test_removal_drops_the_pending_refresh() -> None:
     from unittest.mock import MagicMock, patch
 

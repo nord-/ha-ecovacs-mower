@@ -143,6 +143,9 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         }
 
     def _bump(self) -> None:
+        # Every write supersedes a pending trailing refresh, whichever event
+        # caused it: the refresh would only repeat what this one just wrote.
+        self._cancel_trailing_bump()
         self._attr_image_last_updated = dt_util.utcnow()
         self.async_write_ha_state()
 
@@ -164,7 +167,6 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         # up, and that refresh reads the map as it is by then.
         elapsed = (dt_util.utcnow() - self._attr_image_last_updated).total_seconds()
         if elapsed >= POSITION_UPDATE_INTERVAL_SECONDS:
-            self._cancel_trailing_bump()
             self._bump()
         elif self._trailing_bump is None:
             self._trailing_bump = async_call_later(
