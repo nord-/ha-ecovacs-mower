@@ -562,11 +562,14 @@ async def test_patch_preserves_the_other_life_span_capabilities(class_: str) -> 
     assert after.capabilities.life_span.event is event_before
 
 
-def test_border_classes_are_the_ones_with_a_captured_request() -> None:
-    # Membership means "the border request shape is confirmed on this class",
-    # not "we patch it" — the opposite sense from SUPPORTED_CLASSES, the same
-    # sense as ZONE_AREA_CLASSES. Only the G1-800 has a capture (issue #12).
-    from custom_components.ecovacs_mower.deebot_patch.hardware import BORDER_CLASSES
+def test_border_mowing_is_flagged_on_the_classes_with_a_captured_request() -> None:
+    # The flag means "the border request shape is confirmed on this class",
+    # not "we patch it" — the opposite sense from membership in
+    # SUPPORTED_CLASSES. Only the G1-800 has a capture (issue #12).
+    from custom_components.ecovacs_mower.deebot_patch import hardware
 
-    assert set(BORDER_CLASSES) == {G1_800}
-    assert set(BORDER_CLASSES) <= set(SUPPORTED_CLASSES)
+    assert {
+        class_
+        for class_, profile in hardware.SUPPORTED_CLASSES.items()
+        if profile.border_mowing
+    } == {G1_800}

@@ -49,10 +49,24 @@ _LOGGER = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class MowerProfile:
-    """Validated integration capabilities for one supported mower class."""
+    """Validated integration capabilities for one supported mower class.
+
+    Every flag defaults to off. Turning one on is a claim that the behaviour
+    behind it has been confirmed on that class, not that the protocol fields
+    look the same as on a class where it was.
+
+    ``area_parameters`` gives the class the ``MowerAreaEvent`` refresh and the
+    per-area number entities. ``zone_mowing`` gives it ``MowArea`` as its
+    ``clean.action.area`` capability, which is what the ``mow_area`` service
+    checks for. ``border_mowing`` gives it the ``mow_border`` button; that one
+    gates an entity rather than a capability, because ``Capabilities`` has no
+    field for a border job, and ``button.py`` reads it from the profile.
+    """
 
     device_class: str
     area_parameters: bool = False
+    zone_mowing: bool = False
+    border_mowing: bool = False
 
 
 # Device classes this integration patches, and how each one was confirmed:
@@ -103,30 +117,29 @@ class MowerProfile:
 # corresponding behavior or raw-value semantics have been independently
 # validated on that class. Similar protocol field names on another class are
 # not sufficient evidence to enable a capability there.
+#
+# How each flag was validated:
+#   area_parameters — e4gqia: raw-to-HA mappings confirmed on the A1600 LiDAR
+#                     Pro; see docs/area-parameter-capability.md.
+#   zone_mowing     — e4gqia: the spotArea payload confirmed on the A1600
+#                     LiDAR Pro, firmware 1.11.31 (PR #78); see zonal.py.
+#   border_mowing   — 77atlz: the app's border-job request captured on the
+#                     G1-800, firmware 1.36.208 (issue #12): clean_V2 with
+#                     {"type": "border", "value": "mid:<mid>"}, acknowledged
+#                     code 0. Only the V2 shape is captured; the non-V2 one is
+#                     a guess nobody has tested, which is why no non-V2 class
+#                     has the flag — see border.py.
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile("2i0fns"),
     "9bts2s": MowerProfile("9bts2s"),
     "2px96q": MowerProfile("2px96q"),
-    "77atlz": MowerProfile("77atlz"),
-    "e4gqia": MowerProfile("e4gqia", area_parameters=True),
+    "77atlz": MowerProfile("77atlz", border_mowing=True),
+    "e4gqia": MowerProfile("e4gqia", area_parameters=True, zone_mowing=True),
     "xmp9ds": MowerProfile("xmp9ds"),
     "o4kvvk": MowerProfile("o4kvvk"),
     "6n9pcz": MowerProfile("6n9pcz"),
     "0jbd6s": MowerProfile("0jbd6s"),
 }
-
-# ``spotArea`` has only been verified on the A1600 LiDAR Pro. Keep it limited to
-# that class until the payload shape has been verified on other firmware/classes.
-ZONE_AREA_CLASSES = ("e4gqia",)
-
-# Classes on which the border-job request shape has been captured from the
-# app (issue #12). Like ZONE_AREA_CLASSES, membership means "confirmed", not
-# "patched": the button is only built for these, because the non-V2 shape is
-# a guess nobody has tested — see border.py. Widening this tuple is how a
-# second class gains the button.
-#   77atlz — GOAT G1-800, firmware 1.36.208: clean_V2 with
-#            {"type": "border", "value": "mid:<mid>"}, acknowledged code 0.
-BORDER_CLASSES = ("77atlz",)
 
 
 def profile_for_class(class_: str) -> MowerProfile | None:
@@ -142,8 +155,8 @@ async def patch_device_info(class_: str) -> None:
     * ``clean.action.command``: ``CleanV2`` publishes on ``clean_V2``, which
       GOAT firmware ignores. Swapped for ``CleanMower`` on ``clean``.
     * ``clean.action.area``: expose the verified GOAT ``spotArea`` area-clean
-      command for the A1600 LiDAR Pro. Existing library area commands are
-      preserved for other classes.
+      command for classes whose profile sets ``zone_mowing``. Existing
+      library area commands are preserved for other classes.
     * ``state``: the clean-info answer is a constant ``idle`` regardless of
       what the mower is actually doing (issue #48), and the library ran the
       charge and clean-info answers concurrently in one ``TaskGroup`` — a
@@ -176,7 +189,8 @@ async def patch_device_info(class_: str) -> None:
     which is a frozen dataclass. Patching the cache afterwards means the devices
     already got the unpatched capabilities.
     """
-    if class_ not in SUPPORTED_CLASSES:
+    profile = profile_for_class(class_)
+    if profile is None:
         _LOGGER.debug("Device class %s not supported, not patching", class_)
         return
 
@@ -200,7 +214,7 @@ async def patch_device_info(class_: str) -> None:
                 command=CleanMower,
                 area=(
                     MowArea
-                    if class_ in ZONE_AREA_CLASSES
+                    if profile.zone_mowing
                     else capabilities.clean.action.area
                 ),
             ),
@@ -281,8 +295,7 @@ async def patch_device_info(class_: str) -> None:
         MowerBeaconsEvent: [GetLifeSpanMower()],
         MowerMapInfoEvent: [GetMapInfoV2()],
     }
-    profile = profile_for_class(class_)
-    if profile is not None and profile.area_parameters:
+    if profile.area_parameters:
         # One area event represents the whole area capability. The two protocol
         # reads populate one authoritative raw snapshot before notifying it.
         events[MowerAreaEvent] = [GetAreaParameter(), GetAreaSet()]

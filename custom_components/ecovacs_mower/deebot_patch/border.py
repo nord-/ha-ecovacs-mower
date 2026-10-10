@@ -14,8 +14,8 @@ else about the job, so the command carries nothing but that id.
 
 Only the ``clean_V2`` shape is confirmed. The non-V2 delegate sends the same
 nested payload on ``clean``, which is what the confirmed ``spotArea`` command
-does on that family; ``hardware.BORDER_CLASSES`` keeps the button off the
-non-V2 hardware until someone confirms it there.
+does on that family; the ``border_mowing`` flag on ``hardware.MowerProfile``
+keeps the button off the non-V2 hardware until someone confirms it there.
 """
 
 from __future__ import annotations

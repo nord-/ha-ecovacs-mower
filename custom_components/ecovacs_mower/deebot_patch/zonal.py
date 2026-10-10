@@ -4,6 +4,10 @@ The ``spotArea`` payload shape was reverse-engineered by
 PhilippF1992/ecovacs_goat_zonal_additions (MIT licensed) and confirmed by
 the PR author on an A1600 LiDAR Pro (``e4gqia``), firmware 1.11.31.
 
+Which classes receive it is decided by the ``zone_mowing`` flag on their
+``MowerProfile`` in ``hardware.py``, set only where the payload has been
+confirmed on that class.
+
 The command is deliberately stateless: the mower already stores the zone and
 its mowing parameters. The command only sends the saved area IDs; reading or
 changing those parameters is out of scope.

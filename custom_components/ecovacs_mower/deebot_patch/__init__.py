@@ -30,7 +30,6 @@ from .commands import (
 from .families import attempted_family_name
 from .hardware import (
     SUPPORTED_CLASSES,
-    ZONE_AREA_CLASSES,
     patch_device_info,
     profile_for_class,
 )
@@ -158,13 +157,19 @@ def verify_capabilities(capabilities: Capabilities, class_: str) -> None:
     ``get_devices()`` — a cache lookup would look correct even if the device was
     built from an unpatched definition.
     """
+    profile = profile_for_class(class_)
+
     if capabilities.clean.action.command is not CleanMower:
         _fail(
             f"device {class_} was built with {capabilities.clean.action.command.__name__} "
             f"instead of CleanMower — the patch ran too late"
         )
 
-    if class_ in ZONE_AREA_CLASSES and capabilities.clean.action.area is not MowArea:
+    if (
+        profile is not None
+        and profile.zone_mowing
+        and capabilities.clean.action.area is not MowArea
+    ):
         _fail(
             f"device {class_} was built without the patched MowArea capability "
             f"— the patch ran too late"
@@ -186,7 +191,6 @@ def verify_capabilities(capabilities: Capabilities, class_: str) -> None:
             f"[MowerStateRefresh]"
         )
 
-    profile = profile_for_class(class_)
     if profile is not None and profile.area_parameters:
         # One HA-facing event represents the whole area capability. Its refresh
         # mapping deliberately contains both protocol reads; neither command

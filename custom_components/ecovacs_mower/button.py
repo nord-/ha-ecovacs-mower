@@ -56,7 +56,7 @@ from .const import SUPPORTED_LIFESPANS
 from .controller import EcovacsController
 from .deebot_patch.border import MowBorder
 from .deebot_patch.commands import CleanMower
-from .deebot_patch.hardware import BORDER_CLASSES
+from .deebot_patch.hardware import MowerProfile, profile_for_class
 from .deebot_patch.map_messages import MowerMapInfoEvent
 from .deebot_patch.state_precedence import map_id_for
 from .entity import (
@@ -138,9 +138,11 @@ class EcovacsMowerCommandButtonEntityDescription(ButtonEntityDescription):
     """A button that sends one command built from the device at press time."""
 
     command_fn: Callable[[Device], Command]
-    # None means every mower. A tuple limits the button to classes on which
-    # the command's request shape is confirmed.
-    classes: tuple[str, ...] | None = None
+    # None means every mower, the unsupported classes included. A function
+    # limits the button to supported classes whose MowerProfile says the
+    # command's request shape is confirmed there; an unsupported class has no
+    # profile and so never passes it.
+    profile_fn: Callable[[MowerProfile], bool] | None = None
     # A command that takes the mower off its dock never produces a StateEvent
     # on its own, so the controller's poll has to be nudged — the same nudge
     # lawn_mower.py gives start_mowing and mow_area.
@@ -152,7 +154,7 @@ MOWER_COMMAND_DESCRIPTIONS: tuple[EcovacsMowerCommandButtonEntityDescription, ..
         key="mow_border",
         translation_key="mow_border",
         command_fn=_border_command,
-        classes=BORDER_CLASSES,
+        profile_fn=lambda profile: profile.border_mowing,
         starts_job=True,
         # No entity_category, for the reason play_sound gives above: a
         # control, not diagnostics or configuration.
@@ -165,7 +167,7 @@ MOWER_COMMAND_DESCRIPTIONS: tuple[EcovacsMowerCommandButtonEntityDescription, ..
         # issue #51; the non-V2 payload is the shape pause already uses on
         # that hardware, and the reporter there owns the mower that has to
         # confirm it.
-        classes=None,
+        profile_fn=None,
         starts_job=False,
     ),
 )
@@ -174,14 +176,17 @@ MOWER_COMMAND_DESCRIPTIONS: tuple[EcovacsMowerCommandButtonEntityDescription, ..
 def _mower_command_entities(
     controller: EcovacsController,
 ) -> list[EcovacsMowerCommandButtonEntity]:
-    """One command button per mower per description whose class gate passes."""
+    """One command button per mower per description whose profile gate passes."""
     return [
         EcovacsMowerCommandButtonEntity(device, controller, description)
         for device in controller.devices
         if device.capabilities.device_type is DeviceType.MOWER
         for description in MOWER_COMMAND_DESCRIPTIONS
-        if description.classes is None
-        or device.device_info["class"] in description.classes
+        if description.profile_fn is None
+        or (
+            (profile := profile_for_class(device.device_info["class"])) is not None
+            and description.profile_fn(profile)
+        )
     ]
 
 
