@@ -74,8 +74,8 @@ def test_heading_arrow_points_along_the_reported_heading(
 ) -> None:
     # The heading is degrees counter-clockwise from the frame's +x axis.
     # Measured on a G1-800 (firmware 1.36.208): it matched the direction of
-    # travel to within a few degrees (issue #41 worked it out from symptoms
-    # and ended up 90 degrees off).
+    # travel to within a few degrees. The convention before this was worked
+    # out from the symptoms in issue #41, not measured, and was 90 degrees off.
     mower_map = MowerMap()
     mower_map.update_map_info(BOUNDARY, None, None)
     mower_map.update_position(1000, 1000, heading)
