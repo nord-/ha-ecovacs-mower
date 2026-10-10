@@ -243,6 +243,49 @@ one per UWB beacon on the models that use them:
 Not included yet: **RTK diagnostics** (position and satellite data). RTK is
 planned for the next release.
 
+### A live position while the mower is out
+
+While the mower is out, the integration asks for its position every five
+minutes, together with the state and the stats. Some runs on the G1-800 never
+push a position by themselves, and without that question the map marker stays
+in the dock for the whole run.
+
+Five minutes is too slow to draw a path. If you want a live marker, ask more
+often yourself: the map image answers `homeassistant.update_entity` with one
+`getPos`, so nobody pays for it but the installations that want it. For
+example, every 15 seconds while the mower is out:
+
+```yaml
+automation:
+  - alias: Live mower position
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: lawn_mower.my_goat
+        to: [mowing, returning]
+      - trigger: homeassistant
+        event: start
+    conditions:
+      - condition: state
+        entity_id: lawn_mower.my_goat
+        state: [mowing, returning]
+    actions:
+      - repeat:
+          while:
+            - condition: state
+              entity_id: lawn_mower.my_goat
+              state: [mowing, returning]
+          sequence:
+            - action: homeassistant.update_entity
+              target:
+                entity_id: image.my_goat_map
+            - delay: 15
+```
+
+The answer reaches the map like a pushed position. On mowers that already push
+their position, the extra question is simply answered again.
+
 ### Zone-specific mowing
 
 The `ecovacs_mower.mow_area` service starts a mowing job for one or more

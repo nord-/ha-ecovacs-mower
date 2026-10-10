@@ -16,6 +16,7 @@ from typing import Any
 from deebot_client.api_client import ApiClient
 from deebot_client.authentication import create_rest_config
 from deebot_client.capabilities import DeviceType
+from deebot_client.commands.json.pos import GetPos
 from deebot_client.const import UNDEFINED, UndefinedType
 from deebot_client.device import Device
 from deebot_client.events import StateEvent, StatsEvent
@@ -391,15 +392,21 @@ class EcovacsController:
             unsub()
 
     async def _poll(self, device: Device, now: datetime) -> None:
-        """One tick: refresh the state and the mowing stats for one device.
+        """One tick: refresh the state, the mowing stats and the position.
 
         One getStats notifies both StatsEvent and MowerStatsEvent, so
         refreshing StatsEvent — which Device.__init__ always subscribes to —
         covers the mowing_progress sensor too without depending on it being
         enabled.
+
+        The position is asked for with a command of its own: some runs on the
+        G1-800 never push onPos, and deebot-client defines no map capability
+        for that class to refresh through the event bus. The tick only runs
+        while the mower is out, so a parked mower is never asked.
         """
         device.events.request_refresh(StateEvent)
         device.events.request_refresh(StatsEvent)
+        await device.execute_command(GetPos())
 
     async def teardown(self) -> None:
         """Disconnect controller."""

@@ -607,7 +607,7 @@ async def test_start_polling_is_idempotent() -> None:
 
 
 async def test_poll_refreshes_state_and_stats() -> None:
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
 
     from deebot_client.events import StateEvent, StatsEvent
 
@@ -615,11 +615,31 @@ async def test_poll_refreshes_state_and_stats() -> None:
 
     controller = EcovacsController.__new__(EcovacsController)
     device = MagicMock()
+    device.execute_command = AsyncMock(return_value={})
 
     await controller._poll(device, None)
 
     asked = {call.args[0] for call in device.events.request_refresh.call_args_list}
     assert asked == {StateEvent, StatsEvent}
+
+
+async def test_poll_asks_the_mower_where_it_is() -> None:
+    # The G1-800 does not push onPos on every run, and deebot-client has no
+    # map capability for it to refresh through, so the tick asks directly.
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deebot_client.commands.json.pos import GetPos
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    controller = EcovacsController.__new__(EcovacsController)
+    device = MagicMock()
+    device.execute_command = AsyncMock(return_value={})
+
+    await controller._poll(device, None)
+
+    device.execute_command.assert_awaited_once()
+    assert isinstance(device.execute_command.await_args.args[0], GetPos)
 
 
 async def test_teardown_cancels_outstanding_polls() -> None:

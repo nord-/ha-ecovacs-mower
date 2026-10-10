@@ -320,3 +320,29 @@ def test_track_attribute_is_thinned_and_ends_at_the_mower() -> None:
     assert track[-1] == [14990, -1499]  # where the mower is now
     # JSON-friendly: lists, not tuples.
     assert all(isinstance(point, list) for point in track)
+
+
+async def test_update_entity_asks_the_mower_where_it_is() -> None:
+    # homeassistant.update_entity is how a live marker is built: an
+    # automation calls it as often as it likes while the mower is out.
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deebot_client.commands.json.pos import GetPos
+
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+
+    instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
+    instance._device = MagicMock()
+    instance._device.execute_command = AsyncMock(return_value={})
+
+    await instance.async_update()
+
+    instance._device.execute_command.assert_awaited_once()
+    assert isinstance(instance._device.execute_command.await_args.args[0], GetPos)
+
+
+def test_the_map_is_not_polled() -> None:
+    # async_update must only run when someone calls update_entity.
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+
+    assert EcovacsMowerMap.__new__(EcovacsMowerMap).should_poll is False

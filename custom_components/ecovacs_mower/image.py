@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import override
 
 from deebot_client.capabilities import Capabilities, DeviceType
+from deebot_client.commands.json.pos import GetPos
 from deebot_client.device import Device
 from deebot_client.events.map import PositionsEvent
 
@@ -141,6 +142,18 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
                 [x, y] for x, y in self._map.sampled_track(TRACK_ATTRIBUTE_POINTS)
             ],
         }
+
+    @override
+    async def async_update(self) -> None:
+        """Ask the mower where it is.
+
+        Reached through homeassistant.update_entity: the entity is not polled,
+        so this only happens when someone asks. A live marker is an
+        automation that calls it every few seconds while the mower is out,
+        and nobody else pays for the commands. The answer arrives as a
+        PositionsEvent, like a pushed position.
+        """
+        await self._device.execute_command(GetPos())
 
     def _bump(self) -> None:
         # Every write supersedes a pending trailing refresh, whichever event

@@ -51,9 +51,10 @@ SUPPORTED_LIFESPANS = (
 # corrected it in 200 ms, over REST, so the answer was there the whole time
 # and nobody had asked for it.
 #
-# Five minutes: worst case the state is that stale, against two commands per
-# interval on Ecovacs' cloud API. Push still does the fast path — this only
-# catches what push drops.
+# Five minutes: worst case the state is that stale, against three commands per
+# interval on Ecovacs' cloud API (state, stats and, while the mower is out,
+# its position). Push still does the fast path — this only catches what push
+# drops.
 #
 # Owned by EcovacsController rather than any one entity: lawn_mower, activity
 # and mowing_progress/stats can each be individually disabled in the entity
