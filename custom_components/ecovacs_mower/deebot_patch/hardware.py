@@ -90,8 +90,10 @@ class MowerProfile:
 #            Upstream names this A3000 LiDAR Pro; its module is byte-identical
 #            to 9bts2s.py apart from the docstring, so the O800's patch
 #            applies unchanged.
-#   xmp9ds — GOAT A1600 RTK (reported in issue #43, firmware 1.17.9 — the
-#            reporter has not confirmed the patch yet). A different machine
+#   xmp9ds — GOAT A1600 RTK (reported in issue #43, firmware 1.17.9; controls
+#            user-verified in issue #104 by two owners on firmware 1.17.11:
+#            start, dock, and start again from the dock all obeyed, while
+#            testing PR #110). A different machine
 #            from e4gqia above, not a second class string for it: the RTK and
 #            LiDAR Pro variants of the A1600 ship separately. Upstream's
 #            xmp9ds.py is byte-identical to 9bts2s.py apart from the docstring,
