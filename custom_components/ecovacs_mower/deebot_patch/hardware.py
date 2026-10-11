@@ -123,6 +123,10 @@ class MowerProfile:
 #                     Pro; see docs/area-parameter-capability.md.
 #   zone_mowing     — e4gqia: the spotArea payload confirmed on the A1600
 #                     LiDAR Pro, firmware 1.11.31 (PR #78); see zonal.py.
+#                     77atlz: two zone runs on the G1-800, firmware 1.36.208,
+#                     each with a single area id; the target area and the
+#                     progress matched the area asked for, and the mower
+#                     docked normally (PR #114).
 #   border_mowing   — 77atlz: the app's border-job request captured on the
 #                     G1-800, firmware 1.36.208 (issue #12): clean_V2 with
 #                     {"type": "border", "value": "mid:<mid>"}, acknowledged
@@ -133,7 +137,7 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile("2i0fns"),
     "9bts2s": MowerProfile("9bts2s"),
     "2px96q": MowerProfile("2px96q"),
-    "77atlz": MowerProfile("77atlz", border_mowing=True),
+    "77atlz": MowerProfile("77atlz", zone_mowing=True, border_mowing=True),
     "e4gqia": MowerProfile("e4gqia", area_parameters=True, zone_mowing=True),
     "xmp9ds": MowerProfile("xmp9ds"),
     "o4kvvk": MowerProfile("o4kvvk"),
