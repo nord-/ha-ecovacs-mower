@@ -129,6 +129,14 @@ class MowerProfile:
 #                     each with a single area id; the target area and the
 #                     progress matched the area asked for, and the mower
 #                     docked normally (PR #114).
+#                     2i0fns: the app's spotArea start captured on the O1200
+#                     LiDAR Pro, firmware 1.13.10 (issue #11, 2026-09-10):
+#                     {"act": "start", "content": {"type": "spotArea",
+#                     "value": "3"}} on clean, byte for byte what MowArea's
+#                     non-V2 delegate builds, and pause, resume and stop sent
+#                     from Home Assistant against that job were all obeyed.
+#                     A start sent from Home Assistant itself has not been
+#                     run yet; it is the same payload on the same topic.
 #   border_mowing   — 77atlz: the app's border-job request captured on the
 #                     G1-800, firmware 1.36.208 (issue #12): clean_V2 with
 #                     {"type": "border", "value": "mid:<mid>"}, acknowledged
@@ -136,7 +144,7 @@ class MowerProfile:
 #                     a guess nobody has tested, which is why no non-V2 class
 #                     has the flag — see border.py.
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
-    "2i0fns": MowerProfile("2i0fns"),
+    "2i0fns": MowerProfile("2i0fns", zone_mowing=True),
     "9bts2s": MowerProfile("9bts2s"),
     "2px96q": MowerProfile("2px96q"),
     "77atlz": MowerProfile("77atlz", zone_mowing=True, border_mowing=True),

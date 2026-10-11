@@ -249,9 +249,10 @@ The `ecovacs_mower.mow_area` service starts a mowing job for one or more
 specified zone IDs using the mower's `spotArea` command.
 
 Zone mowing is currently confirmed on the A1600 LiDAR Pro (`e4gqia`) and the
-G1-800 (`77atlz`). If you have another mower class, zone mowing is not yet
-verified on that hardware; please report the device class in a new issue if
-you test it.
+G1-800 (`77atlz`), and enabled on the O1200 LiDAR Pro (`2i0fns`), where the
+app's own zone start was captured and matches what the service sends. If you
+have another mower class, zone mowing is not yet verified on that hardware;
+please report the device class in a new issue if you test it.
 
 The service requires a mower entity as its target and accepts one or more
 integer `area_ids` between `0` and `999`:
