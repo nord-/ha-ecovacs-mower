@@ -9,6 +9,7 @@ from deebot_client.hardware import _DEVICES, get_static_device_info
 
 from custom_components.ecovacs_mower.deebot_patch.commands import (
     CleanMower,
+    GetAnimProtect,
     GetLifeSpanMower,
     GetMapInfoV2,
     GetProtectState,
@@ -25,6 +26,7 @@ from custom_components.ecovacs_mower.deebot_patch.map_messages import (
 )
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     BEACON_COMPONENT,
+    MowerAnimProtectEvent,
     MowerBeaconsEvent,
     MowerProtectStateEvent,
     MowerRainDelayEvent,
@@ -180,6 +182,19 @@ async def test_patch_wires_a_refresh_command_for_the_rain_setting(
 
 
 @pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_patch_wires_a_refresh_command_for_the_animal_setting(
+    class_: str,
+) -> None:
+    # Issue #45, the same trap again: onAnimProtect arrives only when the
+    # setting changes, so without an entry here the switch reads "unknown"
+    # until somebody touches animal protection in the app.
+    await patch_device_info(class_)
+    info = await get_static_device_info(class_)
+    commands = info.capabilities.get_refresh_commands(MowerAnimProtectEvent)
+    assert [type(c) for c in commands] == [GetAnimProtect]
+
+
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
 async def test_patch_wires_a_request_for_the_lawn_boundary(class_: str) -> None:
     # Issue #81, and a different failure from #31 and #54 above: the boundary
     # is not a push the mower may forget to send, it is a push the mower never
@@ -244,8 +259,21 @@ async def test_patch_is_idempotent() -> None:
     assert info.capabilities.clean.action.command is CleanMower
 
 
+async def test_a_second_patch_of_the_area_class_changes_nothing() -> None:
+    # The class with area parameters takes the same early return as every
+    # other: a second call must not mint a second set of refresh commands.
+    from custom_components.ecovacs_mower.deebot_patch.areas import MowerAreaEvent
+
+    await patch_device_info("e4gqia")
+    first = _DEVICES["e4gqia"]
+    await patch_device_info("e4gqia")
+
+    assert _DEVICES["e4gqia"] is first
+    assert first.capabilities.get_refresh_commands(MowerAreaEvent)
+
+
 async def test_unknown_device_class_is_left_alone() -> None:
-    # An unknown class must not crash. Verified in 18.5.1: get_static_device_info
+    # An unknown class must not crash. Verified in 18.6.0: get_static_device_info
     # returns None on ModuleNotFoundError, there is no fallback definition.
     await patch_device_info("nonexistent_class")
     assert "nonexistent_class" not in _DEVICES
@@ -266,6 +294,7 @@ async def test_apply_registers_the_message_handlers() -> None:
 
     from custom_components.ecovacs_mower.deebot_patch import apply
     from custom_components.ecovacs_mower.deebot_patch.messages import (
+        OnAreaParameter,
         OnChargeInfo,
         OnPos,
         OnProtectState,
@@ -273,6 +302,7 @@ async def test_apply_registers_the_message_handlers() -> None:
     )
 
     apply()
+    assert MESSAGES["onAreaParameter"] is OnAreaParameter
     assert MESSAGES["onChargeInfo"] is OnChargeInfo
     assert MESSAGES["onPos"] is OnPos
     assert MESSAGES["onProtectState"] is OnProtectState
@@ -532,11 +562,14 @@ async def test_patch_preserves_the_other_life_span_capabilities(class_: str) -> 
     assert after.capabilities.life_span.event is event_before
 
 
-def test_border_classes_are_the_ones_with_a_captured_request() -> None:
-    # Membership means "the border request shape is confirmed on this class",
-    # not "we patch it" — the opposite sense from SUPPORTED_CLASSES, the same
-    # sense as ZONE_AREA_CLASSES. Only the G1-800 has a capture (issue #12).
-    from custom_components.ecovacs_mower.deebot_patch.hardware import BORDER_CLASSES
+def test_border_mowing_is_flagged_on_the_classes_with_a_captured_request() -> None:
+    # The flag means "the border request shape is confirmed on this class",
+    # not "we patch it" — the opposite sense from membership in
+    # SUPPORTED_CLASSES. Only the G1-800 has a capture (issue #12).
+    from custom_components.ecovacs_mower.deebot_patch import hardware
 
-    assert set(BORDER_CLASSES) == {G1_800}
-    assert set(BORDER_CLASSES) <= set(SUPPORTED_CLASSES)
+    assert {
+        class_
+        for class_, profile in hardware.SUPPORTED_CLASSES.items()
+        if profile.border_mowing
+    } == {G1_800}

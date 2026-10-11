@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import fields
+from datetime import time
 from typing import Any
 from unittest.mock import AsyncMock, Mock, call, patch
 
@@ -22,12 +23,14 @@ from deebot_client.rs.map import PositionType
 from custom_components.ecovacs_mower.deebot_patch import apply
 from custom_components.ecovacs_mower.deebot_patch.commands import GetChargeStateMower
 from custom_components.ecovacs_mower.deebot_patch.messages import (
+    MowerAnimProtectEvent,
     MowerBeaconsEvent,
     MowerJobEdgeEvent,
     MowerProtectStateEvent,
     MowerRainDelayEvent,
     MowerStatsEvent,
     MowerTriggerEvent,
+    OnAnimProtect,
     OnChargeInfo,
     OnChargeState,
     OnCleanInfo,
@@ -640,6 +643,77 @@ def test_on_rain_delay_is_registered_by_apply() -> None:
     # something else asks (issue #54).
     apply()
     assert MESSAGES["onRainDelay"] is OnRainDelay
+
+
+# The push that followed a toggle in the app, captured on a GOAT G1-800
+# (77atlz) on firmware 1.36.208 with deebot_client at debug (issue #45). The
+# clock arrives padded here and unpadded in the getAnimProtect answer.
+_ANIM_PROTECT = {"enable": 1, "start": "19:00", "end": "07:00"}
+
+
+def test_on_anim_protect_notifies_the_setting_and_its_window() -> None:
+    assert _notified(OnAnimProtect, _ANIM_PROTECT, MowerAnimProtectEvent) == [
+        MowerAnimProtectEvent(enabled=True, start=time(19, 0), end=time(7, 0))
+    ]
+
+
+def test_on_anim_protect_reads_the_unpadded_clock_of_the_get_answer() -> None:
+    # "19:0" is how getAnimProtect answers the same window. Both forms have to
+    # land on the same event, or the switch would flap between a known and an
+    # unknown window depending on which of the two arrived last.
+    data = {"enable": 0, "start": "19:0", "end": "7:0"}
+    assert _notified(OnAnimProtect, data, MowerAnimProtectEvent) == [
+        MowerAnimProtectEvent(enabled=False, start=time(19, 0), end=time(7, 0))
+    ]
+
+
+@pytest.mark.parametrize(
+    "clock", [None, "", "19", "19:", ":00", "24:00", "19:60", "7:5a", 1900, "-1:00"]
+)
+def test_on_anim_protect_leaves_an_unreadable_clock_unknown(clock: object) -> None:
+    # The setting is still worth publishing; only the unreadable end is lost,
+    # and None is what makes the switch refuse to write it back.
+    data = {"enable": 1, "start": clock, "end": "07:00"}
+    assert _notified(OnAnimProtect, data, MowerAnimProtectEvent) == [
+        MowerAnimProtectEvent(enabled=True, start=None, end=time(7, 0))
+    ]
+
+
+def test_on_anim_protect_without_a_window_leaves_it_unknown() -> None:
+    assert _notified(OnAnimProtect, {"enable": 1}, MowerAnimProtectEvent) == [
+        MowerAnimProtectEvent(enabled=True, start=None, end=None)
+    ]
+
+
+@pytest.mark.parametrize("enable", [None, "0", "1", 2, -1])
+def test_on_anim_protect_drops_a_payload_without_a_usable_enable(
+    enable: object,
+) -> None:
+    # Same rule as onRainDelay: setAnimProtect writes the setting back, so a
+    # guessed enable would be sent to the mower on the next toggle.
+    data: dict[str, Any] = {"start": "19:00", "end": "07:00"}
+    if enable is not None:
+        data["enable"] = enable
+    assert _notified(OnAnimProtect, data, MowerAnimProtectEvent) == []
+
+
+def test_on_anim_protect_without_enable_asks_for_analysis() -> None:
+    result = OnAnimProtect._handle_body_data_dict(
+        Mock(), {"start": "19:00", "end": "07:00"}
+    )
+    assert result.state is HandlingState.ANALYSE
+
+
+def test_on_anim_protect_message_name() -> None:
+    assert OnAnimProtect.NAME == "onAnimProtect"
+
+
+def test_on_anim_protect_is_registered_by_apply() -> None:
+    # Logged as 'Unknown message "onAnimProtect"' until now (issue #45).
+    apply()
+    assert MESSAGES["onAnimProtect"] is OnAnimProtect
+
+
 async def test_a_paused_plan_is_suppressed_while_docked() -> None:
     # Issue #67: charging and plan-paused are both true, and the entity must
     # read docked. 133.37 of 137.51 m2 done, plan paused, mower on the charger.

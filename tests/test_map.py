@@ -124,3 +124,30 @@ def test_round_trip_keeps_the_covered_area() -> None:
     restored = MowerMap.from_dict(json.loads(json.dumps(mower_map.as_dict())))
     assert restored.covered == [[(0, 0), (100, 0)]]
     assert restored.covered_holes == [[(10, 10), (20, 20)]]
+
+
+def test_sampled_track_returns_a_short_track_as_it_is() -> None:
+    mower_map = MowerMap()
+    assert mower_map.sampled_track(10) == []
+    mower_map.update_position(1, 2, 0)
+    mower_map.update_position(3, 4, 0)
+
+    sampled = mower_map.sampled_track(10)
+
+    assert sampled == [(1, 2), (3, 4)]
+    # A copy: the caller cannot reach into the map's own list.
+    assert sampled is not mower_map.track
+
+
+def test_sampled_track_thins_evenly_and_keeps_the_ends() -> None:
+    mower_map = MowerMap()
+    for i in range(1000):
+        mower_map.update_position(i, 0, 0)
+
+    sampled = mower_map.sampled_track(100)
+
+    assert len(sampled) <= 101
+    assert sampled[0] == (0, 0)
+    assert sampled[-1] == (999, 0)
+    xs = [x for x, _ in sampled]
+    assert xs == sorted(xs)

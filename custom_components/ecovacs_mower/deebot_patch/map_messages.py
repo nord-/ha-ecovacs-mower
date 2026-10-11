@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from deebot_client.events.base import Event
 from deebot_client.message import HandlingResult, MessageBodyDataDict
 
+from .areas import MowerAreaEvent
 from .geometry import (
     FragmentBuffer,
     Polygon,
@@ -117,7 +118,13 @@ class _MapMessage(MessageBodyDataDict, ABC):
         # for a registered bus: an ordinary vacuum on the same account reaches
         # this handler too.
         if (record := record_for(event_bus)) is not None:
+            known = record.map_id
             record.note_map(data.get("mid"), data.get("using"))
+            if record.map_id != known:
+                # The area inventory belongs to a map, and GetAreaSet sends
+                # nothing until it knows which one. A no-op on a mower nothing
+                # subscribes MowerAreaEvent for.
+                event_bus.request_refresh(MowerAreaEvent)
         info = data.get("info")
         if not info:
             return HandlingResult.analyse()

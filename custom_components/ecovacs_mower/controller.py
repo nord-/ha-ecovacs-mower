@@ -174,7 +174,7 @@ class EcovacsController:
                 if device_class in SUPPORTED_CLASSES:
                     verify_capabilities(info.static.capabilities, device_class)
                 elif info.static.capabilities.device_type is DeviceType.MOWER:
-                    # Warning: all 25 MOWER classes in deebot-client 18.5.1
+                    # Warning: all 25 MOWER classes in deebot-client 18.6.0
                     # carry the same CleanV2/GetCleanInfoV2 bugs, but
                     # SUPPORTED_CLASSES only covers the reported ones. Any other
                     # mower therefore gets an entity whose controls are dead and

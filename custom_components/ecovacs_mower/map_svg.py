@@ -140,16 +140,19 @@ def render(mower_map: MowerMap) -> str:
     # shows something, and the first onPos corrects it within seconds.
     marker = mower_map.position or mower_map.dock
     marker_x, marker_y = (float(v) for v in xy(marker).split(","))
-    # Heading convention: confirmed wrong on both axes against the real
-    # mower (issue #41) — the arrow pointed to the mower's back, and its
-    # rotation was mirrored against real turns. Both symptoms together
-    # mean the true front vector is the assumed one rotated 180 degrees
-    # *and* mirrored, i.e. front(a) = (sin a, -cos a) instead of
-    # (sin a, cos a) — only the y term's sign flips here since the SVG
-    # y axis is itself already flipped when converting to screen space.
+    # Heading convention: the reported heading is the direction the mower
+    # faces, in degrees counter-clockwise from the frame's +x axis, so
+    # front(a) = (cos a, sin a) in the map frame. Measured on a G1-800
+    # (firmware 1.36.208) over a zone run: against the direction of travel
+    # between consecutive positions the heading differed by 0.5 degrees at
+    # the median (-6 to +13 over 18 samples). The previous (sin a, -cos a)
+    # was worked out from the symptoms in issue #41, not measured, and is
+    # 90 degrees off: the turn sense was right, the zero was not. Only that
+    # class and firmware have been measured. The SVG y axis grows downwards,
+    # hence the minus on the sine.
     angle = math.radians(mower_map.heading)
-    tip_x = marker_x + 10 * math.sin(angle)
-    tip_y = marker_y + 10 * math.cos(angle)
+    tip_x = marker_x + 10 * math.cos(angle)
+    tip_y = marker_y - 10 * math.sin(angle)
     parts.append(
         f'<line class="heading" x1="{marker_x:.1f}" y1="{marker_y:.1f}" '
         f'x2="{tip_x:.1f}" y2="{tip_y:.1f}" stroke="{_MOWER}" '

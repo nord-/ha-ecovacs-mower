@@ -150,16 +150,19 @@ def test_the_mower_command_buttons_are_border_and_end_task() -> None:
     assert {d.key for d in MOWER_COMMAND_DESCRIPTIONS} == {"mow_border", "end_task"}
 
 
-def test_the_border_button_is_limited_to_the_classes_with_a_capture() -> None:
+def test_the_border_button_is_gated_on_the_border_mowing_flag() -> None:
     from custom_components.ecovacs_mower.button import MOWER_COMMAND_DESCRIPTIONS
-    from custom_components.ecovacs_mower.deebot_patch.hardware import BORDER_CLASSES
+    from custom_components.ecovacs_mower.deebot_patch.hardware import MowerProfile
 
     by_key = {d.key: d for d in MOWER_COMMAND_DESCRIPTIONS}
-    assert by_key["mow_border"].classes == BORDER_CLASSES
+    border_gate = by_key["mow_border"].profile_fn
+    assert border_gate is not None
+    assert border_gate(MowerProfile("x", border_mowing=True)) is True
+    assert border_gate(MowerProfile("x")) is False
     assert by_key["mow_border"].starts_job is True
-    # Every supported mower: the V2 stop is captured, the non-V2 one is the
-    # shape pause already uses, and the #51 reporter has non-V2 hardware.
-    assert by_key["end_task"].classes is None
+    # Every mower: the V2 stop is captured, the non-V2 one is the shape pause
+    # already uses, and the #51 reporter has non-V2 hardware.
+    assert by_key["end_task"].profile_fn is None
     assert by_key["end_task"].starts_job is False
 
 
@@ -277,7 +280,9 @@ def test_mower_command_buttons_are_built_per_class() -> None:
     vacuum.capabilities.device_type = DeviceType.VACUUM
 
     controller = MagicMock()
-    controller.devices = [mower("77atlz"), mower("2px96q"), vacuum]
+    # "abc123" stands for a mower class nobody has reported: no profile, so no
+    # profile-gated button, but end_task is ungated and reaches it as before.
+    controller.devices = [mower("77atlz"), mower("2px96q"), mower("abc123"), vacuum]
 
     built = {
         (e._device.device_info["class"], e.entity_description.key)
@@ -287,4 +292,37 @@ def test_mower_command_buttons_are_built_per_class() -> None:
         ("77atlz", "mow_border"),
         ("77atlz", "end_task"),
         ("2px96q", "end_task"),
+        ("abc123", "end_task"),
     }
+
+
+def test_the_profile_is_the_only_border_gate(monkeypatch) -> None:
+    """Turning the flag on for a class is all it takes to give it the button.
+
+    Guards against a hardcoded class list surviving next to the profile: the
+    O800 RTK has no border capture, so it can only get the button from the
+    flag.
+    """
+    from dataclasses import replace
+    from unittest.mock import MagicMock
+
+    from deebot_client.capabilities import DeviceType
+
+    from custom_components.ecovacs_mower.button import _mower_command_entities
+    from custom_components.ecovacs_mower.deebot_patch.hardware import (
+        SUPPORTED_CLASSES,
+    )
+
+    monkeypatch.setitem(
+        SUPPORTED_CLASSES,
+        "2px96q",
+        replace(SUPPORTED_CLASSES["2px96q"], border_mowing=True),
+    )
+    device = MagicMock()
+    device.device_info = {"did": "did-2px96q", "class": "2px96q"}
+    device.capabilities.device_type = DeviceType.MOWER
+    controller = MagicMock()
+    controller.devices = [device]
+
+    keys = {e.entity_description.key for e in _mower_command_entities(controller)}
+    assert keys == {"mow_border", "end_task"}

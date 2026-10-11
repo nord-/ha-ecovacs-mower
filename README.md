@@ -79,9 +79,9 @@ sniffing the traffic again. Much of it already exists in this integration —
 the mowing-progress sensor, the rain-delay switch and number, the volume
 number and the map decoding all cover the same ground — and what remains is:
 
-- [DeebotUniverse/client.py#1774](https://github.com/DeebotUniverse/client.py/pull/1774) — the names of the saved mowing areas, from `getAreaSet` with `type: "ar"`. The `mow_area` service here takes area ids only.
-- [DeebotUniverse/client.py#1778](https://github.com/DeebotUniverse/client.py/pull/1778) — the remaining global settings as settable values: animal protection with its schedule, AI recognition, smart mowing with avoidance, narrow-passage adaptation and the lifted-alarm volume. Only the read-only protection flags exist here, as binary sensors.
-- [DeebotUniverse/client.py#1767](https://github.com/DeebotUniverse/client.py/pull/1767) and [#1768](https://github.com/DeebotUniverse/client.py/pull/1768) — per-area cutting height, cut mode, obstacle height and angle via `setAreaParameter`/`onAreaParameter`.
+- [DeebotUniverse/client.py#1774](https://github.com/DeebotUniverse/client.py/pull/1774) — the names of the saved mowing areas, from `getAreaSet` with `type: "ar"`, on every model. Here they are read only on the A1600 LiDAR Pro, for its per-area parameter entities (see below), and the `mow_area` service takes area ids only.
+- [DeebotUniverse/client.py#1778](https://github.com/DeebotUniverse/client.py/pull/1778) — the remaining global settings as settable values: animal protection with its schedule, AI recognition, smart mowing with avoidance, narrow-passage adaptation and the lifted-alarm volume. Here animal protection can be switched on and off, and its window is shown but not editable; the rest exist only as the read-only protection flags.
+
 
 If one of these matters to you, open an issue and say so — that is how the
 order of work here gets decided.
@@ -89,12 +89,12 @@ order of work here gets decided.
 ## Requirements
 
 - **Home Assistant 2026.7 or later.** This is a hard floor, not a
-  suggestion. `deebot-client==18.5.1` (what this integration pins) requires
-  `cryptography>=48.0.1` for its device-verification flow. Home Assistant
-  2026.4.4 pins `cryptography==46.0.7`. Those two requirements cannot
-  coexist, so the integration cannot load at all on HA 2026.4.4 or older —
-  it will fail to install, not fail at runtime. If you're on an older
-  release, upgrade Home Assistant first.
+  suggestion. `deebot-client` 18.6.0, the lowest version this integration
+  accepts, requires `cryptography>=48.0.1` for its device-verification flow.
+  Home Assistant 2026.4.4 pins `cryptography==46.0.7`. Those two
+  requirements cannot coexist, so the integration cannot load at all on
+  HA 2026.4.4 or older — it will fail to install, not fail at runtime. If
+  you're on an older release, upgrade Home Assistant first.
 - HACS, if installing that way (see below). Not required for manual install.
 
 ## Hardware support
@@ -192,22 +192,53 @@ stored, and the entry stops asking. There is no need to delete and re-add it.
 
 [loop]: https://github.com/home-assistant/core/issues/177870
 
+### If it stops loading after a restart: another integration's `deebot-client`
+
+The symptom is a mower that stays `unavailable` after some restarts and not
+others. Reloading the integration does not help, but a full restart
+sometimes does. The log names this integration, with an import error like:
+
+```
+ImportError: cannot import name 'DeviceVerificationRequiredError' from 'deebot_client.exceptions'
+```
+
+Suspect another custom integration that also uses `deebot-client` and pins
+an older version. The usual culprit is a replacement for Home Assistant's
+built-in `ecovacs` integration: several community copies, made to get
+around Ecovacs' device-verification change in July 2026, install under the
+`ecovacs` domain and pin `deebot-client==18.4.0`. Only one version of the
+library can be installed at a time, and 18.4.0 predates the
+device-verification error this integration handles. Which of the two pins
+wins can depend on which integration Home Assistant sets up first, which
+is why the failure can come and go between restarts (issue #107).
+
+To check, look in `config/custom_components/` for a folder other than this
+one whose `manifest.json` lists `deebot-client`. Remove it, then restart
+Home Assistant. Changing its pinned version is not enough: some of these
+copies bundle their own `deebot_client` in a `vendor/` folder, and that copy
+is used whatever the pin says. If you had installed it to replace the
+built-in `ecovacs` integration for a vacuum, removing it puts the built-in
+one back. If your account is one the built-in integration keeps asking to
+verify (see [First-time setup](#first-time-setup-expect-a-verification-code)
+above), that loop returns for the vacuum.
+
 ## What you get
 
-Forty-three entities on the mower's device page, across eight platforms —
-forty-four on the G1-800, which alone gets the "Mow border" button — plus
+Forty-four fixed entities on the mower's device page, across eight platforms —
+forty-five on the G1-800, which alone gets the "Mow border" button — plus four
+writable entities per saved mowing area on the A1600 LiDAR Pro (`e4gqia`) and
 one per UWB beacon on the models that use them:
 
 | Platform | Count | What |
 |---|---|---|
 | `lawn_mower` | 1 | Real state (`mowing`, `paused`, `returning`, `docked`, `error`) that updates within seconds, plus working `start_mowing`, `pause`, and `dock` |
 | `sensor` | 16 + one per beacon | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowing progress (see below), job target area, job target duration, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name, and on a beacon-guided mower one battery percentage per UWB beacon (see below) |
-| `binary_sensor` | 6 | Fault — a latched problem that stays on until the mower recovers or you clear it (see below) — plus rain sensor, rain delay, emergency stop, locked, animal protection: the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
-| `switch` | 8 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection, rain detection (see below) |
-| `number` | 3 | Notification volume, cutting direction, rain delay duration (see below) |
+| `binary_sensor` | 6 | Fault — a latched problem that stays on until the mower recovers or you clear it (see below) — plus rain sensor, rain delay, emergency stop, locked, animal protection active: the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
+| `switch` | 9 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection, rain detection, animal protection (see below) |
+| `number` | 3 + four per saved area on the A1600 LiDAR Pro | Notification volume, cutting direction, rain delay duration, plus cutting height, mowing speed, obstacle height and cutting direction for each saved area (see below) |
 | `button` | 7, 8 on the G1-800 | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), "Clear fault" (releases the latched fault; see below), "End mowing task" (ends the current job for good; see below) and, on the G1-800, "Mow border" (starts a border job; see below) |
 | `event` | 1 | Last mowing job (finished / finished with warnings / manually stopped — see below) |
-| `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, `onMapTrace` on firmware 1.17, and `onMapInfo_V2` on 1.36 — that last one only ever arrives in answer to a `getMapInfo_V2` the integration now sends); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only |
+| `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, `onMapTrace` on firmware 1.17, and `onMapInfo_V2` on 1.36 — that last one only ever arrives in answer to a `getMapInfo_V2` the integration now sends); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only. The mower's position, its heading, the dock and the path it has driven are also attributes of the entity (`position_x`, `position_y`, `heading`, `dock_x`, `dock_y`, `track`) — millimetres in the map's own frame, with the dock as the origin, `heading` in degrees as the mower reports it (counter-clockwise from the frame's +x axis, measured on the G1-800 at firmware 1.36.208 only), and `track` a list of `[x, y]` points thinned to at most about 250 — so a card can draw the mower on something other than the SVG. `position_x`, `position_y` and `heading` are `null` until the mower has reported a position since Home Assistant started |
 
 Not included yet: **RTK diagnostics** (position and satellite data). RTK is
 planned for the next release.
@@ -253,6 +284,56 @@ entity and one or more zone IDs can be selected.
 
 The zone IDs are mower-specific. A value being within the accepted 0..999
 range does not imply that the mower has a zone with that ID.
+
+### Per-area mowing parameters
+
+The A1600 LiDAR Pro (`e4gqia`) also exposes the settings stored for each
+saved mowing area. The integration discovers the mower's current area IDs and
+names at runtime and creates four writable `number` entities for each area:
+
+| Setting | Home Assistant value |
+|---|---|
+| Cutting height | 3–9 cm |
+| Mowing speed | 0.40–0.70 m/s |
+| Obstacle height | 10, 15 or 20 cm |
+| Cutting direction | 0–359° |
+
+The entities use the numeric `areaID` for their identity, not the area's name.
+The name shown by the mower is user-editable in the Ecovacs app, so changing
+it does not create a new Home Assistant entity.
+
+If an area is removed from the mower — deleted or re-mapped away — its four
+entities become unavailable rather than disappearing or showing a stale
+value. They recover automatically if an area with the same ID is reported
+again.
+
+The settings are read from the mower with `getAreaParameter` and `getAreaSet`.
+The integration combines those responses into one authoritative area snapshot,
+so a write can preserve the other settings. Changing one value therefore sends
+one complete `setAreaParameter` request containing all four raw parameter
+values rather than replacing the other three with defaults.
+
+If the mower has not reported the complete parameter set for an area yet, the
+integration refuses the write rather than guessing the missing values. The
+entity state is also not changed optimistically: Home Assistant reflects the
+value reported back by the mower.
+
+Changes made anywhere — the Ecovacs app or Home Assistant — reach the other
+within a couple hundred milliseconds, confirmed both directions. The mower
+broadcasts its current area parameters to every connected client whenever
+they change, not just to whoever made the change, and this integration
+listens for that broadcast. There is no polling involved; nothing needs a
+manual refresh for this to work. Reloading the integration, or restarting
+Home Assistant, still refreshes the saved area name and all four parameter
+values from the mower as a fallback — and so does manually calling Home
+Assistant's "Update entity" action (`homeassistant.update_entity`) on any of
+the area entities, without needing a reload.
+
+These parameter mappings are currently confirmed only on the A1600 LiDAR Pro
+(`e4gqia`). The raw Ecovacs fields have the same names on other mower models,
+but that does not establish that their ranges, units or meanings are the same.
+The integration therefore does not expose these controls on other classes until
+their parameter representation has been independently verified.
 
 ### Border mowing
 
@@ -347,12 +428,12 @@ sample — a `getProtectState` answer from firmware 1.13.10 — also had
 "protection is enabled" reading out a second time — on a sibling flag rather
 than this one, so it leans on the five flags being the same kind of thing.
 
-That second witness cuts both ways: it means `animal_protect` is not the
-animal-protection setting either, so the entity still named **Animal
-protection** is named for something it is not. It is left alone because no
-positive reading is established — one sample cannot separate "an animal is
-detected" from "the mower is holding for an animal" — and a name that is
-merely imprecise beats one that is confidently wrong (issue #45).
+That second witness cuts both ways: `animal_protect` is not the
+animal-protection setting either. What it is has since been established
+(issue #45): whether animal protection is **in effect right now**, switched
+on and inside its nightly window. The entity is named **Animal protection
+active** for that reason, and the setting itself has a switch of its own —
+see [Animal protection](#animal-protection) below.
 
 What the samples do *not* separate is a wet sensor from a mower currently held
 for rain: both read `1` two seconds before a rain-stopped run and `0` on a dry
@@ -437,6 +518,31 @@ rather than guessed: a default would silently overwrite a hold the owner chose,
 or switch their rain sensor off.
 
 [goat-g1]: https://github.com/Janverhu/ecovacs-goat-g1
+
+### Animal protection
+
+`switch.<device>_animal_protection` is the setting: whether the mower holds off
+for animals at all. It comes from `onAnimProtect`, another message the library
+has no handler for, which carries the setting and the window it applies in:
+
+```
+{"enable": 1, "start": "19:00", "end": "07:00"}
+```
+
+The window is shown as the switch's `start` and `end` attributes. It is not
+editable from Home Assistant: `setAnimProtect` carries all three fields, so a
+toggle resends the window the mower last reported, the way the Ecovacs app
+does, and a toggle is refused while no window has been reported.
+
+`binary_sensor.<device>_animal_protect`, named **Animal protection active**, is
+a different thing: the setting *and* the clock inside the window. Toggled from
+the app on a G1-800, it followed every toggle made inside the window and did
+not move for one made outside it (issue #45). So a switch that reads on at
+noon, with a 19:00–07:00 window, sits next to a binary sensor that reads off
+until seven in the evening. Both are correct.
+
+Like the rain setting, the switch is read at startup with `getAnimProtect` and
+updated from the push after that, and it is disabled by default.
 
 ### When a job ends
 

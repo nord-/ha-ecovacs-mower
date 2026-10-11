@@ -147,7 +147,8 @@ async def test_refresh_commands_empty_for_unknown_events() -> None:
     # It is also the reason patch_device_info has to add an entry for
     # MowerProtectStateEvent by hand — an unpatched definition has none, so the
     # bus asks nobody and the flags stay unknown (issue #31). MowerRainDelayEvent
-    # sits in the same position for parity with it. MowerMapInfoEvent is still
+    # sits in the same position for parity with it, and so does
+    # MowerAnimProtectEvent. MowerMapInfoEvent is still
     # in that position: the map has no get command wired up.
     from deebot_client.hardware import get_static_device_info
 
@@ -155,13 +156,19 @@ async def test_refresh_commands_empty_for_unknown_events() -> None:
         MowerMapInfoEvent,
     )
     from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerAnimProtectEvent,
         MowerProtectStateEvent,
         MowerRainDelayEvent,
     )
 
     static = await get_static_device_info("2i0fns")
     assert static is not None
-    for event in (MowerMapInfoEvent, MowerProtectStateEvent, MowerRainDelayEvent):
+    for event in (
+        MowerMapInfoEvent,
+        MowerProtectStateEvent,
+        MowerRainDelayEvent,
+        MowerAnimProtectEvent,
+    ):
         assert static.capabilities.get_refresh_commands(event) == []
 
 

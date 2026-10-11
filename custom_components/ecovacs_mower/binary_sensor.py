@@ -8,10 +8,11 @@ These are the device's raw flags and nothing derives the mower's state from
 them; the rain-aware states on ``sensor.<device>_activity`` come from the
 ``trigger`` field instead. ``isRainProtect`` is the rain sensor's own reading —
 wet or dry, and not whether rain protection is switched on — which is why
-``rain_protect`` is the one flag here that carries a device class. The same
-evidence shows ``animal_protect`` is not its setting either, but nothing
-positive is established there, so it keeps the wire field's name (issue #45).
-``deebot_patch.messages`` has the evidence.
+``rain_protect`` is the one flag here that carries a device class.
+``animal_protect`` is not its setting either: it is whether animal protection
+is in effect right now, switched on and inside its nightly window, and the
+setting itself is ``switch.<device>_animal_protection`` (issue #45).
+``deebot_patch.messages`` has the evidence for both.
 
 These entities are refreshed by ``GetProtectState``, which
 ``deebot_patch.hardware`` wires to ``MowerProtectStateEvent`` because the
@@ -95,13 +96,12 @@ ENTITY_DESCRIPTIONS: tuple[EcovacsProtectStateBinarySensorEntityDescription, ...
         value_fn=lambda e: e.locked,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    # The name is provisional. The dry-day sample that settled rain_protect had
-    # isAnimProtect: 0 with animal protection switched on in the app, so this
-    # flag is not the setting either. Unlike rain_protect there is no positive
-    # reading to rename it to — "an animal is detected" and "the mower is
-    # holding for an animal" both fit the one sample we have — so it keeps the
-    # wire field's name and no device class until a sighting says which
-    # (issue #45).
+    # Whether animal protection is in effect right now: switched on, and the
+    # clock inside the window the setting carries. Toggled from the app with the
+    # window open this followed every toggle; with it closed, switching the
+    # setting on left it silent (issue #45). So it is named "active" rather
+    # than for the setting, which is the animal_protection switch. The key
+    # keeps the wire field's name so the entity id survives the rename.
     EcovacsProtectStateBinarySensorEntityDescription(
         key="animal_protect",
         translation_key="animal_protect",

@@ -4,11 +4,16 @@ Not in HA core's ecovacs (whose vacuum map rendering was cut from this
 fork); this is a mower-specific replacement built on the decoded GOAT map
 messages. The SVG is rendered lazily when the frontend fetches the image;
 events only decide when the image counts as new.
+
+The mower's position, the dock and the path it has driven also go out as
+attributes, in the map frame's own units (mm), so a card can draw the mower
+on something other than the SVG — an aerial photo, for instance.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import override
 
 from deebot_client.capabilities import Capabilities, DeviceType
@@ -16,8 +21,9 @@ from deebot_client.device import Device
 from deebot_client.events.map import PositionsEvent
 
 from homeassistant.components.image import ImageEntity, ImageEntityDescription
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
 from . import EcovacsMowerConfigEntry
@@ -37,6 +43,17 @@ _LOGGER = logging.getLogger(__name__)
 # Position events arrive at ~2 Hz; bumping image_last_updated for each one
 # would make the frontend re-fetch twice a second.
 POSITION_UPDATE_INTERVAL_SECONDS = 2
+
+ATTR_POSITION_X = "position_x"
+ATTR_POSITION_Y = "position_y"
+ATTR_HEADING = "heading"
+ATTR_DOCK_X = "dock_x"
+ATTR_DOCK_Y = "dock_y"
+ATTR_TRACK = "track"
+
+# The attribute is sent to every client on each change, so it carries a
+# thinned copy of the track rather than the 2000 points the map keeps.
+TRACK_ATTRIBUTE_POINTS = 250
 
 
 async def async_setup_entry(
@@ -59,7 +76,15 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
     """The mower's map, rendered as SVG."""
 
     _attr_content_type = "image/svg+xml"
+    # The position moves every couple of seconds while mowing; the recorder
+    # has no use for a row per move.
+    _unrecorded_attributes = frozenset(
+        {ATTR_POSITION_X, ATTR_POSITION_Y, ATTR_HEADING, ATTR_TRACK}
+    )
     entity_description = ImageEntityDescription(key="map", translation_key="map")
+    # The pending refresh for a position that arrived inside the throttle
+    # window; at most one is ever scheduled.
+    _trailing_bump: CALLBACK_TYPE | None = None
 
     def __init__(
         self, device: Device, mower_map: MowerMap, hass: HomeAssistant
@@ -86,7 +111,41 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         self._subscribe(MowerNoGoZonesEvent, self._on_geometry)
         self._subscribe(PositionsEvent, self._on_positions)
 
+    @override
+    async def async_will_remove_from_hass(self) -> None:
+        """Drop the pending refresh, if there is one."""
+        self._cancel_trailing_bump()
+        await super().async_will_remove_from_hass()
+
+    @property
+    @override
+    def extra_state_attributes(self) -> dict[str, int | list[list[int]] | None]:
+        """Where the mower and the dock are, in mm in the map frame, and its path.
+
+        Read from the map when the state is written rather than copied by
+        a handler, because the controller owns the map and updates it
+        independently of this entity. The position stays ``None`` until the
+        first fix of a session: unlike the SVG marker, which falls back to
+        the dock so there is always something to draw, a number that is
+        not known should not pass for one that is. The track is the one
+        the SVG draws, thinned, and starts empty after a restart.
+        """
+        position = self._map.position
+        return {
+            ATTR_POSITION_X: position[0] if position else None,
+            ATTR_POSITION_Y: position[1] if position else None,
+            ATTR_HEADING: self._map.heading if position else None,
+            ATTR_DOCK_X: self._map.dock[0],
+            ATTR_DOCK_Y: self._map.dock[1],
+            ATTR_TRACK: [
+                [x, y] for x, y in self._map.sampled_track(TRACK_ATTRIBUTE_POINTS)
+            ],
+        }
+
     def _bump(self) -> None:
+        # Every write supersedes a pending trailing refresh, whichever event
+        # caused it: the refresh would only repeat what this one just wrote.
+        self._cancel_trailing_bump()
         self._attr_image_last_updated = dt_util.utcnow()
         self.async_write_ha_state()
 
@@ -101,11 +160,29 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         self._bump()
 
     async def _on_positions(self, event: PositionsEvent) -> None:
-        # Throttled: a skipped bump is corrected by the next position half
-        # a second later, or by the next geometry event.
-        elapsed = dt_util.utcnow() - self._attr_image_last_updated
-        if elapsed.total_seconds() >= POSITION_UPDATE_INTERVAL_SECONDS:
+        # Throttled, but the last position of a burst must still land: when
+        # the mower stops there is no next position to correct a skipped
+        # one, and the state would stay behind by up to the interval. So a
+        # skipped update leaves one refresh behind for when the interval is
+        # up, and that refresh reads the map as it is by then.
+        elapsed = (dt_util.utcnow() - self._attr_image_last_updated).total_seconds()
+        if elapsed >= POSITION_UPDATE_INTERVAL_SECONDS:
             self._bump()
+        elif self._trailing_bump is None:
+            self._trailing_bump = async_call_later(
+                self.hass,
+                POSITION_UPDATE_INTERVAL_SECONDS - elapsed,
+                self._on_trailing_bump,
+            )
+
+    async def _on_trailing_bump(self, _now: datetime) -> None:
+        self._trailing_bump = None
+        self._bump()
+
+    def _cancel_trailing_bump(self) -> None:
+        if self._trailing_bump is not None:
+            self._trailing_bump()
+            self._trailing_bump = None
 
     @override
     async def async_image(self) -> bytes | None:

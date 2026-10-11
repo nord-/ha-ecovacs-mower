@@ -136,6 +136,9 @@
       "advanced_mode": {
         "default": "mdi:tune"
       },
+      "animal_protection": {
+        "default": "mdi:paw"
+      },
       "border_switch": {
         "default": "mdi:land-fields"
       },
