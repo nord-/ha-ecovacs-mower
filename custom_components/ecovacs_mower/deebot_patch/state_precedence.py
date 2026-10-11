@@ -54,18 +54,23 @@ class MowerStateRecord:
         ``move()`` nor ``dock()`` clears it: a plan paused on the charger is
         the same plan, and resuming it needs the type it was started with.
 
-        A job that ends by finishing rather than by a stop has no message
-        that clears this: the captured natural-completion sequence
+        A job that ends by finishing rather than by a stop is cleared by the
+        ``mow-*-stop`` bury point with ``trigger: workComplete``, not by any
+        state message: the captured natural-completion sequence
         (``onChargeInfo goCharging`` → ``onChargeState isCharging=1`` →
         ``onChargeInfo state=idle trigger=workComplete``) never touches
-        ``cleanState``. Whether that self-corrects on the next job's first
-        push depends on whether an ordinary automatic job's ``onCleanInfo``
-        carries ``content: {"type": "auto"}`` — unconfirmed, no device log
-        of one exists yet. ``CleanMower``, ``MowArea`` and ``MowBorder``
-        write their own type here the moment they issue a start, which
-        closes the window between pressing start and the first push for a
-        job this integration begins; it does not help a job the mower
-        starts on its own schedule.
+        ``cleanState``, so ``_OnMowJobEdge`` calls ``end_job()`` instead
+        (issue #104). That narrows the gap without closing it: the mower has
+        been seen to finish a run without sending its bury points at all
+        (see ``const.py``), and then the type survives, so the next start
+        from the dock goes out as a resume. Whether that self-corrects on
+        the next job's first push depends on whether an ordinary automatic
+        job's ``onCleanInfo`` carries ``content: {"type": "auto"}`` —
+        unconfirmed, no device log of one exists yet. ``CleanMower``,
+        ``MowArea`` and ``MowBorder`` write their own type here the moment
+        they issue a start, which closes the window between pressing start
+        and the first push for a job this integration begins; it does not
+        help a job the mower starts on its own schedule.
         """
         if not isinstance(content, dict):
             return
@@ -74,10 +79,13 @@ class MowerStateRecord:
             self.job_type = job_type
 
     def end_job(self) -> None:
-        """The mower reported ``idle`` with no ``cleanState``: the job is over.
+        """The mower reported that the job is over.
 
-        That is what the app's *End* produces, and a job that is over has no
-        type to echo. A later start begins a new ``auto`` job.
+        Two messages say so: a pushed ``idle`` with no ``cleanState``, which
+        is what the app's *End* produces, and a ``mow-*-stop`` bury point with
+        ``trigger: workComplete``, which is how a job that finished on its
+        own ends (issue #104). A job that is over has no type to echo. A
+        later start begins a new ``auto`` job.
         """
         self.job_type = None
 
