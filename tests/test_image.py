@@ -324,21 +324,21 @@ def test_track_attribute_is_thinned_and_ends_at_the_mower() -> None:
 
 async def test_update_entity_asks_the_mower_where_it_is() -> None:
     # homeassistant.update_entity is how a live marker is built: an
-    # automation calls it as often as it likes while the mower is out.
-    from unittest.mock import AsyncMock, MagicMock
+    # automation calls it as often as it likes while the mower is out. It goes
+    # through the entity's wrapper so an unconfirmed command is logged under
+    # this integration's logger (issue #26).
+    from unittest.mock import AsyncMock
 
-    from deebot_client.commands.json.pos import GetPos
-
+    from custom_components.ecovacs_mower.deebot_patch.commands import GetPosMower
     from custom_components.ecovacs_mower.image import EcovacsMowerMap
 
     instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
-    instance._device = MagicMock()
-    instance._device.execute_command = AsyncMock(return_value={})
+    instance._execute_command = AsyncMock(return_value=True)
 
     await instance.async_update()
 
-    instance._device.execute_command.assert_awaited_once()
-    assert isinstance(instance._device.execute_command.await_args.args[0], GetPos)
+    instance._execute_command.assert_awaited_once()
+    assert isinstance(instance._execute_command.await_args.args[0], GetPosMower)
 
 
 def test_the_map_is_not_polled() -> None:

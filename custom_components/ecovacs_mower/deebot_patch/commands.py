@@ -43,6 +43,11 @@ Home Assistant value conversion in ``area_numbers.py``.
 
 ``GetAnimProtect`` and ``SetAnimProtect`` are the same pair for the
 animal-protection setting and its window (issue #45).
+
+``GetPosMower`` is the answer-side twin of ``OnPos``: a pushed ``onPos`` is
+parsed by ``OnPos``, but the answer to a ``getPos`` is parsed by the command
+itself, so it needs the same fix or it keeps the library's ``invalid == 0``
+filter.
 """
 
 from __future__ import annotations
@@ -65,6 +70,7 @@ from deebot_client.commands.json.common import (
 )
 from deebot_client.commands.json.custom import CustomCommand
 from deebot_client.commands.json.life_span import GetLifeSpan
+from deebot_client.commands.json.pos import GetPos
 from deebot_client.commands.json.stats import GetStats
 from deebot_client.const import DataType
 from deebot_client.events import LifeSpan, StateEvent
@@ -83,6 +89,7 @@ from .families import Family, commit, note_attempt, selected
 from .messages import (
     BEACON_COMPONENT,
     OnAnimProtect,
+    OnPos,
     OnProtectState,
     OnRainDelay,
     handle_clean_info,
@@ -704,6 +711,29 @@ class GetAnimProtect(JsonCommandWithMessageHandling, OnAnimProtect):
     """
 
     NAME = "getAnimProtect"
+
+
+class GetPosMower(GetPos):
+    """``getPos``, with its answer parsed the way a pushed ``onPos`` is.
+
+    A command's answer never goes through ``MESSAGES``: the library calls the
+    command's own ``_handle_body_data_dict``, so upstream's ``GetPos`` keeps its
+    ``invalid == 0`` filter even though ``OnPos`` replaces that filter for
+    pushed positions. Firmware 1.13.10 flags most samples ``invalid: 2`` and
+    they are good positions, so without this the poll would lose them there.
+    Delegating to ``OnPos`` keeps one parser for both paths: the invalid bit,
+    the clearly-away-from-the-dock check (issue #67) and the ``chargePos`` read
+    on 1.36.
+
+    The request is upstream's, unchanged.
+    """
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data like a pushed ``onPos``."""
+        return OnPos._handle_body_data_dict(event_bus, data)
 
 
 class GetMapInfoV2(ExecuteCommand):

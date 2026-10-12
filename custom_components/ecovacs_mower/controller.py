@@ -16,7 +16,6 @@ from typing import Any
 from deebot_client.api_client import ApiClient
 from deebot_client.authentication import create_rest_config
 from deebot_client.capabilities import DeviceType
-from deebot_client.commands.json.pos import GetPos
 from deebot_client.const import UNDEFINED, UndefinedType
 from deebot_client.device import Device
 from deebot_client.events import StateEvent, StatsEvent
@@ -64,6 +63,7 @@ from .deebot_patch import (
     register_mower_bus,
     verify_capabilities,
 )
+from .deebot_patch.commands import GetPosMower
 from .deebot_patch.hardware import SUPPORTED_CLASSES, patch_device_info
 from .deebot_patch.map_messages import (
     MowerCoverageEvent,
@@ -406,7 +406,7 @@ class EcovacsController:
         """
         device.events.request_refresh(StateEvent)
         device.events.request_refresh(StatsEvent)
-        await device.execute_command(GetPos())
+        await device.execute_command(GetPosMower())
 
     async def teardown(self) -> None:
         """Disconnect controller."""

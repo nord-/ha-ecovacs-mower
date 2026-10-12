@@ -284,7 +284,9 @@ automation:
 ```
 
 The answer reaches the map like a pushed position. On mowers that already push
-their position, the extra question is simply answered again.
+their position, the extra question is simply answered again. If the mower stops
+answering, every call logs one warning from this integration, so a long outage
+shows up as a warning every 15 seconds in the log.
 
 ### Zone-specific mowing
 

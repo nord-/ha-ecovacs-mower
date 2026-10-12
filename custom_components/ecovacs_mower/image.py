@@ -17,7 +17,6 @@ from datetime import datetime
 from typing import override
 
 from deebot_client.capabilities import Capabilities, DeviceType
-from deebot_client.commands.json.pos import GetPos
 from deebot_client.device import Device
 from deebot_client.events.map import PositionsEvent
 
@@ -28,6 +27,7 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
 from . import EcovacsMowerConfigEntry
+from .deebot_patch.commands import GetPosMower
 from .deebot_patch.map_messages import (
     MowerCoverageEvent,
     MowerCoveredAreaEvent,
@@ -153,7 +153,7 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         and nobody else pays for the commands. The answer arrives as a
         PositionsEvent, like a pushed position.
         """
-        await self._device.execute_command(GetPos())
+        await self._execute_command(GetPosMower())
 
     def _bump(self) -> None:
         # Every write supersedes a pending trailing refresh, whichever event

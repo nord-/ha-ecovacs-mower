@@ -10,12 +10,21 @@ from deebot_client.command import Command
 from deebot_client.commands.json.clean import Clean, CleanV2, GetCleanInfo
 from deebot_client.commands.json.common import ExecuteCommand
 from deebot_client.commands.json.life_span import GetLifeSpan
+from deebot_client.commands.json.pos import GetPos
 from deebot_client.commands.json.stats import GetStats
 from deebot_client.event_bus import EventBus
-from deebot_client.events import LifeSpan, LifeSpanEvent, StateEvent, StatsEvent
+from deebot_client.events import (
+    LifeSpan,
+    LifeSpanEvent,
+    Position,
+    PositionsEvent,
+    StateEvent,
+    StatsEvent,
+)
 from deebot_client.events.base import Event
 from deebot_client.message import HandlingResult, HandlingState
 from deebot_client.models import CleanAction, State
+from deebot_client.rs.map import PositionType
 
 from custom_components.ecovacs_mower.deebot_patch.commands import (
     CleanMower,
@@ -24,6 +33,7 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
     GetCleanInfoMower,
     GetLifeSpanMower,
     GetMapInfoV2,
+    GetPosMower,
     GetProtectState,
     GetRainDelay,
     GetStatsMower,
@@ -570,6 +580,33 @@ async def test_charging_sets_the_dock_and_still_publishes_docked() -> None:
     assert record.docked is True
     # Upstream's own behaviour is kept: nothing that works today changes.
     assert [event.state for event in published] == [State.DOCKED]
+
+
+async def test_get_pos_keeps_a_sample_flagged_invalid_2() -> None:
+    # The answer to getPos is parsed by the command, not by OnPos, so it needs
+    # OnPos's filter of its own. Firmware 1.13.10 flags nine samples in ten
+    # "invalid": 2 and they are good positions; chargePos carries "invalid": 1.
+    bus = _bus()
+    published = _collect(bus, PositionsEvent)
+
+    result = GetPosMower._handle_body_data_dict(
+        bus,
+        {
+            "deebotPos": {"x": -31025, "y": 3525, "a": -88, "invalid": 2},
+            "chargePos": [{"x": 0, "y": 0, "a": 0, "t": 1, "invalid": 1}],
+        },
+    )
+    await asyncio.sleep(0)
+
+    assert result.state is HandlingState.SUCCESS
+    assert [event.positions for event in published] == [
+        [Position(type=PositionType.DEEBOT, x=-31025, y=3525, a=-88)]
+    ]
+
+
+def test_get_pos_sends_the_request_upstream_sends() -> None:
+    assert GetPosMower.NAME == "getPos"
+    assert GetPosMower()._args == GetPos()._args
 
 
 def test_get_anim_protect_asks_on_the_command_name_not_the_message_name() -> None:

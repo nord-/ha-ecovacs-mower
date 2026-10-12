@@ -628,9 +628,8 @@ async def test_poll_asks_the_mower_where_it_is() -> None:
     # map capability for it to refresh through, so the tick asks directly.
     from unittest.mock import AsyncMock, MagicMock
 
-    from deebot_client.commands.json.pos import GetPos
-
     from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.commands import GetPosMower
 
     controller = EcovacsController.__new__(EcovacsController)
     device = MagicMock()
@@ -639,7 +638,7 @@ async def test_poll_asks_the_mower_where_it_is() -> None:
     await controller._poll(device, None)
 
     device.execute_command.assert_awaited_once()
-    assert isinstance(device.execute_command.await_args.args[0], GetPos)
+    assert isinstance(device.execute_command.await_args.args[0], GetPosMower)
 
 
 async def test_teardown_cancels_outstanding_polls() -> None:
