@@ -1,5 +1,7 @@
 """The last job as an event entity."""
 
+import pytest
+
 from tests import requires_ha
 
 pytestmark = requires_ha
@@ -92,15 +94,21 @@ def test_no_stale_event_translations_or_icons() -> None:
     import json
     from pathlib import Path
 
-    from custom_components.ecovacs_mower.event import EcovacsLastJobEventEntity
+    from custom_components.ecovacs_mower.event import (
+        EcovacsJobStartedEventEntity,
+        EcovacsLastJobEventEntity,
+    )
 
     root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
     strings = json.loads((root / "strings.json").read_text(encoding="utf-8"))
     icons = json.loads((root / "icons.json").read_text(encoding="utf-8"))
-    key = EcovacsLastJobEventEntity.entity_description.translation_key
+    keys = {
+        EcovacsLastJobEventEntity.entity_description.translation_key,
+        EcovacsJobStartedEventEntity.entity_description.translation_key,
+    }
 
-    assert set(strings["entity"]["event"]) <= {key}
-    assert set(icons["entity"]["event"]) <= {key}
+    assert set(strings["entity"]["event"]) <= keys
+    assert set(icons["entity"]["event"]) <= keys
 
 
 def _bare_event_entity():
@@ -135,7 +143,11 @@ def _stop(trigger: str):
     from custom_components.ecovacs_mower.deebot_patch.messages import MowerJobEdgeEvent
 
     return MowerJobEdgeEvent(
-        phase="stop", trigger=trigger, mowed_area=320.567505, work_area=320.567505
+        phase="stop",
+        trigger=trigger,
+        job_type="schedule",
+        mowed_area=320.567505,
+        work_area=320.567505,
     )
 
 
@@ -202,7 +214,28 @@ async def test_a_start_fires_nothing() -> None:
 
     entity = _bare_event_entity()
 
-    await entity._on_job_edge(MowerJobEdgeEvent(phase="start", trigger="app"))
+    await entity._on_job_edge(
+        MowerJobEdgeEvent(phase="start", trigger="app", job_type="spotarea")
+    )
+
+    assert entity.state_attributes["event_type"] is None
+    entity.async_write_ha_state.assert_not_called()
+
+
+async def test_a_pause_or_resume_fires_nothing() -> None:
+    """Issue #120 registers the pause and resume edges; they end no job.
+
+    ``app`` for the reason ``test_a_start_fires_nothing`` gives: it is mapped
+    for a stop, so only the phase guard keeps these from firing.
+    """
+    from custom_components.ecovacs_mower.deebot_patch.messages import MowerJobEdgeEvent
+
+    entity = _bare_event_entity()
+
+    for phase in ("pause", "resume"):
+        await entity._on_job_edge(
+            MowerJobEdgeEvent(phase=phase, trigger="app", job_type="schedule")
+        )
 
     assert entity.state_attributes["event_type"] is None
     entity.async_write_ha_state.assert_not_called()
@@ -353,3 +386,189 @@ async def test_a_replayed_ending_does_not_fire_again() -> None:
     await entity._on_report(report)
 
     assert entity.async_write_ha_state.call_count == 1
+
+
+def _bare_job_started_entity():
+    """Built through its real ``__init__``, for the reason ``_bare_event_entity`` gives."""
+    from unittest.mock import MagicMock, Mock
+
+    from custom_components.ecovacs_mower.event import EcovacsJobStartedEventEntity
+
+    device = Mock()
+    device.device_info = MagicMock()
+    device.device_info.__getitem__ = lambda _self, _key: "did-1"
+
+    entity = EcovacsJobStartedEventEntity(device)
+    entity.async_write_ha_state = Mock()
+    return entity
+
+
+def _edge(phase: str, trigger: str, job_type: str = "schedule"):
+    from custom_components.ecovacs_mower.deebot_patch.messages import MowerJobEdgeEvent
+
+    return MowerJobEdgeEvent(phase=phase, trigger=trigger, job_type=job_type)
+
+
+def test_job_started_translations_and_icon() -> None:
+    """Name, one state per event type, and an icon of its own."""
+    import json
+    from pathlib import Path
+
+    from custom_components.ecovacs_mower.event import EcovacsJobStartedEventEntity
+
+    root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
+    strings = json.loads((root / "strings.json").read_text(encoding="utf-8"))
+    icons = json.loads((root / "icons.json").read_text(encoding="utf-8"))
+    description = EcovacsJobStartedEventEntity.entity_description
+    entry = strings["entity"]["event"][description.translation_key]
+
+    assert entry["name"] == "Job started"
+    states = entry["state_attributes"]["event_type"]["state"]
+    for event_type in description.event_types:
+        assert event_type in states, event_type
+    assert description.translation_key in icons["entity"]["event"]
+
+
+def test_job_started_is_not_a_diagnostic() -> None:
+    """It is meant for automations, so it belongs on the device's main card."""
+    from custom_components.ecovacs_mower.event import EcovacsJobStartedEventEntity
+
+    assert EcovacsJobStartedEventEntity.entity_description.entity_category is None
+
+
+async def test_a_scheduled_resume_fires_with_its_phase_and_job_type() -> None:
+    """Issue #120: the G1-800's schedule window opening, mow-schedule-resume
+    with triggerType schedule. The reporter's weather check triggers on this."""
+    entity = _bare_job_started_entity()
+
+    await entity._on_job_edge(_edge("resume", "schedule"))
+
+    attributes = entity.state_attributes
+    assert attributes["event_type"] == "schedule"
+    assert attributes["phase"] == "resume"
+    assert attributes["job_type"] == "schedule"
+    entity.async_write_ha_state.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("phase", "trigger", "job_type"),
+    [
+        ("start", "schedule", "schedule"),
+        ("resume", "continue", "schedule"),
+        ("start", "app", "spotarea"),
+        ("start", "reborn", "spotarea"),
+    ],
+)
+async def test_every_observed_start_word_fires_verbatim(
+    phase: str, trigger: str, job_type: str
+) -> None:
+    """The words stay raw: the O1200's resume says continue where the G1-800's
+    says schedule, and job_type is what names the schedule's job."""
+    entity = _bare_job_started_entity()
+
+    await entity._on_job_edge(_edge(phase, trigger, job_type))
+
+    assert entity.state_attributes["event_type"] == trigger
+    assert entity.state_attributes["phase"] == phase
+    assert entity.state_attributes["job_type"] == job_type
+
+
+@pytest.mark.parametrize("phase", ["pause", "stop"])
+async def test_a_pause_or_stop_fires_no_job_started(phase: str) -> None:
+    """``app`` is a declared event type, so only the phase guard stops these."""
+    entity = _bare_job_started_entity()
+
+    await entity._on_job_edge(_edge(phase, "app"))
+
+    assert entity.state_attributes["event_type"] is None
+    entity.async_write_ha_state.assert_not_called()
+
+
+async def test_an_unknown_start_word_fires_nothing_and_is_logged_once(caplog) -> None:
+    """_trigger_event raises on a type outside event_types, so an unseen word
+    is dropped, and surfaces once in the debug log."""
+    import logging
+
+    entity = _bare_job_started_entity()
+
+    with caplog.at_level(logging.DEBUG):
+        await entity._on_job_edge(_edge("start", "lowBattery"))
+        await entity._on_job_edge(_edge("start", "lowBattery"))
+
+    assert entity.state_attributes["event_type"] is None
+    assert sum("is no event type" in record.message for record in caplog.records) == 1
+
+
+async def test_a_replayed_start_does_not_fire_again() -> None:
+    """EventBus.subscribe replays the last event to a new subscriber, and an
+    entity-ID change re-adds the entity: held by identity, as _reported_ending
+    is. Two genuine, equal-looking starts are distinct objects (_seq), so both
+    fire."""
+    entity = _bare_job_started_entity()
+    start = _edge("start", "schedule")
+
+    await entity._on_job_edge(start)
+    await entity._on_job_edge(start)
+
+    assert entity.async_write_ha_state.call_count == 1
+
+    await entity._on_job_edge(_edge("start", "schedule"))
+
+    assert entity.async_write_ha_state.call_count == 2
+
+
+async def test_job_started_subscribes_to_the_job_edges() -> None:
+    from unittest.mock import Mock
+
+    from custom_components.ecovacs_mower.deebot_patch.messages import MowerJobEdgeEvent
+
+    entity = _bare_job_started_entity()
+    entity._subscribe = Mock()
+
+    await entity.async_added_to_hass()
+
+    calls = {call.args for call in entity._subscribe.call_args_list}
+    assert (MowerJobEdgeEvent, entity._on_job_edge) in calls
+
+
+def test_the_two_event_entities_have_distinct_unique_ids() -> None:
+    """Same device, same platform: equal ids would make HA drop one of them."""
+    started = _bare_job_started_entity()
+    last_job = _bare_event_entity()
+
+    assert started.unique_id == "did-1_job_started"
+    assert started.unique_id != last_job.unique_id
+
+
+async def test_job_started_exists_only_on_a_mower() -> None:
+    """The gate EcovacsActivitySensor uses; Last mowing job stays on every device."""
+    from unittest.mock import MagicMock
+
+    from deebot_client.capabilities import DeviceType
+
+    from custom_components.ecovacs_mower.event import (
+        EcovacsJobStartedEventEntity,
+        EcovacsLastJobEventEntity,
+        async_setup_entry,
+    )
+
+    def _device(did: str, device_type: DeviceType):
+        device = MagicMock()
+        device.capabilities.device_type = device_type
+        device.device_info = {"did": did}
+        return device
+
+    mower = _device("did-mower", DeviceType.MOWER)
+    vacuum = _device("did-vacuum", DeviceType.VACUUM)
+    config_entry = MagicMock()
+    config_entry.runtime_data.devices = [mower, vacuum]
+
+    added: list = []
+    await async_setup_entry(MagicMock(), config_entry, added.extend)
+
+    assert {
+        e._device for e in added if isinstance(e, EcovacsJobStartedEventEntity)
+    } == {mower}
+    assert {
+        e._device for e in added if isinstance(e, EcovacsLastJobEventEntity)
+    } == {mower, vacuum}

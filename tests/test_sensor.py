@@ -1079,11 +1079,17 @@ def test_a_beacon_sensor_is_named_after_its_serial() -> None:
     assert description.key == "beacon_A1"
 
 
-def _edge(phase: str, trigger: str, mowed: float | None = None, work: float | None = None):
+def _edge(
+    phase: str,
+    trigger: str,
+    mowed: float | None = None,
+    work: float | None = None,
+    job_type: str = "schedule",
+):
     from custom_components.ecovacs_mower.deebot_patch.messages import MowerJobEdgeEvent
 
     return MowerJobEdgeEvent(
-        phase=phase, trigger=trigger, mowed_area=mowed, work_area=work
+        phase=phase, trigger=trigger, job_type=job_type, mowed_area=mowed, work_area=work
     )
 
 
@@ -1242,22 +1248,27 @@ async def test_a_zeroed_answer_on_the_way_home_does_not_erase_a_completion() -> 
     assert sensor._attr_native_value == 100
 
 
-async def test_an_unregistered_phase_writes_nothing() -> None:
-    """The pause and resume edges are meant to be one subclass each to add.
+async def test_pause_and_resume_edges_leave_the_reading_alone() -> None:
+    """Issue #120 registers them; _on_job_edge names the phases it acts on.
 
-    Their payloads carry the same fields, and a pause's trigger vocabulary
-    (lowBattery, alert, rain) does not overlap workComplete today — but leaning
-    on "not a start means a stop" would make a future pause that does carry it
-    publish a final value halfway through a job.
+    ``schedule`` on the resume is a new-job trigger on a start, and
+    ``workComplete`` on the pause is a completion on a stop, so only the
+    phase checks keep these from resetting or finalising the reading.
     """
     sensor = _bare_progress_sensor()
     sensor._attr_native_value = 55
+    sensor._job_over = True
 
-    await sensor._on_job_edge(
-        _edge("pause", "workComplete", mowed=180.422501, work=320.567505)
-    )
+    await sensor._on_job_edge(_edge("resume", "schedule"))
 
     assert sensor._attr_native_value == 55
+    assert sensor._job_over is True
+
+    sensor._job_over = False
+    await sensor._on_job_edge(_edge("pause", "workComplete", mowed=1.0, work=2.0))
+
+    assert sensor._attr_native_value == 55
+    assert sensor._job_over is False
 
 
 async def test_the_captured_run_ends_at_a_hundred_and_stays_there() -> None:

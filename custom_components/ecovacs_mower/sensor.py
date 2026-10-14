@@ -884,9 +884,9 @@ class EcovacsMowingProgressSensor(
         ``event.<device>_last_mowing_job`` is that signal (issue #74).
         """
         # Both phases named explicitly rather than leaning on "not a start
-        # means a stop": registering the pause and resume edges is meant to be
-        # one subclass each, and a pause carrying workComplete would then write
-        # a final value halfway through a job.
+        # means a stop": the pause and resume edges are registered (issue
+        # #120), and a pause carrying workComplete would otherwise write a
+        # final value halfway through a job.
         if event.phase == "start" and event.trigger in _NEW_JOB_TRIGGERS:
             # Gated on the latch for the same reason the CLEANING edge is, and
             # it is what keeps the two from fighting: whichever notices the new

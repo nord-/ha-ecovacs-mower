@@ -53,6 +53,9 @@
       }
     },
     "event": {
+      "job_started": {
+        "default": "mdi:play-circle-outline"
+      },
       "last_job": {
         "default": "mdi:history"
       }

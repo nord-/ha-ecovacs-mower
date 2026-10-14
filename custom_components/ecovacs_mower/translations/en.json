@@ -68,6 +68,19 @@
       "reset_lifespan_weed_rope": { "name": "Reset weed rope" }
     },
     "event": {
+      "job_started": {
+        "name": "Job started",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "schedule": "Schedule",
+              "app": "App",
+              "continue": "Continued",
+              "reborn": "Restarted"
+            }
+          }
+        }
+      },
       "last_job": {
         "name": "Last mowing job",
         "state_attributes": {

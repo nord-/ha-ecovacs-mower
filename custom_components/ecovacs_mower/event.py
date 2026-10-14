@@ -18,14 +18,21 @@ against 28 observed job endings — so the entity had never fired on a mower wit
 thing and says *why*, which is the part ``onLastTimeStats`` cannot supply: it
 reports every ending as ``stop: 1`` and no capture anywhere carries the
 ``stopReason`` the library classifies on.
+
+The entity has a sibling, *Job started* (issue #120): the start and resume
+edges of the same bury points, fired with the trigger word the mower sent and
+the job type the topic names, so an automation can act when the app's
+schedule starts the mower. Like *Last mowing job* it is a class rather than a
+description entry: ``MowerJobEdgeEvent`` is no library capability, so there is
+no ``capability_fn`` to describe it with.
 """
 
 import logging
 from typing import override
 
-from deebot_client.capabilities import CapabilityEvent
+from deebot_client.capabilities import CapabilityEvent, DeviceType
 from deebot_client.device import Device
-from deebot_client.events import CleanJobStatus, ReportStatsEvent
+from deebot_client.events import CleanJobStatus, ReportStatsEvent, StateEvent
 from deebot_client.events.base import Event
 
 from homeassistant.components.event import EventEntity, EventEntityDescription
@@ -51,6 +58,18 @@ _TRIGGER_EVENT_TYPES = {
     "app": "manually_stopped",
 }
 
+# The trigger words a start or resume has been seen to carry, used verbatim as
+# event types (issue #120). Raw rather than mapped: the G1-800's
+# mow-schedule-resume says ``schedule`` where the O1200's says ``continue``,
+# so one "scheduled" type would be a guess, and ``job_type`` in the event
+# data already names the schedule's job on every firmware. A start from Home
+# Assistant may fire nothing yet: its word is unobserved, and so is the
+# mow-auto-start edge itself. Unconfirmed guess: ``app``, the word on the
+# only observed edge of such a job (``mow-auto-stop``, issue #74), which
+# would fire with ``job_type: auto``. Any word not listed here gives a debug
+# line until it is seen and added.
+_JOB_START_TRIGGERS = ("schedule", "app", "continue", "reborn")
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -59,9 +78,15 @@ async def async_setup_entry(
 ) -> None:
     """Add entities for passed config_entry in HA."""
     controller = config_entry.runtime_data
-    async_add_entities(
+    entities: list[EventEntity] = [
         EcovacsLastJobEventEntity(device) for device in controller.devices
+    ]
+    entities.extend(
+        EcovacsJobStartedEventEntity(device)
+        for device in controller.devices
+        if device.capabilities.device_type is DeviceType.MOWER
     )
+    async_add_entities(entities)
 
 
 class EcovacsLastJobEventEntity(
@@ -169,4 +194,76 @@ class EcovacsLastJobEventEntity(
         self._reported_ending = event
 
         self._trigger_event(event_type)
+        self.async_write_ha_state()
+
+
+class EcovacsJobStartedEventEntity(
+    EcovacsEntity[CapabilityEvent[StateEvent]],
+    EventEntity,
+):
+    """What started or resumed the mower's job, as the mower announces it (issue #120).
+
+    An event entity, not a sensor (Rickard, 2026-10-13): Home Assistant writes
+    no ``state_changed`` for a sensor that writes the value it already has, so
+    after the first scheduled start a trigger on a sensor would never fire
+    again. This fires once per edge, whatever the previous one was.
+
+    It fires at the announcement, before the departure is confirmed: on the
+    G1-800 about 3 s before the state reads mowing, on the O1200 about 13 s
+    after. So a condition on the mower mowing, checked when this fires, is
+    always false on the G1-800; an automation that must act once the mower
+    is out waits for it in its actions. ``continue`` is a resume after a
+    charge break and ``reborn`` repeats within one run on the O800 RTK, so
+    an event is not always a new job; ``phase`` in the event data says
+    which.
+
+    ``capabilities.state`` is passed only because ``EcovacsEntity`` wants a
+    capability; nothing subscribes to its event here.
+    """
+
+    entity_description = EventEntityDescription(
+        key="job_started",
+        translation_key="job_started",
+        event_types=list(_JOB_START_TRIGGERS),
+    )
+
+    def __init__(self, device: Device) -> None:
+        """Initialize entity."""
+        super().__init__(device, device.capabilities.state)
+        self._logged_triggers: set[str] = set()
+        # The edge already fired, held by identity for the reason
+        # EcovacsLastJobEventEntity._reported_ending gives: the bus replays
+        # its last event to every new subscriber, and an entity-ID change
+        # re-adds this object.
+        self._reported_start: MowerJobEdgeEvent | None = None
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listener now that hass is ready."""
+        await super().async_added_to_hass()
+
+        self._subscribe(MowerJobEdgeEvent, self._on_job_edge)
+
+    async def _on_job_edge(self, event: MowerJobEdgeEvent) -> None:
+        """Fire on a start or resume; a pause or stop is not this entity's."""
+        if event.phase not in ("start", "resume"):
+            return
+
+        if event.trigger not in _JOB_START_TRIGGERS:
+            if event.trigger not in self._logged_triggers:
+                self._logged_triggers.add(event.trigger)
+                _LOGGER.debug(
+                    "Job %s with trigger %r, which is no event type",
+                    event.phase,
+                    event.trigger,
+                )
+            return
+
+        if event is self._reported_start:
+            return
+        self._reported_start = event
+
+        self._trigger_event(
+            event.trigger, {"phase": event.phase, "job_type": event.job_type}
+        )
         self.async_write_ha_state()
