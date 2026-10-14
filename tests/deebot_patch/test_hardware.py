@@ -11,7 +11,7 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
     CleanMower,
     GetAnimProtect,
     GetLifeSpanMower,
-    GetMapInfoV2,
+    GetMapInfoMower,
     GetProtectState,
     GetRainDelay,
     GetStatsMower,
@@ -201,10 +201,12 @@ async def test_patch_wires_a_request_for_the_lawn_boundary(class_: str) -> None:
     # sends unasked. Firmware 1.36 answers getMapInfo_V2 with 32 KB of outline
     # on the atr topic and sends it at no other time, so without this entry
     # onMapInfo_V2 never arrives and the map has no field around its coverage.
+    # A non-V2 mower answers getMI instead, after an appping; the wrapper asks
+    # under whichever name the mower's family answers.
     await patch_device_info(class_)
     info = await get_static_device_info(class_)
     commands = info.capabilities.get_refresh_commands(MowerMapInfoEvent)
-    assert [type(c) for c in commands] == [GetMapInfoV2]
+    assert [type(c) for c in commands] == [GetMapInfoMower]
 
 
 async def test_patch_leaves_the_librarys_own_refresh_commands_alone() -> None:

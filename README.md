@@ -238,7 +238,7 @@ one per UWB beacon on the models that use them:
 | `number` | 3 + four per saved area on the A1600 LiDAR Pro | Notification volume, cutting direction, rain delay duration, plus cutting height, mowing speed, obstacle height and cutting direction for each saved area (see below) |
 | `button` | 7, 8 on the G1-800 | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), "Clear fault" (releases the latched fault; see below), "End mowing task" (ends the current job for good; see below) and, on the G1-800, "Mow border" (starts a border job; see below) |
 | `event` | 1 | Last mowing job (finished / finished with warnings / manually stopped — see below) |
-| `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, `onMapTrace` on firmware 1.17, and `onMapInfo_V2` on 1.36 — that last one only ever arrives in answer to a `getMapInfo_V2` the integration now sends); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only. The mower's position, its heading, the dock and the path it has driven are also attributes of the entity (`position_x`, `position_y`, `heading`, `dock_x`, `dock_y`, `track`) — millimetres in the map's own frame, with the dock as the origin, `heading` in degrees as the mower reports it (counter-clockwise from the frame's +x axis, measured on the G1-800 at firmware 1.36.208 only), and `track` a list of `[x, y]` points thinned to at most about 250 — so a card can draw the mower on something other than the SVG. `position_x`, `position_y` and `heading` are `null` until the mower has reported a position since Home Assistant started |
+| `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, `onMapTrace` on firmware 1.17, and `onMapInfo_V2` on 1.36 — that last one only ever arrives in answer to a `getMapInfo_V2` the integration now sends, as `onMI` does on a non-V2 mower in answer to `getMI`); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only. The mower's position, its heading, the dock and the path it has driven are also attributes of the entity (`position_x`, `position_y`, `heading`, `dock_x`, `dock_y`, `track`) — millimetres in the map's own frame, with the dock as the origin, `heading` in degrees as the mower reports it (counter-clockwise from the frame's +x axis, measured on the G1-800 at firmware 1.36.208 only), and `track` a list of `[x, y]` points thinned to at most about 250 — so a card can draw the mower on something other than the SVG. `position_x`, `position_y` and `heading` are `null` until the mower has reported a position since Home Assistant started |
 
 Not included yet: **RTK diagnostics** (position and satellite data). RTK is
 planned for the next release.
@@ -892,15 +892,26 @@ that shows whether the mower sends `onMI`/`onArI`/`onMapTrack`/
 all. That is the log to attach to a map issue, and the `info` fields have to
 be left intact: they are the map geometry itself.
 
-On firmware older than 1.36, the `getMapInfo_V2` the integration sends at
-setup and after every reconnect may go unanswered, which `deebot_client` logs
-as `Command "getMapInfo_V2" was not successfully.` or `No response received
-for command "getMapInfo_V2"`. That warning is expected and harmless — the
-request is never retried and the boundary those firmwares push unasked as
-`onMI` arrives regardless. It is still worth reporting with the log around
-it: nobody has captured what pre-1.36 firmware answers here, and that capture
-is what would justify picking between `getMapInfo` and `getMapInfo_V2` per
-mower the way the clean commands already do.
+At setup and after every reconnect the integration asks the mower for its map,
+under whichever name the mower answers, the way the clean commands already
+pick theirs: `getMI` for the non-V2 family, answered with `onMI`, and
+`getMapInfo_V2` for V2, answered with `onMapInfo_V2`. Besides the boundary,
+that answer is what tells the integration which map is in use, and the
+per-area names wait for it.
+
+The non-V2 mower this was confirmed on, an A1600 LiDAR Pro, pushes `onMI` only
+while it believes the Ecovacs app is open, which the app signals with an
+`appping` when it opens and every two minutes or so after. A `getMI` on its
+own is acknowledged and nothing follows, so the integration sends an `appping`
+first, the way the app does. The mower never answers the ping, and the
+integration does not wait for it.
+
+The map request tries `getMapInfo_V2` first. A non-V2 mower does not answer
+it, so `deebot_client` logs `No response received for command "getMapInfo_V2"`
+once after each restart, and again if the mower reconnects, and its map and
+area names arrive about 20 seconds later than they otherwise would. That
+warning is expected on a non-V2 mower. If a V2 mower's map loses its boundary,
+report it with the log around it.
 
 ## Current status
 

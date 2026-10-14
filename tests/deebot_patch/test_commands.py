@@ -32,7 +32,9 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
     GetChargeStateMower,
     GetCleanInfoMower,
     GetLifeSpanMower,
+    GetMapInfoMower,
     GetMapInfoV2,
+    GetMI,
     GetPosMower,
     GetProtectState,
     GetRainDelay,
@@ -40,10 +42,12 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
     MowerStateRefresh,
     SetAnimProtect,
     SetRainDelay,
+    _AppPing,
     _CleanNonV2,
     _CleanV2Mower,
     _GetCleanInfoNonV2,
     _GetCleanInfoV2,
+    has_family,
 )
 from custom_components.ecovacs_mower.deebot_patch.families import (
     Family,
@@ -1115,6 +1119,107 @@ def test_get_map_info_v2_parses_nothing_from_the_ack() -> None:
         GetMapInfoV2._handle_body(Mock(), {"code": 500}).state
         is HandlingState.FAILED
     )
+
+
+def test_get_mi_is_the_non_v2_name_with_the_same_body() -> None:
+    # A non-V2 A1600 LiDAR Pro (e4gqia) answers getMapInfo_V2 with errno
+    # 500; the app's map screen asks with getMI {"type": "0"} instead.
+    assert GetMI.NAME == "getMI"
+    assert GetMI()._args == {"type": "0"}
+    assert issubclass(GetMI, ExecuteCommand)
+    assert GetMI._handle_body(Mock(), {"code": 0, "msg": "ok"}) == (
+        HandlingResult.success()
+    )
+
+
+def test_app_ping_goes_out_with_the_apps_empty_body() -> None:
+    # JsonCommand leaves the body out of a command without arguments; the app
+    # sends {"data": {}}, the form confirmed to wake the mower.
+    payload = _AppPing()._get_payload()
+    assert _AppPing.NAME == "appping"
+    assert payload["body"] == {"data": {}}
+    assert "header" in payload
+
+
+def test_the_map_request_is_a_family_adaptive_command() -> None:
+    command = GetMapInfoMower()
+    assert has_family(command)
+    assert type(command._delegate(Family.NON_V2)) is GetMI
+    assert type(command._delegate(Family.V2)) is GetMapInfoV2
+
+
+def _pinging(sent: list[str], ping=None):
+    """Patch the ping to record itself in *sent*, or to run *ping* instead."""
+
+    async def record(self, authenticator, device_info):
+        sent.append(self.NAME)
+        return {}
+
+    return patch.object(_AppPing, "_execute_api_request", ping or record)
+
+
+async def test_a_v2_mower_is_asked_with_v2_and_its_family_committed() -> None:
+    # getMapInfo_V2 first, because both answers to it are known; how a V2
+    # mower answers getMI is not. A V2 mower answers it, gets no getMI and no
+    # ping, and V2 is committed for its clean commands too.
+    fake, sent = _transport(_OK)
+    with patch.object(Command, "_execute", fake), _pinging(sent):
+        await GetMapInfoMower()._execute(AsyncMock(), _DEVICE_INFO, _bus())
+
+    assert sent == ["getMapInfo_V2"]
+    assert selected(_DEVICE_INFO["did"]) is Family.V2
+
+
+async def test_a_non_v2_mower_falls_back_to_a_pinged_get_mi() -> None:
+    # A non-V2 A1600 rejects getMapInfo_V2 with errno 500; the fallback pings
+    # and asks getMI, and the family stays non-V2.
+    fake, sent = _transport(_NO_ANSWER, _OK)
+    with patch.object(Command, "_execute", fake), _pinging(sent):
+        await GetMapInfoMower()._execute(AsyncMock(), _DEVICE_INFO, _bus())
+
+    assert sent == ["getMapInfo_V2", "appping", "getMI"]
+    assert selected(_DEVICE_INFO["did"]) is Family.NON_V2
+
+
+async def test_a_ping_nobody_answers_does_not_hold_up_get_mi() -> None:
+    # The mower never answers appping, so the call only gets a head start.
+    async def unanswered(self, authenticator, device_info):
+        await asyncio.Event().wait()
+
+    fake, sent = _transport(_NO_ANSWER, _OK)
+    with (
+        patch.object(Command, "_execute", fake),
+        _pinging(sent, unanswered),
+        patch(
+            "custom_components.ecovacs_mower.deebot_patch.commands."
+            "_APP_PING_HEAD_START",
+            0.01,
+        ),
+    ):
+        await GetMapInfoMower()._execute(AsyncMock(), _DEVICE_INFO, _bus())
+
+    assert sent == ["getMapInfo_V2", "getMI"]
+
+
+async def test_a_failed_ping_does_not_keep_get_mi_from_going_out() -> None:
+    async def failing(self, authenticator, device_info):
+        raise RuntimeError("cloud unreachable")
+
+    fake, sent = _transport(_NO_ANSWER, _OK)
+    with patch.object(Command, "_execute", fake), _pinging(sent, failing):
+        await GetMapInfoMower()._execute(AsyncMock(), _DEVICE_INFO, _bus())
+
+    assert sent == ["getMapInfo_V2", "getMI"]
+
+
+async def test_the_clean_commands_still_start_on_the_selected_family() -> None:
+    # Only the map request starts on V2; clean info still goes out non-V2
+    # first on a mower whose family is not known, as before.
+    fake, sent = _transport(_OK)
+    with patch.object(Command, "_execute", fake):
+        await GetCleanInfoMower()._execute(AsyncMock(), _DEVICE_INFO, _bus())
+
+    assert sent == ["getCleanInfo"]
 
 
 async def test_stop_goes_out_untouched_whatever_the_last_state_was() -> None:
