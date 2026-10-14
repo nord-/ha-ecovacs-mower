@@ -236,7 +236,7 @@ one per UWB beacon on the models that use them:
 | `binary_sensor` | 6 | Fault — a latched problem that stays on until the mower recovers or you clear it (see below) — plus rain sensor, rain delay, emergency stop, locked, animal protection active: the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
 | `switch` | 9 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection, rain detection, animal protection (see below) |
 | `number` | 3 + four per saved area on the A1600 LiDAR Pro | Notification volume, cutting direction, rain delay duration, plus cutting height, mowing speed, obstacle height and cutting direction for each saved area (see below) |
-| `button` | 7, 8 on the G1-800 | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), "Clear fault" (releases the latched fault; see below), "End mowing task" (ends the current job for good; see below) and, on the G1-800, "Mow border" (starts a border job; see below) |
+| `button` | 8, 9 on the G1-800 | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), "Clear fault" (releases the latched fault; see below), "End mowing task" (ends the current job for good; see below), "Log area parameters" (diagnostic, disabled by default; shows the raw per-area values to help support another model, see below) and, on the G1-800, "Mow border" (starts a border job; see below) |
 | `event` | 1 | Last mowing job (finished / finished with warnings / manually stopped — see below) |
 | `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, `onMapTrace` on firmware 1.17, and `onMapInfo_V2` on 1.36 — that last one only ever arrives in answer to a `getMapInfo_V2` the integration now sends); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only. The mower's position, its heading, the dock and the path it has driven are also attributes of the entity (`position_x`, `position_y`, `heading`, `dock_x`, `dock_y`, `track`) — millimetres in the map's own frame, with the dock as the origin, `heading` in degrees as the mower reports it (counter-clockwise from the frame's +x axis, measured on the G1-800 at firmware 1.36.208 only), and `track` a list of `[x, y]` points thinned to at most about 250 — so a card can draw the mower on something other than the SVG. `position_x`, `position_y` and `heading` are `null` until the mower has reported a position since Home Assistant started |
 
@@ -381,6 +381,33 @@ These parameter mappings are currently confirmed only on the A1600 LiDAR Pro
 but that does not establish that their ranges, units or meanings are the same.
 The integration therefore does not expose these controls on other classes until
 their parameter representation has been independently verified.
+
+#### Helping to support another model
+
+Mapping a model takes a list of which raw value the mower reports for each
+setting in the Ecovacs app. The **Log area parameters** button collects that:
+
+1. Enable the button once. On the mower's device page, under *Diagnostic*,
+   open the entities that are not shown, select **Log area parameters** and
+   turn on *Enabled* in its settings.
+2. Press **Log area parameters**. A notification (the bell in the sidebar)
+   opens with a table of every area's raw values.
+3. Within the next 15 minutes, change each setting in the Ecovacs app (cutting
+   height, speed, obstacle height, cutting direction) through the values the
+   app offers, its minimum and maximum included, and write down what you set.
+   The notification updates as the mower reports each change, and lists every
+   change with its time, for example
+   `18:07:06 Area 1 (Front lawn): mow_height_level 6 → 7`. A mower that
+   reports changes on its own shows them within a second; for any other the
+   integration asks every 15 seconds, so wait that long between steps.
+4. Copy the notification into a new issue, together with your notes and your
+   mower's model. The device class the integration needs is in the
+   notification's title, in brackets.
+
+The button only reads; it never changes a setting on the mower. It works on
+every mower, the models without area entities included. A model that does not
+support area parameters says so in the notification. Pressing the button again
+starts over, with a fresh table and an empty list of changes.
 
 ### Border mowing
 
@@ -759,7 +786,7 @@ a bug: if one of these looks blank or "unavailable," this is why.
 | `switch` | 7 of 7 | all of them: advanced mode, TrueDetect, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
 | `number` | 2 of 2 | both: volume, cutting direction |
 | `sensor` | 4 of the 16 fixed ones | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code**. The per-beacon sensors are enabled |
-| `button` | 4 of 7 (4 of 8 on the G1-800) | the four consumable-lifespan resets (blade, lens brush, trimmer brush, weed rope) — "Locate mower", "Clear fault", "End mowing task" and, on the G1-800, "Mow border" are enabled by default |
+| `button` | 5 of 8 (5 of 9 on the G1-800) | the four consumable-lifespan resets (blade, lens brush, trimmer brush, weed rope) and "Log area parameters" — "Locate mower", "Clear fault", "End mowing task" and, on the G1-800, "Mow border" are enabled by default |
 
 **If you're planning anything on the error sensor** — an alarm, a
 notification, a dashboard card — note that it does not exist as an

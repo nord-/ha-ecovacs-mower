@@ -76,6 +76,7 @@ def test_no_stale_button_translations_or_icons() -> None:
     from pathlib import Path
 
     from custom_components.ecovacs_mower.button import (
+        DEBUG_DESCRIPTIONS,
         ENTITY_DESCRIPTIONS,
         LIFESPAN_ENTITY_DESCRIPTIONS,
         MOWER_COMMAND_DESCRIPTIONS,
@@ -92,6 +93,7 @@ def test_no_stale_button_translations_or_icons() -> None:
             *ENTITY_DESCRIPTIONS,
             *LIFESPAN_ENTITY_DESCRIPTIONS,
             *MOWER_COMMAND_DESCRIPTIONS,
+            *DEBUG_DESCRIPTIONS,
         )
     } | {EcovacsClearFaultButtonEntity.entity_description.translation_key}
     assert set(strings["entity"]["button"]) <= keys
@@ -326,3 +328,67 @@ def test_the_profile_is_the_only_border_gate(monkeypatch) -> None:
 
     keys = {e.entity_description.key for e in _mower_command_entities(controller)}
     assert keys == {"mow_border", "end_task"}
+
+
+def test_debug_buttons_have_translations_and_icons() -> None:
+    import json
+    from pathlib import Path
+
+    from custom_components.ecovacs_mower.button import DEBUG_DESCRIPTIONS
+
+    root = Path(__file__).parent.parent / "custom_components" / "ecovacs_mower"
+    strings = json.loads((root / "strings.json").read_text(encoding="utf-8"))
+    icons = json.loads((root / "icons.json").read_text(encoding="utf-8"))
+
+    assert {d.key for d in DEBUG_DESCRIPTIONS} == {"log_area_parameters"}
+    for description in DEBUG_DESCRIPTIONS:
+        assert description.translation_key in strings["entity"]["button"]
+        assert description.translation_key in icons["entity"]["button"]
+
+
+def test_the_debug_button_is_diagnostic_and_disabled() -> None:
+    """Only an owner helping to map a model needs it, and enables it."""
+    from homeassistant.const import EntityCategory
+
+    from custom_components.ecovacs_mower.button import DEBUG_DESCRIPTIONS
+
+    for description in DEBUG_DESCRIPTIONS:
+        assert description.entity_category is EntityCategory.DIAGNOSTIC
+        assert description.entity_registry_enabled_default is False
+
+
+async def test_every_mower_gets_the_debug_button(hass) -> None:
+    """Unsupported and unmapped classes included: those are who it is for."""
+    from unittest.mock import MagicMock
+
+    from deebot_client.capabilities import DeviceType
+
+    from custom_components.ecovacs_mower.button import (
+        EcovacsDebugButtonEntity,
+        async_setup_entry,
+    )
+
+    def device(class_: str, device_type: DeviceType) -> MagicMock:
+        mock = MagicMock()
+        mock.device_info = {"did": f"did-{class_}", "class": class_}
+        mock.capabilities.device_type = device_type
+        mock.capabilities.life_span.types = ()
+        return mock
+
+    controller = MagicMock()
+    controller.devices = [
+        device("e4gqia", DeviceType.MOWER),
+        device("abc123", DeviceType.MOWER),
+        device("yna5xi", DeviceType.VACUUM),
+    ]
+    controller.fault_latches = MagicMock()
+    entry = MagicMock(runtime_data=controller)
+    added = []
+
+    await async_setup_entry(hass, entry, added.extend)
+
+    assert sorted(
+        e._device.device_info["class"]
+        for e in added
+        if isinstance(e, EcovacsDebugButtonEntity)
+    ) == ["abc123", "e4gqia"]

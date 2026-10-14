@@ -55,6 +55,8 @@ A future model should be added only after its area protocol has been independent
 4. that complete parameter writes are safe with the model's observed payload format; and
 5. whether the model sends `onAreaParameter` at all — it has only been observed on `e4gqia`, firmware 1.11.31. `_PendingAreaWrite` does not depend on it, but a model that never sends it will feel slower to confirm writes.
 
+The **Log area parameters** button (`debug.py`, disabled by default) collects the raw side of point 2 and 3 from an owner: it reads the areas once, then for 15 minutes shows every raw value that changes while the owner steps through the settings in the Ecovacs app, in a persistent notification the owner can copy into an issue. It relies on `onAreaParameter` where the model sends it and asks again every 15 seconds for one that does not (point 5). It is read-only and exists on every mower, so it can be used before a model has the profile flag or a mapping. See "Helping to support another model" in the README for the steps a user is asked to follow.
+
 Keep the raw protocol handling shared where the wire format is genuinely the same. Add model-specific value mappings in `area_numbers.py` only when they have been validated for that model, and gate the HA capability to that model. Do not assume that an identically named Ecovacs field has identical units, ranges, or semantics on another mower.
 
 This keeps the area-parameter capability narrowly scoped: protocol parsing and raw state in `deebot_patch`, model-specific interpretation and HA exposure in `area_numbers.py`, with no unrelated restructuring of existing mower capabilities.

@@ -33,6 +33,9 @@
       "end_task": {
         "default": "mdi:stop-circle-outline"
       },
+      "log_area_parameters": {
+        "default": "mdi:text-box-search-outline"
+      },
       "mow_border": {
         "default": "mdi:vector-square"
       },
