@@ -31,7 +31,11 @@ from typing import Callable, override
 from deebot_client.capabilities import DeviceType
 from deebot_client.device import Device
 
-from homeassistant.components.number import NumberEntity, NumberEntityDescription
+from homeassistant.components.number import (
+    NumberEntity,
+    NumberEntityDescription,
+    NumberMode,
+)
 from homeassistant.const import DEGREE, EntityCategory, UnitOfLength, UnitOfSpeed
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
@@ -175,6 +179,10 @@ def _a1600_cut_angle(wire_angle: int) -> int | None:
     Confirmed on the A1600 LiDAR Pro specifically. The observed symmetric
     conversion is ``app = (270 - wire) mod 360``; the same formula converts the
     app value back to wire space.
+
+    Any wire angle is shown, also one whose app value lies above the 180 the
+    app can set (see ``_a1600_cut_angle_to_raw``): an area set to 181 before
+    that limit existed should read 181, not be quietly folded to 1.
     """
     if wire_angle not in range(360):
         return None
@@ -182,8 +190,15 @@ def _a1600_cut_angle(wire_angle: int) -> int | None:
 
 
 def _a1600_cut_angle_to_raw(value: float) -> int | None:
-    """Convert an A1600 app-space cutting direction to wire-space angle."""
-    if value not in range(360):
+    """Convert an A1600 app-space cutting direction to wire-space angle.
+
+    Whole degrees from 0 to 180 only, as in the Ecovacs app. A cutting
+    direction is a line, not a bearing, so 0-180 covers every stripe pattern;
+    the device-wide ``cut_direction`` in ``number.py`` has the same range.
+    The mower accepts a higher value written here, and the app then shows it,
+    but the app never sends one and what the mower does with it is untested.
+    """
+    if value not in range(181):
         return None
     return int((270 - value) % 360)
 
@@ -192,7 +207,7 @@ _A1600_CUT_ANGLE = AreaParameterFormula(
     to_native=_a1600_cut_angle,
     to_raw=_a1600_cut_angle_to_raw,
     native_min_value=0,
-    native_max_value=359,
+    native_max_value=180,
     native_step=1,
 )
 
@@ -387,6 +402,10 @@ def area_number_descriptions(
             native_step=area_mapping.cut_angle.native_step,
             native_unit_of_measurement=DEGREE,
             icon="mdi:angle-acute",
+            # A direction is usually a specific number of degrees matched to
+            # the lawn. With 181 steps HA's automatic mode would draw a
+            # slider, which makes an exact value fiddly to set.
+            mode=NumberMode.BOX,
         ),
     )
 

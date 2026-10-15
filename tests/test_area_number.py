@@ -463,13 +463,31 @@ async def test_the_validated_mower_gets_area_discovery() -> None:
 
 @pytest.mark.parametrize(
     ("wire", "app"),
-    [(0, 270), (270, 0), (271, 359), (90, 180), (359, 271)],
+    [(0, 270), (270, 0), (271, 359), (90, 180), (359, 271), (89, 181)],
 )
-def test_the_a1600_cut_angle_round_trips(wire, app) -> None:
+def test_the_a1600_cut_angle_reads_any_wire_angle(wire, app) -> None:
+    # Also above the app's 180: an area set to 181 from HA before the limit
+    # (wire 89) still reads as what it is.
+    assert _mapping().cut_angle.to_native(wire) == app
+
+
+@pytest.mark.parametrize(("app", "wire"), [(0, 270), (90, 180), (180, 90)])
+def test_the_a1600_cut_angle_writes_the_apps_range(app, wire) -> None:
     angle = _mapping().cut_angle
 
-    assert angle.to_native(wire) == app
     assert angle.to_raw(app) == wire
+    assert angle.to_native(wire) == app
+
+
+def test_the_a1600_cut_angle_refuses_what_the_app_cannot_set() -> None:
+    # A direction is a line: 0-180 covers every stripe pattern, and the app
+    # offers nothing above it. Fractions are refused as before.
+    angle = _mapping().cut_angle
+
+    assert angle.native_min_value == 0
+    assert angle.native_max_value == 180
+    for value in (-1, 181, 270, 359, 90.5):
+        assert angle.to_raw(value) is None
 
 
 def test_the_a1600_cut_angle_rejects_values_outside_a_circle() -> None:

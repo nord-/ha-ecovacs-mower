@@ -343,7 +343,7 @@ names at runtime and creates four writable `number` entities for each area:
 | Cutting height | 3–9 cm |
 | Mowing speed | 0.40–0.70 m/s |
 | Obstacle height | 10, 15 or 20 cm |
-| Cutting direction | 0–359° |
+| Cutting direction | 0–180° |
 
 The entities use the numeric `areaID` for their identity, not the area's name.
 The name shown by the mower is user-editable in the Ecovacs app, so changing
