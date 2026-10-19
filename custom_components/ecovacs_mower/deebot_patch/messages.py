@@ -8,7 +8,11 @@ three unsolicited MQTT messages, but the library only handles one of them:
     onChargeInfo        returning / finished    falls through as unknown
 
 Without the latter two the entity never leaves "docked" during a scheduled run,
-and never returns to "returning"/"docked" once the work is finished.
+and never returns to "returning"/"docked" once the work is finished. A G1-800
+on firmware 1.36.208 sends neither during a scheduled run (issue #120), so the
+task bury points below are a third way out of "docked": a start or resume edge
+paired with the mower's own ``onChargeState`` unplug push writes CLEANING, and
+``OnReturnNormalStart`` writes RETURNING for the trip home.
 
 Two additions here are not part of that PR:
 
@@ -38,6 +42,10 @@ the middle topic segment is the type, not the trigger: a zone job started from
 the app ends on ``mow-spotarea-stop``, an edge cut on ``mow-border-stop``, and
 a job started from Home Assistant on ``mow-auto-stop`` — ``auto`` is the type
 the library's own start command sends (issue #74).
+``OnReturnNormalStart`` handles one more task bury point,
+``onFwBuryPoint-bd_task-return-normal-start``. It is not a job edge and
+publishes no ``MowerJobEdgeEvent``; it writes RETURNING for the trip home
+(issue #120).
 
 ``OnPos`` is different in kind from the rest of this module: ``onPos`` is not
 unhandled, it is handled wrongly. See the class for what and why.
@@ -197,8 +205,8 @@ def _as_area(value: Any) -> float | None:
 def _may_be_on_charger(event_bus: EventBus, record: MowerStateRecord) -> bool:
     """Whether a start or resume edge may still be announcing a departure.
 
-    Docked as far as the record knows, or nothing but DOCKED has been
-    published: after a restart the record starts undocked, and ``OnPos`` can
+    Docked as far as the record knows, or the last state published is DOCKED
+    (or none has been): after a restart the record starts undocked, and ``OnPos`` can
     clear ``record.docked`` without publishing anything. A pushed CLEANING,
     PAUSED or RETURNING says the mower is already out, and an edge arriving
     after it — the O1200's start edge lands 13 s after its own push — must not
@@ -384,6 +392,49 @@ class OnMowAutoStop(_OnMowJobEdge):
     NAME = "onFwBuryPoint-bd_task-mow-auto-stop"
     PHASE = "stop"
     JOB_TYPE = "auto"
+
+
+class OnReturnNormalStart(MessageBody):
+    """The mower sets off for its dock (issue #120).
+
+    ``onFwBuryPoint-bd_task-return-normal-start``. On a G1-800 on firmware
+    1.36.208 it is the only word that the trip home has begun: a scheduled run
+    there sends no state message at all, so after its ``mow-schedule-pause``
+    or ``-stop`` nothing else says RETURNING. No field of the body is read.
+
+    Not a job edge, and not an ``_OnMowJobEdge``: a return is not a job
+    boundary, and the progress sensor must not see it as one. Its sibling
+    ``return-normal-stop`` stays unregistered — it carries ``workComplete``
+    for the end of the drive, not of the job (issue #73), and the docking it
+    announces already arrives as ``onChargeState isCharging: 1``.
+
+    Two gates, because a bury point can arrive after the state has moved on.
+    A docked mower writes nothing, so a late one cannot flip DOCKED back to
+    RETURNING or clear the paused plan #67 and ``CleanMower`` rely on. A
+    pushed ERROR writes nothing either: a mower stuck on its way home must not
+    be hidden behind a late announcement, and the ERROR stands until the
+    mower reports something else. Over any other state away from the dock
+    RETURNING is right, because driving home is what the mower is doing.
+    """
+
+    NAME = "onFwBuryPoint-bd_task-return-normal-start"
+
+    @classmethod
+    def _handle_body(cls, event_bus: EventBus, body: dict[str, Any]) -> HandlingResult:
+        """Handle message->body.
+
+        Success either way, gated or not: the message was understood.
+        """
+        record = record_for(event_bus)
+        if record is not None and not record.docked:
+            last = event_bus.get_last_event(StateEvent)
+            if last is None or last.state is not State.ERROR:
+                # A reported state cancels a waiting departure, see
+                # handle_clean_info.
+                record.cancel_departure()
+                record.move()
+                event_bus.notify(StateEvent(State.RETURNING))
+        return HandlingResult.success()
 
 
 def notify_trigger(event_bus: EventBus, data: dict[str, Any]) -> None:

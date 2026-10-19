@@ -50,6 +50,7 @@ from custom_components.ecovacs_mower.deebot_patch.messages import (
     OnPos,
     OnProtectState,
     OnRainDelay,
+    OnReturnNormalStart,
     OnScheduleTaskInfo,
     OnStatsMower,
     OnUwb,
@@ -1433,11 +1434,13 @@ def test_the_pause_and_resume_job_edge_names_are_registered() -> None:
     assert MESSAGES["onFwBuryPoint-bd_task-mow-spotarea-resume"] is OnMowSpotAreaResume
 
 
-def test_the_return_trip_is_not_registered() -> None:
+def test_the_end_of_the_return_trip_is_not_registered() -> None:
     """onFwBuryPoint-bd_task-return-normal-stop also carries trigger workComplete.
 
     There it means the drive home finished, not the job. Registering it would
-    make the sensor write a final value on a docking (issue #73).
+    make the sensor write a final value on a docking (issue #73). Its sibling
+    return-normal-start is registered (issue #120); the docking this one
+    announces already arrives as onChargeState isCharging 1.
     """
     apply()
 
@@ -2334,7 +2337,7 @@ async def test_an_o1200_departure_notifies_cleaning_once(
 ) -> None:
     """The O1200 pushes its own CLEANING before both halves, so the pair
     writes nothing there (2026-10-12: 09:00:53, 11:47:35)."""
-    bus, _, published = _docked_mower()
+    bus, record, published = _docked_mower()
 
     _push(bus, OnScheduleTaskInfo, push)
     for message, body in steps:
@@ -2343,6 +2346,11 @@ async def test_an_o1200_departure_notifies_cleaning_once(
     await asyncio.sleep(0)
 
     assert _states(published) == [State.DOCKED, State.CLEANING]
+    # The bus drops an equal CLEANING, so the list above would also pass if the
+    # pair re-asserted it. The guard is the push keeping the edge from arming:
+    # the unplug is left waiting for a partner instead of completing a pair.
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is not None
 
 
 async def test_a_repeated_unplug_after_a_completed_pair_changes_nothing(
@@ -2360,3 +2368,153 @@ async def test_a_repeated_unplug_after_a_completed_pair_changes_nothing(
 
     assert _states(published) == [State.DOCKED, State.CLEANING]
     assert record.docked is False
+
+
+_G1800_RETURN_1330 = {
+    "bid": "0031791804622040",
+    "gid": "G1791648417330",
+    "index": "0000000457",
+    "mapid": "0809159361",
+    "returnId": "1791804622039907",
+    "sid": "2531791804622040",
+    "triggerType": "schedule",
+    "ts": "1791804622040",
+    "workstate": 1,
+}
+_G1800_RETURN_1501 = {
+    "bid": "4931791810117951",
+    "gid": "G1791648417330",
+    "index": "0000000526",
+    "mapid": "0809159361",
+    "mowId": "",
+    "returnId": "1791810117949218",
+    "sid": "9401791810117951",
+    "triggerType": "schedule",
+    "ts": "1791810117951",
+    "workstate": 1,
+}
+
+
+def test_the_trip_home_is_registered() -> None:
+    """Logged as 'Unknown message' until issue #120."""
+    apply()
+
+    assert MESSAGES["onFwBuryPoint-bd_task-return-normal-start"] is OnReturnNormalStart
+
+
+async def test_the_trip_home_writes_returning() -> None:
+    """On the G1-800 the bury point is the only word that it is driving home."""
+    bus = _bus()
+    record = register(bus)
+    bus.notify(StateEvent(State.CLEANING))
+
+    result = _push(bus, OnReturnNormalStart, _G1800_RETURN_1330)
+
+    assert result.state is HandlingState.SUCCESS
+    assert _last_state(bus) is State.RETURNING
+    assert record.docked is False
+
+
+async def test_a_late_trip_home_after_docking_writes_nothing() -> None:
+    """It must not flip DOCKED back to RETURNING, or clear the paused plan
+    #67 and the mow command rely on."""
+    bus, record, published = _docked_mower()
+    record.suppressed = State.PAUSED
+
+    result = _push(bus, OnReturnNormalStart, _G1800_RETURN_1330)
+    await asyncio.sleep(0)
+
+    assert result.state is HandlingState.SUCCESS
+    assert _states(published) == [State.DOCKED]
+    assert record.docked is True
+    assert record.suppressed is State.PAUSED
+
+
+async def test_a_trip_home_after_a_pushed_error_keeps_the_error() -> None:
+    """A mower stuck on its way home: goCharging, then an error, then the late
+    bury point. The error stands until the mower reports something else."""
+    bus = _bus()
+    register(bus)
+    _report_go_charging(bus)
+    OnChargeInfo._handle_body_data_dict(bus, {"trigger": "alert", "state": "goCharging"})
+
+    _push(bus, OnReturnNormalStart, _G1800_RETURN_1330)
+
+    assert _last_state(bus) is State.ERROR
+
+
+async def test_an_unregistered_bus_gets_no_state_from_the_trip_home() -> None:
+    bus = _bus()
+    published = _collect(bus, StateEvent)
+
+    result = _push(bus, OnReturnNormalStart, _G1800_RETURN_1330)
+    await asyncio.sleep(0)
+
+    assert result.state is HandlingState.SUCCESS
+    assert published == []
+
+
+async def test_the_trip_home_is_not_a_job_edge() -> None:
+    """A return is not a job boundary, and the progress sensor must not see one."""
+    bus = _bus()
+    register(bus)
+    bus.notify(StateEvent(State.CLEANING))
+    edges = _collect(bus, MowerJobEdgeEvent)
+
+    _push(bus, OnReturnNormalStart, _G1800_RETURN_1330)
+    await asyncio.sleep(0)
+
+    assert edges == []
+
+
+async def test_the_trip_home_cancels_a_pending_departure(clock: _Clock) -> None:
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    record.move()  # as OnPos leaves it, so the trip home is published
+    _push(bus, OnReturnNormalStart, _G1800_RETURN_1330)
+
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is None
+
+    clock.now += 3
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.RETURNING]
+
+
+async def test_the_issue_120_scheduled_run_replays_to_mowing_returning_and_docked(
+    clock: _Clock,
+) -> None:
+    """The reporter's two schedule windows (13:00-13:30, 14:00-15:01) through
+    the real handlers, at the logged intervals. Before #120 the state read
+    docked throughout."""
+    bus, _, published = _docked_mower()
+
+    for step, (seconds, message, body, expected) in enumerate(
+        [
+            (0.0, OnMowScheduleResume, _G1800_RESUME_1300, State.DOCKED),
+            (2.739, OnChargeState, _UNPLUGGED, State.CLEANING),
+            (1796.951, OnMowSchedulePause, _G1800_PAUSE_1330, State.CLEANING),
+            (0.349, OnReturnNormalStart, _G1800_RETURN_1330, State.RETURNING),
+            (72.049, OnChargeState, _PLUGGED_IN, State.DOCKED),
+            (1727.974, OnMowScheduleResume, _G1800_RESUME_1400, State.DOCKED),
+            (3.198, OnChargeState, _UNPLUGGED, State.CLEANING),
+            (3692.673, OnMowScheduleStop, _G1800_STOP_1501, State.CLEANING),
+            (0.107, OnReturnNormalStart, _G1800_RETURN_1501, State.RETURNING),
+        ]
+    ):
+        clock.now += seconds
+        _push(bus, message, body)
+        assert _last_state(bus) is expected, (step, message.NAME)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [
+        State.DOCKED,
+        State.CLEANING,
+        State.RETURNING,
+        State.DOCKED,
+        State.CLEANING,
+        State.RETURNING,
+    ]
