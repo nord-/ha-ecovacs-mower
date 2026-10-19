@@ -366,7 +366,15 @@ class EcovacsController:
             # G1-800's scheduled run, is written from the task bury points in
             # messages.py (issue #120), so it reaches this as well.
             if event.state is State.DOCKED:
-                self._stop_polling(device.device_info["did"])
+                did = device.device_info["did"]
+                if did in self._unsub_polls:
+                    # Back from a run: the tick last read the Wi-Fi signal out
+                    # on the lawn, and nothing asks again until the next
+                    # reconnect, so the sensor would show a yard value at the
+                    # dock (issue #139). Already docked at startup, it has
+                    # just been asked.
+                    device.events.request_refresh(NetworkInfoEvent)
+                self._stop_polling(did)
             else:
                 self.start_polling(device)
 

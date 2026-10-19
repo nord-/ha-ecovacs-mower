@@ -545,6 +545,49 @@ async def test_setup_polling_starts_on_leaving_and_stops_on_docking() -> None:
         assert track.call_count == 2
 
 
+async def test_docking_after_a_run_asks_for_the_network_info_once() -> None:
+    """Issue #139. The tick refreshes the Wi-Fi signal out on the lawn, so
+    without one more question at the dock the sensor would keep the last
+    reading from the yard until the next reconnect. A mower that is already
+    docked at startup has just been asked, so it is not asked again.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from deebot_client.events import NetworkInfoEvent, StateEvent
+    from deebot_client.models import State
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = MagicMock()
+    controller._unsub_polls = {}
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1"}
+
+    callbacks: dict[type, object] = {}
+    device.events.subscribe = lambda event_type, callback: callbacks.__setitem__(
+        event_type, callback
+    )
+
+    def network_refreshes() -> int:
+        return sum(
+            call.args[0] is NetworkInfoEvent
+            for call in device.events.request_refresh.call_args_list
+        )
+
+    with patch("custom_components.ecovacs_mower.controller.async_track_time_interval"):
+        controller._setup_polling(device)
+        on_status = callbacks[StateEvent]
+
+        await on_status(StateEvent(State.DOCKED))
+        assert network_refreshes() == 0
+
+        await on_status(StateEvent(State.CLEANING))
+        await on_status(StateEvent(State.DOCKED))
+        assert network_refreshes() == 1
+
+
 async def test_a_paired_departure_starts_the_poll_and_docking_stops_it() -> None:
     """Issue #120. A G1-800 leaving on its schedule sends no state message, so
     the CLEANING the departure pair writes is what has to start the poll.

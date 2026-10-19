@@ -250,8 +250,10 @@ planned for the next release.
 While the mower is out, the integration asks for its position every five
 minutes, together with the state, the stats and the network info (what the
 Wi-Fi signal strength, network name and IP address sensors show, once you have
-enabled them). Some runs on the G1-800 never push a position by themselves, and
-without that question the map marker stays in the dock for the whole run.
+enabled them). The network info is asked for once more when the mower docks, so
+those sensors show the dock's signal again rather than the last one from the
+yard. Some runs on the G1-800 never push a position by themselves, and without
+that question the map marker stays in the dock for the whole run.
 
 Five minutes is too slow to draw a path. If you want a live marker, ask more
 often yourself: the map image answers `homeassistant.update_entity` with one
