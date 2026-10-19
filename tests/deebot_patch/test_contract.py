@@ -586,6 +586,20 @@ def test_execute_command_succeeds_on_an_ack_without_reading_data() -> None:
     assert result.state is HandlingState.SUCCESS
 
 
+def test_a_command_can_send_its_request_without_waiting_on_its_handling() -> None:
+    # GetMI sends its appping through _execute_api_request directly, so it can
+    # abandon the call after a head start: the mower never answers a ping,
+    # and going through _execute would wait out the cloud and log "No
+    # response received" for every map request.
+    import inspect
+
+    from deebot_client.command import Command
+
+    params = list(inspect.signature(Command._execute_api_request).parameters)
+    assert params == ["self", "authenticator", "device_info"]
+    assert inspect.iscoroutinefunction(Command._execute_api_request)
+
+
 def test_a_refresh_is_not_expected_to_produce_an_event() -> None:
     # GetMapInfoV2 rides the refresh machinery but publishes nothing itself:
     # the boundary lands separately on the atr topic. That only works while
