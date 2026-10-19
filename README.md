@@ -225,8 +225,8 @@ above), that loop returns for the vacuum.
 
 ## What you get
 
-Forty-five fixed entities on the mower's device page, across eight platforms —
-forty-six on the G1-800 and A3000 LiDAR Pro, which also get the "Mow border"
+Forty-six fixed entities on the mower's device page, across eight platforms —
+forty-seven on the G1-800 and A3000 LiDAR Pro, which also get the "Mow border"
 button — plus four writable entities per saved mowing area on the A1600 LiDAR
 Pro (`e4gqia`) and A3000 LiDAR Pro (`51rcxt`), and one per UWB beacon on the
 models that use them:
@@ -239,7 +239,7 @@ models that use them:
 | `switch` | 9 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection, rain detection, animal protection (see below) |
 | `number` | 3 + four per saved area on the A1600 and A3000 LiDAR Pro | Notification volume, cutting direction, rain delay duration, plus cutting height, mowing speed, obstacle height and cutting direction for each saved area (see below) |
 | `button` | 8, 9 on the G1-800 and A3000 LiDAR Pro | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), "Clear fault" (releases the latched fault; see below), "End mowing task" (ends the current job for good; see below), "Log area parameters" (diagnostic, disabled by default; shows the raw per-area values to help support another model, see below) and, on the G1-800 and A3000 LiDAR Pro, "Mow border" (starts a border job; see below) |
-| `event` | 1 | Last mowing job (finished / finished with warnings / manually stopped — see below) |
+| `event` | 2 | Last mowing job (finished / finished with warnings / manually stopped — see below) and Job started (what started or resumed the job — see below) |
 | `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, `onMapTrace` on firmware 1.17, and `onMapInfo_V2` on 1.36 — that last one only ever arrives in answer to a `getMapInfo_V2` the integration now sends, as `onMI` does on a non-V2 mower in answer to `getMI`); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only. The mower's position, its heading, the dock and the path it has driven are also attributes of the entity (`position_x`, `position_y`, `heading`, `dock_x`, `dock_y`, `track`) — millimetres in the map's own frame, with the dock as the origin, `heading` in degrees as the mower reports it (counter-clockwise from the frame's +x axis, measured on the G1-800 at firmware 1.36.208 only), and `track` a list of `[x, y]` points thinned to at most about 250 — so a card can draw the mower on something other than the SVG. `position_x`, `position_y` and `heading` are `null` until the mower has reported a position since Home Assistant started |
 
 Not included yet: **RTK diagnostics** (position and satellite data). RTK is
@@ -649,6 +649,54 @@ automation a job ended cleanly when nobody knows that. A mower that does send
 down for good. If such a mower turns up and its announcement happens to
 arrive first, that single ending is reported twice before the switch settles;
 nothing observed says any GOAT sends both.
+
+### When a job starts
+
+`event.<device>_job_started` fires each time the mower announces that
+something started or resumed its job. The event type is the word the mower
+sent, unchanged: `schedule`, `app`, `continue` (a resume after a charge
+break) or `reborn`. The event data carries `phase`, `start` or `resume`, and
+`job_type`, the kind of job: `schedule` for the app's schedule, `spotarea`
+for a zone job, `border` for an edge cut and `auto` for a plain start.
+
+Use `job_type` to recognise the schedule's job, not the event type. The same
+announcement carries different words on different firmware: a G1-800 says
+`schedule` when a schedule window opens, while an O1200 says `continue` when
+its schedule resumes after a charge break. A start from Home Assistant may
+fire nothing yet, because nobody has seen which word it carries.
+
+The event fires at the announcement: on a G1-800 about three seconds before
+the mower leaves its charger and reads `mowing`, on an O1200 about 13 seconds
+after it started. A condition on `lawn_mower.<device>` being `mowing` is
+checked when the event fires, so on a G1-800 it is always false. If an
+automation must only act once the mower is out, wait for it in the actions
+instead.
+
+For example, sending the mower back when the schedule starts it in the rain.
+The wait matters on a G1-800: a dock command sent while it is still on its
+charger may well do nothing, and the mower leaves a few seconds later anyway.
+
+```yaml
+automation:
+  - alias: No scheduled mowing in the rain
+    triggers:
+      - trigger: state
+        entity_id: event.my_goat_job_started
+        not_from: unavailable
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.to_state.attributes.job_type == 'schedule' }}"
+      - condition: state
+        entity_id: weather.home
+        state: [rainy, pouring, lightning-rainy]
+    actions:
+      - wait_template: "{{ is_state('lawn_mower.my_goat', 'mowing') }}"
+        timeout: "00:02:00"
+        continue_on_timeout: false
+      - action: lawn_mower.dock
+        target:
+          entity_id: lawn_mower.my_goat
+```
 
 ### How far along the mower is
 
