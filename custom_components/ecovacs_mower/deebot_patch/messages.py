@@ -95,6 +95,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from weakref import WeakKeyDictionary
 
 from deebot_client.commands.json.clean import GetCleanInfo
+from deebot_client.commands.json.error import GetError
 from deebot_client.events import Position, PositionsEvent, StateEvent
 from deebot_client.events.base import Event
 from deebot_client.message import HandlingResult, MessageBody, MessageBodyDataDict
@@ -223,7 +224,20 @@ def _confirm_departure(event_bus: EventBus, record: MowerStateRecord) -> None:
 
     ``move()`` is what ``handle_clean_info`` calls on CLEANING, so the charge
     gate (#67) then sees the mower as off its charger.
+
+    A published ERROR settles the pair instead, the same gate
+    ``OnReturnNormalStart`` has. The ``onError`` push cancels the pair itself
+    (``OnError``), but a polled ``getError`` answer goes straight to the
+    library's ``GetError``, which publishes ERROR without cancelling anything
+    here. A fault on the charger followed by the owner lifting the mower off is
+    exactly the pair's two halves, and CLEANING over it would release the fault
+    latch (#53) for a mower that never left; the ERROR stands until the mower
+    reports something else.
     """
+    last = event_bus.get_last_event(StateEvent)
+    if last is not None and last.state is State.ERROR:
+        record.cancel_departure()
+        return
     record.move()
     event_bus.notify(StateEvent(State.CLEANING))
 
@@ -835,6 +849,10 @@ def handle_clean_info(event_bus: EventBus, data: dict[str, Any]) -> HandlingResu
         # _MowerCleanInfoHandling), so it cannot forget a type by mistake.
         if state == "idle" and "cleanState" not in data:
             record.end_job()
+            # Issue #120. The ended job's start edge must not wait for an
+            # unplug: on the dock the idle is withheld below, before the
+            # cancellation every other reported state gets.
+            record.cancel_departure()
         else:
             clean_state = data.get("cleanState")
             content = (
@@ -994,6 +1012,38 @@ class OnChargeState(MessageBodyDataDict):
         from .commands import GetChargeStateMower
 
         return GetChargeStateMower._handle_body_data_dict(event_bus, data)
+
+
+class OnError(MessageBodyDataDict):
+    """The mower's error push, which the library reads as ``getError``.
+
+    Registered only to settle a waiting departure (issue #120): a fault cancels
+    the pair as it arrives, the same as any other state the mower reports.
+    Leaving that to ``_confirm_departure``'s ERROR gate is not enough, since a
+    charging confirmation in between publishes DOCKED over the ERROR and keeps
+    the announcement, and the unplug that follows would then pair.
+
+    Only a non-zero last code is a fault, as ``GetError`` itself decides: 1.36
+    sends ``code: [0]`` constantly, and that must not cancel anything.
+    Everything else is ``GetError``'s, unchanged.
+    """
+
+    NAME = "onError"
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data."""
+        codes = data.get("code")
+        if (
+            isinstance(codes, list)
+            and codes
+            and codes[-1] not in (0, None)
+            and (record := record_for(event_bus)) is not None
+        ):
+            record.cancel_departure()
+        return GetError._handle_body_data_dict(event_bus, data)
 
 
 class OnScheduleTaskInfo(MessageBodyDataDict):

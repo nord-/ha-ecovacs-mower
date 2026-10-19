@@ -2086,6 +2086,129 @@ async def test_a_reported_state_between_the_two_halves_cancels_both(
     assert _states(published) == [State.DOCKED, reported]
 
 
+@pytest.mark.parametrize("edge_first", [True, False])
+async def test_an_error_on_the_charger_between_the_two_halves_stands(
+    clock: _Clock, edge_first: bool
+) -> None:
+    """A fault before the mower leaves: onError, then the owner lifts it off.
+
+    The library publishes that ERROR through ``GetError``, which knows nothing
+    of the pair, and the record still says docked. CLEANING over it would
+    release the fault latch (#53) for a mower that never left.
+
+    The error cancels the first half as it arrives, so the second one is left
+    waiting for a partner rather than completing a pair.
+    """
+    apply()
+    bus, record, published = _docked_mower()
+    steps = [
+        (OnMowScheduleResume, _G1800_RESUME_1300),
+        (OnChargeState, _UNPLUGGED),
+    ]
+    if not edge_first:
+        steps.reverse()
+
+    _push(bus, *steps[0])
+    get_message("onError", _static_device_info()).handle(
+        bus, {"body": {"data": {"code": [406]}}}
+    )
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is None
+    clock.now += 3
+    _push(bus, *steps[1])
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.ERROR]
+    assert record.docked is True
+
+
+async def test_a_polled_error_between_the_two_halves_stands(clock: _Clock) -> None:
+    """A ``getError`` answer goes straight to the library's ``GetError``.
+
+    It cancels nothing, so the pair still completes, and the ERROR gate in
+    ``_confirm_departure`` is what keeps CLEANING off it.
+    """
+    from deebot_client.commands.json.error import GetError
+
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    GetError._handle_body_data_dict(bus, {"code": [406]})
+    assert record.departure_edge_at is not None
+    clock.now += 3
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.ERROR]
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is None
+
+
+async def test_an_error_cancels_the_announcement_before_the_dock_hides_it(
+    clock: _Clock,
+) -> None:
+    """Resume, onError, isCharging 1, isCharging 0, all inside the window.
+
+    The charging confirmation replaces the ERROR with DOCKED and keeps the
+    announcement (``dock()`` only refutes an unplug), so by the time the unplug
+    arrives nothing in the last state says a fault came in between. The error
+    has to settle the pair when it arrives.
+    """
+    apply()
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    get_message("onError", _static_device_info()).handle(
+        bus, {"body": {"data": {"code": [406]}}}
+    )
+    assert record.departure_edge_at is None
+    clock.now += 1
+    _push(bus, OnChargeState, _PLUGGED_IN)
+    clock.now += 1
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert State.CLEANING not in _states(published)
+
+
+async def test_an_error_free_heartbeat_keeps_the_announcement(clock: _Clock) -> None:
+    """``code: [0]`` arrives constantly on 1.36.208 and reports no fault."""
+    apply()
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    get_message("onError", _static_device_info()).handle(
+        bus, {"body": {"data": {"code": [0]}}}
+    )
+    clock.now += 2.739
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.CLEANING]
+
+
+async def test_the_apps_end_on_the_dock_cancels_a_waiting_departure(
+    clock: _Clock,
+) -> None:
+    """A pushed idle without cleanState is the app's End: the job is over.
+
+    On the dock that idle is withheld (#67), but the job it ends must not
+    leave its start edge waiting for an unplug to pair with.
+    """
+    bus, record, published = _docked_mower()
+
+    _push(
+        bus, OnMowScheduleStart, {"mapid": "0809159361", "triggerType": "schedule"}
+    )
+    handle_clean_info(bus, {"trigger": "app", "state": "idle"})
+    assert record.departure_edge_at is None
+    clock.now += 2
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED]
+
+
 async def test_a_withheld_paused_plan_does_not_cancel_the_departure(
     clock: _Clock,
 ) -> None:
