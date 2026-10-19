@@ -61,12 +61,18 @@ class MowerProfile:
     checks for. ``border_mowing`` gives it the ``mow_border`` button; that one
     gates an entity rather than a capability, because ``Capabilities`` has no
     field for a border job, and ``button.py`` reads it from the profile.
+    ``uwb_beacons`` makes ``getLifeSpan`` ask for every component instead of
+    naming the library's, because the class reports its beacons only in the
+    answer to that request. Without it, the request names the library's
+    components, because a class without beacons may answer the empty list with
+    the blades alone (issue #146).
     """
 
     device_class: str
     area_parameters: bool = False
     zone_mowing: bool = False
     border_mowing: bool = False
+    uwb_beacons: bool = False
 
 
 # Device classes this integration patches, and how each one was confirmed:
@@ -166,11 +172,21 @@ class MowerProfile:
 #                     onCleanInfo, so the start went out in the non-V2 shape
 #                     — see border.py. The app offers no border job on this
 #                     model, only its trimming job (borderrotate, issue #138).
+#   uwb_beacons     — 77atlz: the app's getLifeSpan request captured on the
+#                     G1-800, firmware 1.36.208 (issue #100): {"data": []},
+#                     answered with blade, one uwbCell per beacon and lens
+#                     brush, where the library's named request came back with
+#                     blade and lens brush only. Off everywhere else: the
+#                     O1200, firmware 1.13.10, answers the empty list with
+#                     blade alone, and the app names blade, weedRope and
+#                     trimmerBrush to it (issue #146).
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile("2i0fns", zone_mowing=True),
     "9bts2s": MowerProfile("9bts2s", zone_mowing=True),
     "2px96q": MowerProfile("2px96q"),
-    "77atlz": MowerProfile("77atlz", zone_mowing=True, border_mowing=True),
+    "77atlz": MowerProfile(
+        "77atlz", zone_mowing=True, border_mowing=True, uwb_beacons=True
+    ),
     "e4gqia": MowerProfile("e4gqia", area_parameters=True, zone_mowing=True),
     "xmp9ds": MowerProfile("xmp9ds"),
     "o4kvvk": MowerProfile("o4kvvk"),
@@ -213,7 +229,9 @@ async def patch_device_info(class_: str) -> None:
       library has entities for, and the mower answers only what it is asked,
       so the beacons never arrive (issue #100); when they do, it raises on the
       ``uwbCell`` entries and loses every component listed after them. Swapped
-      for ``GetLifeSpanMower``, which asks for everything.
+      for ``GetLifeSpanMower``, which asks a class with ``uwb_beacons`` for
+      everything and names the library's components to every other class,
+      since an O1200 answers the empty list with blade alone (issue #146).
     * ``MowerProtectStateEvent``, ``MowerRainDelayEvent``,
       ``MowerAnimProtectEvent``, ``MowerStatsEvent`` and ``MowerBeaconsEvent``:
       given the refresh commands they had none of.
@@ -246,6 +264,10 @@ async def patch_device_info(class_: str) -> None:
     if capabilities.clean.action.command is CleanMower:
         return
 
+    # The empty list is the only request a beacon class answers with its
+    # beacons, and a request some other classes answer with blade alone.
+    life_span_components = () if profile.uwb_beacons else capabilities.life_span.types
+
     patched = replace(
         capabilities,
         clean=replace(
@@ -269,14 +291,14 @@ async def patch_device_info(class_: str) -> None:
         ),
         # Only the get command is replaced. types decides which lifespan
         # entities are built and reset is the button behind them; both are the
-        # library's own and are carried through by replace(). The request does
-        # not follow types: the mower answers only the components a request
-        # lists, and types never lists the beacons, so the command asks for
-        # everything and leaves the choosing to the entity platforms (issue
-        # #100).
+        # library's own and are carried through by replace(). On a beacon class
+        # the request does not follow types: the mower answers only the
+        # components a request lists, and types never lists the beacons, so the
+        # command asks for everything and leaves the choosing to the entity
+        # platforms (issue #100).
         life_span=replace(
             capabilities.life_span,
-            get=[GetLifeSpanMower()],
+            get=[GetLifeSpanMower(life_span_components)],
         ),
     )
     # Neither the protection flags nor the mowing progress is a library
@@ -337,7 +359,7 @@ async def patch_device_info(class_: str) -> None:
         MowerRainDelayEvent: [GetRainDelay()],
         MowerAnimProtectEvent: [GetAnimProtect()],
         MowerStatsEvent: [GetStatsMower()],
-        MowerBeaconsEvent: [GetLifeSpanMower()],
+        MowerBeaconsEvent: [GetLifeSpanMower(life_span_components)],
         MowerMapInfoEvent: [GetMapInfoMower()],
     }
     if profile.area_parameters:

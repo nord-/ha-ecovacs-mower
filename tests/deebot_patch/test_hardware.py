@@ -527,8 +527,11 @@ async def test_unpatched_library_never_asks_for_the_beacons(class_: str) -> None
 
 
 @pytest.mark.parametrize("event", [LifeSpanEvent, MowerBeaconsEvent])
-@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
-async def test_patch_asks_for_every_life_span_component(
+@pytest.mark.parametrize(
+    "class_",
+    [c for c, profile in SUPPORTED_CLASSES.items() if profile.uwb_beacons],
+)
+async def test_patch_asks_a_beacon_class_for_every_life_span_component(
     class_: str, event: type
 ) -> None:
     # Both refresh paths, because either one answering is what creates the
@@ -539,6 +542,33 @@ async def test_patch_asks_for_every_life_span_component(
     info = await get_static_device_info(class_)
     commands = info.capabilities.get_refresh_commands(event)
     assert [c._get_payload()["body"] for c in commands] == [{"data": []}]
+
+
+@pytest.mark.parametrize("event", [LifeSpanEvent, MowerBeaconsEvent])
+@pytest.mark.parametrize(
+    "class_",
+    [c for c, profile in SUPPORTED_CLASSES.items() if not profile.uwb_beacons],
+)
+async def test_patch_names_the_life_span_components_on_every_other_class(
+    class_: str, event: type
+) -> None:
+    # Issue #146: an O1200 answers the empty list with blade alone, so its weed
+    # rope and trimmer brush sensors never get a value. Named, they come back,
+    # which is the request the library itself sends. Both refresh paths, since
+    # either one answers first.
+    await patch_device_info(class_)
+    info = await get_static_device_info(class_)
+    commands = info.capabilities.get_refresh_commands(event)
+    expected = [life_span.value for life_span in info.capabilities.life_span.types]
+    assert [c._get_payload()["body"] for c in commands] == [{"data": expected}]
+
+
+def test_uwb_beacons_is_flagged_on_the_classes_where_it_was_confirmed() -> None:
+    # The G1-800 reports its beacons only in an answer to the empty list (issue
+    # #100); the O1200 answers that same list with blade alone (issue #146).
+    assert {
+        class_ for class_, profile in SUPPORTED_CLASSES.items() if profile.uwb_beacons
+    } == {G1_800}
 
 
 @pytest.mark.parametrize("class_", SUPPORTED_CLASSES)

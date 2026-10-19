@@ -307,11 +307,22 @@ def test_get_life_span_mower_asks_for_every_component_like_the_app() -> None:
     # Issue #100. The body the Ecovacs app sends, captured on a G1-800: an
     # empty list, answered with blade, every beacon and lens brush. A request
     # listing blade and lensBrush is answered with those two and nothing else.
-    payload = GetLifeSpanMower()._get_payload()
+    payload = GetLifeSpanMower(())._get_payload()
 
     assert payload["body"] == {"data": []}
     # The header is still the library's, not something rebuilt here.
     assert payload["header"].keys() == GetLifeSpan([])._get_payload()["header"].keys()
+
+
+def test_get_life_span_mower_names_the_components_it_is_given() -> None:
+    # Issue #146. The body the Ecovacs app sends to an O1200, firmware 1.13.10,
+    # answered with all three. The same mower answers the empty list with
+    # blade alone.
+    payload = GetLifeSpanMower(
+        [LifeSpan.BLADE, LifeSpan.WEED_ROPE, LifeSpan.TRIMMER_BRUSH]
+    )._get_payload()
+
+    assert payload["body"] == {"data": ["blade", "weedRope", "trimmerBrush"]}
 
 
 def test_the_librarys_own_command_aborts_on_the_first_beacon() -> None:

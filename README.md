@@ -797,6 +797,11 @@ list and gets everything, and so does this integration (issue #100). Until that
 was fixed, the beacon sensors only appeared if an `onUWB` push (below) arrived
 after a restart, and stayed unavailable until one did.
 
+The empty list is sent only to the G1-800. Other models do not all read it as
+"everything": an O1200 answers it with the blades alone, so its weed rope and
+trimmer brush sensors never got a value (issue #146). Every model without
+beacons is asked for its components by name, as the library does.
+
 #### Two sources, and they do not always agree
 
 The mower also pushes the beacon batteries on its own, in an `onUWB` message the

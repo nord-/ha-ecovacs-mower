@@ -26,9 +26,11 @@ flips, and nothing had ever asked for the current value (issue #31).
 library just discards one of the three numbers it answers with (issue #39). Its
 counterpart for the unsolicited half, ``OnStatsMower``, is in ``messages.py``.
 
-``GetLifeSpanMower`` is a fourth: the command works, but it is only answered in
-full when it asks for everything (issue #100), and one component of that full
-answer makes the library abandon the rest of it (issue #40).
+``GetLifeSpanMower`` is a fourth: the command works, but a G1-800 reports its
+beacons only when it is asked for everything (issue #100), an O1200 reports its
+weed rope and trimmer brush only when they are named (issue #146), and one
+component of the full answer makes the library abandon the rest of it (issue
+#40).
 
 ``GetRainDelay`` and ``SetRainDelay`` are the same kind as ``GetProtectState``
 — commands the library does not have at all — with the difference that this
@@ -107,6 +109,8 @@ from .messages import (
 from .state_precedence import map_id_for, record_for
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from deebot_client.authentication import Authenticator
     from deebot_client.event_bus import EventBus
     from deebot_client.models import ApiDeviceInfo
@@ -1167,29 +1171,34 @@ class GetLifeSpanMower(GetLifeSpan):
     a value from before the beacons were paired and never moves again, and the
     beacons themselves are invisible (issue #40).
 
-    ``NAME`` is inherited on purpose, as in ``GetStatsMower``, but the request
-    is not: it lists no components at all (issue #100). The mower answers only
-    the components a request names, and the library names the ones it builds
+    ``NAME`` is inherited on purpose, as in ``GetStatsMower``; which components
+    the request lists is the caller's choice, because the firmware does not
+    read an empty list the same way on every model. The mower answers only the
+    components a request names, and the library names the ones it builds
     entities for — ``blade`` and ``lensBrush`` on the beacon-guided classes,
     those two plus ``weedRope`` and ``trimmerBrush`` on the O1200 — and never a
-    beacon, so the beacons never came back from this command. They came back
-    from the app, which asks with an empty list and is answered with
-    everything: blade, one ``uwbCell`` per beacon, lens brush, the order the
-    fixture in the tests records. A T90 vacuum on the same account behaves the
-    same way, so this is how the firmware reads the request rather than a
-    quirk of one model.
+    beacon, so on a G1-800 the beacons never came back from that request. They
+    came back from the app, which asks a G1-800 with an empty list and is
+    answered with everything: blade, one ``uwbCell`` per beacon, lens brush,
+    the order the fixture in the tests records (issue #100). A T90 vacuum on
+    the same account reads the empty list the same way. An O1200 does not: it
+    answers the empty list with blade alone, and the app asks it for
+    ``blade``, ``weedRope`` and ``trimmerBrush`` by name (issue #146). So
+    ``patch_device_info`` sends the empty list only to a class whose profile
+    has ``uwb_beacons``, and the library's own list to every other.
 
-    What the full answer carries on a mower without beacons has not been
-    captured. Whatever it is, anything the library has no member for is
+    Whatever an answer carries, anything the library has no member for is
     filtered out below before upstream's parser sees it, and a component the
     library does know reaches that parser only with numbers it can divide. The
-    narrow request used to guarantee the second part by asking only for the
-    components the library builds entities for; the full answer no longer does.
+    full answer to the empty list can carry a component nobody asked for.
     """
 
-    def __init__(self) -> None:
-        """Initialize the command, with no component list to send."""
-        super().__init__(())
+    def __init__(self, life_spans: Sequence[LifeSpan]) -> None:
+        """Initialize the command with the components to ask for.
+
+        An empty sequence asks for everything — see ``_get_payload``.
+        """
+        super().__init__(life_spans)
 
     def _get_payload(self) -> dict[str, Any]:
         """Send the empty list the app sends, not a payload without a body.
@@ -1197,9 +1206,14 @@ class GetLifeSpanMower(GetLifeSpan):
         ``JsonCommand._get_payload`` only adds ``body`` when there are args, so
         an empty component list goes out as a header alone. That is not the
         request the app makes, and how the mower answers it has not been seen;
-        ``{"data": []}`` has, and is answered in full.
+        ``{"data": []}`` has, and is answered in full by a G1-800. With
+        components, the library's own payload already carries them; only the
+        empty list needs building here.
         """
-        return {**super()._get_payload(), "body": {"data": []}}
+        payload = super()._get_payload()
+        if not self._args:
+            payload = {**payload, "body": {"data": []}}
+        return payload
 
     @classmethod
     def _handle_body_data_list(
