@@ -545,6 +545,59 @@ async def test_setup_polling_starts_on_leaving_and_stops_on_docking() -> None:
         assert track.call_count == 2
 
 
+async def test_a_paired_departure_starts_the_poll_and_docking_stops_it() -> None:
+    """Issue #120. A G1-800 leaving on its schedule sends no state message, so
+    the CLEANING the departure pair writes is what has to start the poll.
+
+    No ``hass`` fixture, so this also runs outside CI.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+    from deebot_client.event_bus import EventBus
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch import register_mower_bus
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        OnChargeState,
+        OnMowScheduleResume,
+    )
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = MagicMock()
+    controller._unsub_polls = {}
+
+    bus = EventBus(AsyncMock(), Mock(get_refresh_commands=lambda _event: []))
+    register_mower_bus(bus)
+    device = MagicMock()
+    device.device_info = {"did": "did-1"}
+    device.events = bus
+
+    def charging(is_charging: int) -> dict:
+        return {"body": {"data": {"isCharging": is_charging, "mode": "slot"}}}
+
+    with patch(
+        "custom_components.ecovacs_mower.controller.async_track_time_interval"
+    ) as track:
+        controller._setup_polling(device)
+
+        OnChargeState.handle(bus, charging(1))
+        await asyncio.sleep(0)
+        track.assert_not_called()
+
+        OnMowScheduleResume.handle(bus, {"body": {"triggerType": "schedule"}})
+        await asyncio.sleep(0)
+        track.assert_not_called()
+
+        OnChargeState.handle(bus, charging(0))
+        await asyncio.sleep(0)
+        track.assert_called_once()
+
+        OnChargeState.handle(bus, charging(1))
+        await asyncio.sleep(0)
+        track.return_value.assert_called_once()
+
+
 async def test_setup_fault_latch_subscribes_and_is_reachable_by_did() -> None:
     """Issue #53. The latch is controller state, not entity state.
 

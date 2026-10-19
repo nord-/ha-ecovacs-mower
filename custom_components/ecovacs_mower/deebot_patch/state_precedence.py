@@ -1,13 +1,15 @@
 """Per-device facts the handlers learn from the stream.
 
-Two of them. The mower reports charging and a paused plan as two orthogonal
-facts, and ``capabilities.state`` collapses them into a single ``StateEvent``;
-this module holds the little state needed to prefer the first over the second
+The mower reports charging and a paused plan as two orthogonal facts, and
+``capabilities.state`` collapses them into a single ``StateEvent``; this
+module holds the little state needed to prefer the first over the second
 (issue #67). It also remembers the id of the map the mower is using, read from
 the envelope of every map message, because a border job has to name it
-(issue #12), and the type of the running job, because pause, resume and stop
-have to name that (issue #94). Plus the registry that says which event buses
-belong to a patched mower at all.
+(issue #12), the type of the running job, because pause, resume and stop have
+to name that (issue #94), and the two halves of a departure from the dock,
+because a scheduled run on some firmware leaves without a state message
+(issue #120). Plus the registry that says which event buses belong to a
+patched mower at all.
 
 Keyed by ``EventBus`` rather than by ``did`` because message handlers are
 classmethods that receive nothing else. An ``EventBus`` is per device, which
@@ -28,15 +30,43 @@ if TYPE_CHECKING:
     from deebot_client.event_bus import EventBus
     from deebot_client.models import State
 
+# How far apart, in monotonic seconds, a start or resume bury point and the
+# mower's own "stopped charging" push may arrive and still be one departure
+# from the dock (issue #120). The observed gaps are 3 to 8 s, in both orders;
+# a minute leaves room for a slower departure (a longer boot, a wait for a
+# positioning fix) while keeping a false pair, an unplug on a full battery
+# near an announcement that never left, to one minute around it.
+DEPARTURE_WINDOW = 60.0
+
+
+def _within_window(stamp: float | None, now: float) -> bool:
+    """Whether the other half, stamped at *stamp*, is close enough to pair."""
+    return stamp is not None and now - stamp <= DEPARTURE_WINDOW
+
 
 @dataclass
 class MowerStateRecord:
-    """What this device is doing, as far as the precedence rule is concerned."""
+    """What this device is doing, as far as the handlers need to remember.
+
+    ``departure_edge_at`` and ``charge_left_at`` are the two halves of a
+    departure from the dock (issue #120), in monotonic seconds: a start or
+    resume bury point, and the mower's own ``onChargeState`` push saying it
+    stopped charging. Neither alone proves the mower left — an announcement
+    can stay on the charger in a rain delay, and an unplug can be a full
+    battery — so CLEANING is written only when both arrive within
+    ``DEPARTURE_WINDOW``, in either order. The handlers that report a state
+    cancel both, since a reported state is better evidence than either half,
+    and so does a pause or stop bury point: the job it announced paused or
+    ended before the mower left. ``dock()`` clears only the unplug, and
+    ``move()`` neither.
+    """
 
     docked: bool = False
     suppressed: State | None = None
     map_id: str | None = None
     job_type: str | None = None
+    departure_edge_at: float | None = None
+    charge_left_at: float | None = None
 
     def note_job(self, content: object) -> None:
         """Remember the type of the running job, from ``cleanState.content``.
@@ -89,9 +119,42 @@ class MowerStateRecord:
         """
         self.job_type = None
 
+    def note_departure_edge(self, now: float) -> bool:
+        """A start or resume bury point arrived at *now*; True if that completes a departure.
+
+        Completing one clears both halves. Otherwise this becomes the waiting
+        half, and an unplug older than the window is forgotten.
+        """
+        paired = _within_window(self.charge_left_at, now)
+        self.departure_edge_at = None if paired else now
+        self.charge_left_at = None
+        return paired
+
+    def note_charge_left(self, now: float) -> bool:
+        """The mower pushed that it stopped charging at *now*; True if that completes a departure.
+
+        The mirror of ``note_departure_edge()``.
+        """
+        paired = _within_window(self.departure_edge_at, now)
+        self.charge_left_at = None if paired else now
+        self.departure_edge_at = None
+        return paired
+
+    def cancel_departure(self) -> None:
+        """Forget both halves: the mower reported a state, or its job paused or ended."""
+        self.departure_edge_at = None
+        self.charge_left_at = None
+
     def dock(self) -> None:
-        """The mower is on its charger."""
+        """The mower is on its charger.
+
+        Charging again refutes an unplug, so that half goes. The
+        announcement half stays: this also runs on every repeat confirmation
+        of a dock already known (a ``getChargeState`` answer, a refresh, a
+        repeated push), and the window already bounds it (issue #120).
+        """
         self.docked = True
+        self.charge_left_at = None
 
     def move(self) -> None:
         """The mower reported working or returning.
@@ -99,6 +162,10 @@ class MowerStateRecord:
         The suppressed plan state goes with it: from here the bus's own last
         ``StateEvent`` is the honest answer, and keeping a stale ``PAUSED``
         would let the mow command resume a plan that has since ended.
+
+        Neither half of a departure is touched: ``OnPos`` calls this for a
+        position sample away from the dock and publishes no state, and a
+        sample between the two halves must not break the pair (issue #120).
         """
         self.docked = False
         self.suppressed = None

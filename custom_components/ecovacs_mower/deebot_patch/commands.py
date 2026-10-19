@@ -143,9 +143,12 @@ class GetChargeStateMower(GetChargeState):
     faithful account of what was published.
 
     ``isCharging: 0`` deliberately does not clear the record. A mower parked on
-    a full battery stops charging without having moved, and clearing there
+    a full battery may stop charging without having moved, and clearing there
     would hand the decision back to the plan state — issue #67 again. Only
-    ``CLEANING`` or ``RETURNING`` clears it.
+    ``CLEANING`` or ``RETURNING`` clears it. Not every mower does stop: on
+    2026-10-12 an O1200 at battery 100 reported itself charging until it
+    left, in two departures (issue #120). Nor does an answer here pair with a
+    start or resume bury point; only the ``onChargeState`` push does.
     """
 
     @classmethod

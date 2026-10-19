@@ -82,6 +82,7 @@ import logging
 from abc import ABC
 from dataclasses import dataclass, field
 from datetime import time
+from time import monotonic
 from typing import TYPE_CHECKING, Any, ClassVar
 from weakref import WeakKeyDictionary
 
@@ -98,6 +99,8 @@ from .state_precedence import record_for
 
 if TYPE_CHECKING:
     from deebot_client.event_bus import EventBus
+
+    from .state_precedence import MowerStateRecord
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -191,6 +194,32 @@ def _as_area(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) else None
 
 
+def _may_be_on_charger(event_bus: EventBus, record: MowerStateRecord) -> bool:
+    """Whether a start or resume edge may still be announcing a departure.
+
+    Docked as far as the record knows, or nothing but DOCKED has been
+    published: after a restart the record starts undocked, and ``OnPos`` can
+    clear ``record.docked`` without publishing anything. A pushed CLEANING,
+    PAUSED or RETURNING says the mower is already out, and an edge arriving
+    after it — the O1200's start edge lands 13 s after its own push — must not
+    arm anything (issue #120).
+    """
+    if record.docked:
+        return True
+    last = event_bus.get_last_event(StateEvent)
+    return last is None or last.state is State.DOCKED
+
+
+def _confirm_departure(event_bus: EventBus, record: MowerStateRecord) -> None:
+    """Both halves of a departure arrived: the mower has left its charger.
+
+    ``move()`` is what ``handle_clean_info`` calls on CLEANING, so the charge
+    gate (#67) then sees the mower as off its charger.
+    """
+    record.move()
+    event_bus.notify(StateEvent(State.CLEANING))
+
+
 class _OnMowJobEdge(MessageBody, ABC):
     """One job edge from a task bury point.
 
@@ -206,6 +235,14 @@ class _OnMowJobEdge(MessageBody, ABC):
 
     ``PHASE`` and ``JOB_TYPE`` are the topic's last two segments, set per
     subclass: the payload names neither.
+
+    A start or resume edge is also one half of a departure from the dock
+    (issue #120): on a mower that may still be on its charger it is noted on
+    the record, and the mower's own ``onChargeState`` unplug push within
+    ``DEPARTURE_WINDOW``, in either order, completes it into CLEANING. A
+    pause or stop cancels a departure still waiting for its other half. Both
+    run before the trigger parsing, so an edge that parsing gives up on still
+    counts.
     """
 
     PHASE: ClassVar[str]
@@ -214,6 +251,17 @@ class _OnMowJobEdge(MessageBody, ABC):
     @classmethod
     def _handle_body(cls, event_bus: EventBus, body: dict[str, Any]) -> HandlingResult:
         """Handle message->body."""
+        if (record := record_for(event_bus)) is not None:
+            if cls.PHASE in ("start", "resume"):
+                if _may_be_on_charger(
+                    event_bus, record
+                ) and record.note_departure_edge(monotonic()):
+                    _confirm_departure(event_bus, record)
+            else:
+                # The job paused or ended before the mower left, so a later
+                # unplug is not this job leaving.
+                record.cancel_departure()
+
         trigger = body.get("trigger")
         if not isinstance(trigger, str) or not trigger:
             # The border dialect spells it ``triggerType`` (issue #74).
@@ -752,6 +800,13 @@ def handle_clean_info(event_bus: EventBus, data: dict[str, Any]) -> HandlingResu
             record.suppressed = status
             return HandlingResult.success()
 
+        # Issue #120. A state the mower reported is better evidence than
+        # either half of a departure, and a stale half must not re-assert
+        # CLEANING over it. Not on the withheld path above: a paused plan on
+        # the dock says the mower is still docked, which is what a waiting
+        # departure expects.
+        record.cancel_departure()
+
     event_bus.notify(StateEvent(status))
     return HandlingResult.success()
 
@@ -778,6 +833,10 @@ class OnChargeInfo(MessageBodyDataDict):
         # "trigger": "alert" unambiguously means an error state and must not
         # fall through silently just because the combination is unusual.
         if data.get("trigger") == "alert":
+            # Issue #120: a reported state cancels a waiting departure, see
+            # handle_clean_info.
+            if (record := record_for(event_bus)) is not None:
+                record.cancel_departure()
             event_bus.notify(StateEvent(State.ERROR))
             return HandlingResult.success()
 
@@ -792,10 +851,14 @@ class OnChargeInfo(MessageBodyDataDict):
         # A mid-session docking. on_status stops the poll loop on DOCKED, so
         # nothing asks getChargeState again; without this the record would stay
         # unset until something restarted polling — one flap per docking.
+        #
+        # The dock does not cancel a waiting departure, only dock()'s unplug
+        # half, the same as a repeat isCharging 1 (issue #120).
         if (record := record_for(event_bus)) is not None:
             if status is State.DOCKED:
                 record.dock()
             elif status is State.RETURNING:
+                record.cancel_departure()
                 record.move()
 
         event_bus.notify(StateEvent(status))
@@ -809,6 +872,12 @@ class OnChargeState(MessageBodyDataDict):
     ``get_legacy_message()`` today, which publishes ``DOCKED`` and records
     nothing. Observed on firmware 1.36.208 in issue #67, four seconds ahead of
     a paused plan on the same dock.
+
+    The push is also the charger's half of a departure (issue #120): an
+    ``isCharging: 0`` pairs with a start or resume bury point within
+    ``DEPARTURE_WINDOW``, in either order, into CLEANING. Only the push does:
+    a ``getChargeState`` answer is a snapshot, asked while the mower is
+    docked, and pairing it would write CLEANING for a mower that never left.
     """
 
     NAME = "onChargeState"
@@ -835,6 +904,15 @@ class OnChargeState(MessageBodyDataDict):
         #67) is reachable from this push path too, not only from a
         ``getChargeState`` answer.
         """
+        data = body.get("data")
+        if (
+            isinstance(data, dict)
+            and data.get("isCharging") == 0
+            and (record := record_for(event_bus)) is not None
+            and record.note_charge_left(monotonic())
+        ):
+            _confirm_departure(event_bus, record)
+
         # Imported here, not at module level: GetChargeStateMower lives in
         # commands.py, which already imports from this module, and a top-level
         # import back the other way would make the two files a cycle.

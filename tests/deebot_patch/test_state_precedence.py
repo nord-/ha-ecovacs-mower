@@ -5,10 +5,12 @@ from __future__ import annotations
 import gc
 from unittest.mock import AsyncMock, Mock
 
+import pytest
 from deebot_client.event_bus import EventBus
 from deebot_client.models import State
 
 from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
+    DEPARTURE_WINDOW,
     MowerStateRecord,
     map_id_for,
     record_for,
@@ -180,3 +182,92 @@ def test_moving_and_docking_keep_the_job_type() -> None:
     assert record.job_type == "spotArea"
     record.dock()
     assert record.job_type == "spotArea"
+
+
+def test_a_new_record_has_no_departure_half() -> None:
+    record = MowerStateRecord()
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is None
+
+
+def test_an_edge_then_an_unplug_at_the_window_pairs() -> None:
+    """Issue #120: the G1-800's resume edge, then isCharging 0 three seconds later."""
+    record = MowerStateRecord()
+
+    assert record.note_departure_edge(100.0) is False
+    assert record.departure_edge_at == 100.0
+    assert record.note_charge_left(100.0 + DEPARTURE_WINDOW) is True
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is None
+
+
+def test_an_unplug_then_an_edge_at_the_window_pairs() -> None:
+    """The O1200's charge-break order: the unplug comes 8 s before the edge."""
+    record = MowerStateRecord()
+
+    assert record.note_charge_left(100.0) is False
+    assert record.charge_left_at == 100.0
+    assert record.note_departure_edge(100.0 + DEPARTURE_WINDOW) is True
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is None
+
+
+@pytest.mark.parametrize("edge_first", [True, False])
+def test_two_halves_past_the_window_do_not_pair(edge_first: bool) -> None:
+    """The stale half is cleared, not kept; the newer one waits for its partner."""
+    record = MowerStateRecord()
+    first, second = record.note_departure_edge, record.note_charge_left
+    stale, fresh = "departure_edge_at", "charge_left_at"
+    if not edge_first:
+        first, second = second, first
+        stale, fresh = fresh, stale
+
+    first(100.0)
+    late = 100.0 + DEPARTURE_WINDOW + 0.001
+
+    assert second(late) is False
+    assert getattr(record, stale) is None
+    assert getattr(record, fresh) == late
+
+
+def test_a_second_edge_replaces_the_first() -> None:
+    """The window runs from the newest announcement, not the oldest."""
+    record = MowerStateRecord()
+    record.note_departure_edge(100.0)
+    record.note_departure_edge(150.0)
+
+    assert record.departure_edge_at == 150.0
+    assert record.note_charge_left(150.0 + DEPARTURE_WINDOW) is True
+
+
+def test_cancel_departure_clears_both_halves() -> None:
+    record = MowerStateRecord(departure_edge_at=1.0, charge_left_at=2.0)
+
+    record.cancel_departure()
+
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is None
+
+
+def test_dock_clears_only_the_unplug() -> None:
+    """Charging again refutes the unplug. It does not refute the announcement:
+    dock() also runs on every repeat confirmation of a dock already known, and
+    being on the charger a second after a resume edge says nothing about a
+    departure three seconds away."""
+    record = MowerStateRecord(departure_edge_at=1.0, charge_left_at=2.0)
+
+    record.dock()
+
+    assert record.departure_edge_at == 1.0
+    assert record.charge_left_at is None
+
+
+def test_move_clears_neither_half() -> None:
+    """OnPos calls move() for a sample away from the dock and publishes no
+    state; a position between the two halves must not break the pair."""
+    record = MowerStateRecord(departure_edge_at=1.0, charge_left_at=2.0)
+
+    record.move()
+
+    assert record.departure_edge_at == 1.0
+    assert record.charge_left_at == 2.0
