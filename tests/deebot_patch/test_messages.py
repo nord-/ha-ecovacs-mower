@@ -38,8 +38,12 @@ from custom_components.ecovacs_mower.deebot_patch.messages import (
     OnMowAutoStop,
     OnMowBorderStart,
     OnMowBorderStop,
+    OnMowSchedulePause,
+    OnMowScheduleResume,
     OnMowScheduleStart,
     OnMowScheduleStop,
+    OnMowSpotAreaPause,
+    OnMowSpotAreaResume,
     OnMowSpotAreaStart,
     OnMowSpotAreaStop,
     OnPos,
@@ -1267,6 +1271,161 @@ def test_the_schedule_and_spotarea_job_edge_names_are_registered() -> None:
     assert MESSAGES["onFwBuryPoint-bd_task-mow-schedule-stop"] is OnMowScheduleStop
     assert MESSAGES["onFwBuryPoint-bd_task-mow-spotarea-start"] is OnMowSpotAreaStart
     assert MESSAGES["onFwBuryPoint-bd_task-mow-spotarea-stop"] is OnMowSpotAreaStop
+
+
+# Issue #120. The G1-800 (77atlz, fw 1.36.208) bodies are verbatim from the
+# reporter's log, ids anonymised by the reporter; the O1200 (2i0fns, fw
+# 1.13.10) bodies are from the maintainer's own mower on 2026-10-12. See the
+# spec's Fixtures section for the full sequences.
+_G1800_RESUME_1300 = {
+    "bid": "7101791802821723",
+    "gid": "G1791648417330",
+    "index": "0000000435",
+    "mapid": "0809159361",
+    "pauseId": "9211791733414102",
+    "resumeId": "2261791802821723",
+    "scheduleId": "1791725416643502",
+    "sid": "6211791802821723",
+    "triggerType": "schedule",
+    "ts": "1791802821723",
+}
+_G1800_PAUSE_1330 = {
+    "bid": "9831791804621723",
+    "cuttedArea": 199.292500,
+    "gid": "G1791648417330",
+    "index": "0000000454",
+    "mapid": "0809159361",
+    "pauseId": "4491791804621723",
+    "resumeId": "2261791802821723",
+    "scheduleId": "1791725416643502",
+    "sid": "4301791804621723",
+    "time": 0,
+    "triggerType": "schedule",
+    "ts": "1791804621723",
+    "workArea": 280.177500,
+}
+_G1800_RESUME_1400 = {
+    "bid": "7931791806421723",
+    "gid": "G1791648417330",
+    "index": "0000000491",
+    "mapid": "0809159361",
+    "pauseId": "4491791804621723",
+    "resumeId": "1241791806421724",
+    "scheduleId": "1791725416643502",
+    "sid": "0781791806421724",
+    "triggerType": "schedule",
+    "ts": "1791806421724",
+}
+_G1800_STOP_1501 = {
+    "bid": "0341791810117742",
+    "cuttedArea": 280.202525,
+    "gid": "G1791648417330",
+    "index": "0000000521",
+    "mapid": "0809159361",
+    "pauseId": "4491791804621723",
+    "resumeId": "1241791806421724",
+    "scheduleId": "1791725416643502",
+    "sid": "4061791810117742",
+    "time": 194.183334,
+    # Lower-case c, unlike every other firmware's workComplete. A separate
+    # bug in the stop handling, out of scope here (see the spec's Non-goals).
+    "triggerType": "workcomplete",
+    "ts": "1791810117742",
+    "workArea": 280.202525,
+}
+_O1200_RESUME_1147 = {
+    "bid": "7081791798470484",
+    "gid": "G1790503263492",
+    "index": "0000133051",
+    "jobId": "5251791788453307",
+    "mapId": "511702305",
+    "sid": "4161791798470484",
+    "trigger": "continue",
+    "ts": "1791798470485",
+    "workType": 18,
+}
+_O1200_START_0901 = {
+    "bid": "7301791788466359",
+    "gid": "G1790503263492",
+    "index": "0000126501",
+    "jobId": "5251791788453307",
+    "mapId": "511702305",
+    "sid": "8781791788466360",
+    "trigger": "schedule",
+    "ts": "1791788466360",
+    "workType": 18,
+}
+
+
+@pytest.mark.parametrize(
+    ("message", "phase", "job_type"),
+    [
+        (OnMowAutoStart, "start", "auto"),
+        (OnMowAutoStop, "stop", "auto"),
+        (OnMowBorderStart, "start", "border"),
+        (OnMowBorderStop, "stop", "border"),
+        (OnMowSchedulePause, "pause", "schedule"),
+        (OnMowScheduleResume, "resume", "schedule"),
+        (OnMowScheduleStart, "start", "schedule"),
+        (OnMowScheduleStop, "stop", "schedule"),
+        (OnMowSpotAreaPause, "pause", "spotarea"),
+        (OnMowSpotAreaResume, "resume", "spotarea"),
+        (OnMowSpotAreaStart, "start", "spotarea"),
+        (OnMowSpotAreaStop, "stop", "spotarea"),
+    ],
+)
+def test_every_edge_carries_its_phase_and_job_type(
+    message, phase: str, job_type: str
+) -> None:
+    """The middle topic segment is the job type, and it travels with the edge.
+
+    It is the one signal that says "the schedule's job" the same way on every
+    firmware: the O1200's trigger: continue and the G1-800's triggerType:
+    schedule both arrive on mow-schedule-resume (issue #120).
+    """
+    (event,) = _notified_edges(message, {"trigger": "app"})
+
+    assert event.phase == phase
+    assert event.job_type == job_type
+
+
+def test_a_g1800_scheduled_resume_is_a_resume_of_the_schedules_job() -> None:
+    """The window opening at 13:00 in issue #120, in the triggerType dialect."""
+    (event,) = _notified_edges(OnMowScheduleResume, _G1800_RESUME_1300)
+
+    assert event.phase == "resume"
+    assert event.trigger == "schedule"
+    assert event.job_type == "schedule"
+    assert event.mowed_area is None
+
+
+def test_a_g1800_scheduled_pause_carries_its_areas() -> None:
+    """The window closing at 13:30 in issue #120: cuttedArea, not mowedArea."""
+    (event,) = _notified_edges(OnMowSchedulePause, _G1800_PAUSE_1330)
+
+    assert event.phase == "pause"
+    assert event.trigger == "schedule"
+    assert event.mowed_area == 199.2925
+    assert event.work_area == 280.1775
+
+
+def test_an_o1200_charge_break_resume_says_continue() -> None:
+    """The O1200's resume after a charge break, on the same topic (2026-10-12)."""
+    (event,) = _notified_edges(OnMowScheduleResume, _O1200_RESUME_1147)
+
+    assert event.phase == "resume"
+    assert event.trigger == "continue"
+    assert event.job_type == "schedule"
+
+
+def test_the_pause_and_resume_job_edge_names_are_registered() -> None:
+    """Logged as 'Unknown message' until issue #120."""
+    apply()
+
+    assert MESSAGES["onFwBuryPoint-bd_task-mow-schedule-pause"] is OnMowSchedulePause
+    assert MESSAGES["onFwBuryPoint-bd_task-mow-schedule-resume"] is OnMowScheduleResume
+    assert MESSAGES["onFwBuryPoint-bd_task-mow-spotarea-pause"] is OnMowSpotAreaPause
+    assert MESSAGES["onFwBuryPoint-bd_task-mow-spotarea-resume"] is OnMowSpotAreaResume
 
 
 def test_the_return_trip_is_not_registered() -> None:

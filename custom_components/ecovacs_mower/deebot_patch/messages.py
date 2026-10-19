@@ -28,7 +28,8 @@ parses the answer to ``getStats``, and ``OnStatsMower`` below parses the
 
 ``MowerJobEdgeEvent`` republishes the task bury points that mark a job's own
 boundaries — ``onFwBuryPoint-bd_task-mow-<type>-{start,stop}`` for the four
-types ``auto``, ``schedule``, ``spotarea`` and ``border``, eight more messages
+types ``auto``, ``schedule``, ``spotarea`` and ``border``, plus the ``pause``
+and ``resume`` edges of ``schedule`` and ``spotarea``, twelve more messages
 the library has no handler for. They are the only thing on the wire that
 separates a job which has finished from one parked to charge, which ``State``
 reports identically (issue #73), and a completion carries the two areas its
@@ -133,9 +134,10 @@ class MowerJobEdgeEvent(Event):
     rather than observed — and the middle segment is the *job type*, not the
     trigger: a zone job started from the app ends on ``mow-spotarea-stop``,
     and a job started from Home Assistant on ``mow-auto-stop``, ``auto`` being
-    the type the library's start command sends. Only the two edges this
-    integration acts on are registered; adding a ``pause`` or ``resume`` is
-    one subclass each (issue #73).
+    the type the library's start command sends. ``start`` and ``stop`` are
+    registered for all four types, and ``pause`` and ``resume`` for
+    ``schedule`` and ``spotarea``, the two types they have been observed on
+    (issue #120); another is one subclass each.
 
     The border and auto points speak a different dialect of the same payload:
     ``triggerType`` where the others say ``trigger``, and ``cuttedArea`` on a
@@ -145,15 +147,27 @@ class MowerJobEdgeEvent(Event):
     handler reads the original spellings first, so the schedule and spot-area
     paths are untouched by them.
 
-    ``phase`` is ``"start"`` or ``"stop"``. ``trigger`` is the raw string, and
-    what it means is the consumer's business — see ``MowerTriggerEvent`` for
-    the same rule stated at length. The vocabulary observed so far is
-    ``schedule``/``app``/``reborn`` on a start and ``workComplete``/``app`` on
-    a stop; a ``stop`` is therefore not necessarily a completion, and a
-    ``start`` is not necessarily a new job.
+    ``phase`` is ``"start"``, ``"pause"``, ``"resume"`` or ``"stop"``.
+    ``trigger`` is the raw string, and what it means is the consumer's
+    business — see ``MowerTriggerEvent`` for the same rule stated at length.
+    The vocabulary observed so far is ``schedule``/``app``/``reborn`` on a
+    start, ``continue``/``schedule`` on a resume, ``lowBattery``/``schedule``
+    on a pause and ``workComplete``/``app`` on a stop; a ``stop`` is therefore
+    not necessarily a completion, and a ``start`` is not necessarily a new
+    job.
+
+    ``job_type`` is the topic's middle segment — ``schedule``, ``spotarea``,
+    ``border`` or ``auto`` — taken from the handler class, not the payload.
+    It is the one signal that names the schedule's job the same way on every
+    firmware: the O1200's ``trigger: continue`` and the G1-800's
+    ``triggerType: schedule`` both arrive on ``mow-schedule-resume`` (issue
+    #120). It is not the ``cleanState.content.type`` that
+    ``MowerStateRecord.job_type`` keeps for the mow command (``spotArea``
+    there, ``spotarea`` here), and the two are not merged.
 
     ``mowed_area`` and ``work_area`` are square metres as floats, present on a
-    stop and absent on a start. They are not converted to the centimetre
+    stop and, on the firmware that sends them there, on a pause (issue #120),
+    and absent on a start or resume. They are not converted to the centimetre
     counts ``MowerStatsEvent`` carries: every consumer wants their ratio, and
     a ratio does not care about the unit.
 
@@ -166,6 +180,7 @@ class MowerJobEdgeEvent(Event):
 
     phase: str
     trigger: str
+    job_type: str
     mowed_area: float | None = None
     work_area: float | None = None
     _seq: int = field(default_factory=itertools.count().__next__, repr=False)
@@ -188,9 +203,13 @@ class _OnMowJobEdge(MessageBody, ABC):
     demands a ``NAME`` on every subclass and exempts only classes with ``ABC``
     directly in ``__bases__``. Without it this base itself fails to define,
     at import time. Pinned in ``test_contract.py``.
+
+    ``PHASE`` and ``JOB_TYPE`` are the topic's last two segments, set per
+    subclass: the payload names neither.
     """
 
     PHASE: ClassVar[str]
+    JOB_TYPE: ClassVar[str]
 
     @classmethod
     def _handle_body(cls, event_bus: EventBus, body: dict[str, Any]) -> HandlingResult:
@@ -210,6 +229,7 @@ class _OnMowJobEdge(MessageBody, ABC):
             MowerJobEdgeEvent(
                 phase=cls.PHASE,
                 trigger=trigger,
+                job_type=cls.JOB_TYPE,
                 # ``cuttedArea`` is the border dialect's ``mowedArea`` (issue #74).
                 mowed_area=_as_area(body.get("mowedArea", body.get("cuttedArea"))),
                 work_area=_as_area(body.get("workArea")),
@@ -218,11 +238,32 @@ class _OnMowJobEdge(MessageBody, ABC):
         return HandlingResult.success()
 
 
+class OnMowSchedulePause(_OnMowJobEdge):
+    """A scheduled job pauses: a schedule window closing, or a charge break."""
+
+    NAME = "onFwBuryPoint-bd_task-mow-schedule-pause"
+    PHASE = "pause"
+    JOB_TYPE = "schedule"
+
+
+class OnMowScheduleResume(_OnMowJobEdge):
+    """A scheduled job resumes: a schedule window opening, or after a charge break.
+
+    On a G1-800 on firmware 1.36.208 this is the only word that a scheduled
+    window has opened: no state message follows (issue #120).
+    """
+
+    NAME = "onFwBuryPoint-bd_task-mow-schedule-resume"
+    PHASE = "resume"
+    JOB_TYPE = "schedule"
+
+
 class OnMowScheduleStart(_OnMowJobEdge):
     """A scheduled job begins."""
 
     NAME = "onFwBuryPoint-bd_task-mow-schedule-start"
     PHASE = "start"
+    JOB_TYPE = "schedule"
 
 
 class OnMowScheduleStop(_OnMowJobEdge):
@@ -230,6 +271,23 @@ class OnMowScheduleStop(_OnMowJobEdge):
 
     NAME = "onFwBuryPoint-bd_task-mow-schedule-stop"
     PHASE = "stop"
+    JOB_TYPE = "schedule"
+
+
+class OnMowSpotAreaPause(_OnMowJobEdge):
+    """A zone job pauses (issue #73)."""
+
+    NAME = "onFwBuryPoint-bd_task-mow-spotarea-pause"
+    PHASE = "pause"
+    JOB_TYPE = "spotarea"
+
+
+class OnMowSpotAreaResume(_OnMowJobEdge):
+    """A zone job resumes (issue #73)."""
+
+    NAME = "onFwBuryPoint-bd_task-mow-spotarea-resume"
+    PHASE = "resume"
+    JOB_TYPE = "spotarea"
 
 
 class OnMowSpotAreaStart(_OnMowJobEdge):
@@ -237,6 +295,7 @@ class OnMowSpotAreaStart(_OnMowJobEdge):
 
     NAME = "onFwBuryPoint-bd_task-mow-spotarea-start"
     PHASE = "start"
+    JOB_TYPE = "spotarea"
 
 
 class OnMowSpotAreaStop(_OnMowJobEdge):
@@ -244,6 +303,7 @@ class OnMowSpotAreaStop(_OnMowJobEdge):
 
     NAME = "onFwBuryPoint-bd_task-mow-spotarea-stop"
     PHASE = "stop"
+    JOB_TYPE = "spotarea"
 
 
 class OnMowBorderStart(_OnMowJobEdge):
@@ -251,6 +311,7 @@ class OnMowBorderStart(_OnMowJobEdge):
 
     NAME = "onFwBuryPoint-bd_task-mow-border-start"
     PHASE = "start"
+    JOB_TYPE = "border"
 
 
 class OnMowBorderStop(_OnMowJobEdge):
@@ -258,6 +319,7 @@ class OnMowBorderStop(_OnMowJobEdge):
 
     NAME = "onFwBuryPoint-bd_task-mow-border-stop"
     PHASE = "stop"
+    JOB_TYPE = "border"
 
 
 class OnMowAutoStart(_OnMowJobEdge):
@@ -265,6 +327,7 @@ class OnMowAutoStart(_OnMowJobEdge):
 
     NAME = "onFwBuryPoint-bd_task-mow-auto-start"
     PHASE = "start"
+    JOB_TYPE = "auto"
 
 
 class OnMowAutoStop(_OnMowJobEdge):
@@ -272,6 +335,7 @@ class OnMowAutoStop(_OnMowJobEdge):
 
     NAME = "onFwBuryPoint-bd_task-mow-auto-stop"
     PHASE = "stop"
+    JOB_TYPE = "auto"
 
 
 def notify_trigger(event_bus: EventBus, data: dict[str, Any]) -> None:

@@ -135,7 +135,11 @@ def _stop(trigger: str):
     from custom_components.ecovacs_mower.deebot_patch.messages import MowerJobEdgeEvent
 
     return MowerJobEdgeEvent(
-        phase="stop", trigger=trigger, mowed_area=320.567505, work_area=320.567505
+        phase="stop",
+        trigger=trigger,
+        job_type="schedule",
+        mowed_area=320.567505,
+        work_area=320.567505,
     )
 
 
@@ -202,7 +206,28 @@ async def test_a_start_fires_nothing() -> None:
 
     entity = _bare_event_entity()
 
-    await entity._on_job_edge(MowerJobEdgeEvent(phase="start", trigger="app"))
+    await entity._on_job_edge(
+        MowerJobEdgeEvent(phase="start", trigger="app", job_type="spotarea")
+    )
+
+    assert entity.state_attributes["event_type"] is None
+    entity.async_write_ha_state.assert_not_called()
+
+
+async def test_a_pause_or_resume_fires_nothing() -> None:
+    """Issue #120 registers the pause and resume edges; they end no job.
+
+    ``app`` for the reason ``test_a_start_fires_nothing`` gives: it is mapped
+    for a stop, so only the phase guard keeps these from firing.
+    """
+    from custom_components.ecovacs_mower.deebot_patch.messages import MowerJobEdgeEvent
+
+    entity = _bare_event_entity()
+
+    for phase in ("pause", "resume"):
+        await entity._on_job_edge(
+            MowerJobEdgeEvent(phase=phase, trigger="app", job_type="schedule")
+        )
 
     assert entity.state_attributes["event_type"] is None
     entity.async_write_ha_state.assert_not_called()
