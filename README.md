@@ -877,6 +877,12 @@ fills the gaps it knows about:
 |---|---|---|
 | 422 | Weak signal. Return to the station. | clean the panoramic camera, the AI front camera and the ToF sensor; mow in daylight, not in heavy rain |
 | 406 | Blade-disc blocked! Blade-disc cannot rotate. | — |
+| 603 | Blade-disc cannot rotate. | — |
+| 604 | Blade-disc cannot rotate. | — |
+| 621 | GOAT suspended. | — |
+| 622 | GOAT tilted. | — |
+| 623 | GOAT tipped over. | — |
+| 627 | Bumper continuously triggered. Please assist in recovery. | — |
 
 A code in neither table leaves the attribute empty and logs a warning naming
 the code, once per code per restart. **That warning is the ask:** report the

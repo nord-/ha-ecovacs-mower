@@ -748,6 +748,17 @@ def test_error_description_prefers_the_library_and_fills_its_gaps(caplog) -> Non
     assert error_description(422, None) == MOWER_ERROR_CODES[422]
     assert error_description(406, None) == MOWER_ERROR_CODES[406]
 
+    # The app's own wording, as reported in issue #37 from an A1600 LiDAR Pro;
+    # 621, 622 and 627 are the stack an O1200 raised while tipped on its side.
+    assert error_description(603, None) == "Blade-disc cannot rotate."
+    assert error_description(604, None) == "Blade-disc cannot rotate."
+    assert error_description(621, None) == "GOAT suspended."
+    assert error_description(622, None) == "GOAT tilted."
+    assert error_description(623, None) == "GOAT tipped over."
+    assert error_description(627, None) == (
+        "Bumper continuously triggered. Please assist in recovery."
+    )
+
     try:
         _UNKNOWN_CODES_REPORTED.discard(9999)
         assert error_description(9999, None) is None

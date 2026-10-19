@@ -26,6 +26,15 @@ _LOGGER = logging.getLogger(__name__)
 MOWER_ERROR_CODES = {
     422: "Weak signal. Return to the station.",
     406: "Blade-disc blocked! Blade-disc cannot rotate.",
+    # Paired with the app on an A1600 LiDAR Pro (e4gqia). 621, 622 and 627 are
+    # also the stack an O1200 (2i0fns, fw 1.13.10) raised while tipped on its
+    # side, and its owner confirmed the wording fits.
+    603: "Blade-disc cannot rotate.",
+    604: "Blade-disc cannot rotate.",
+    621: "GOAT suspended.",
+    622: "GOAT tilted.",
+    623: "GOAT tipped over.",
+    627: "Bumper continuously triggered. Please assist in recovery.",
 }
 
 REPORT_URL = "https://github.com/nord-/ha-ecovacs-mower/issues/37"
