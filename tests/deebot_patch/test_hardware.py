@@ -11,7 +11,7 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
     CleanMower,
     GetAnimProtect,
     GetLifeSpanMower,
-    GetMapInfoV2,
+    GetMapInfoMower,
     GetProtectState,
     GetRainDelay,
     GetStatsMower,
@@ -62,6 +62,10 @@ O600 = "6n9pcz"
 # its upstream module is byte-identical to the O1200's 2i0fns.py, not to
 # 9bts2s.py — the cloud calls it an O1200 LiDAR Plus internally.
 O1000_LIDAR = "0jbd6s"
+# A ninth, a GOAT A3000 LiDAR Pro (issue #135); upstream's module is
+# byte-identical to e4gqia.py, docstring included. Not the A3000 LiDAR above:
+# _LIDAR_PRO and _LIDAR are different machines.
+A3000_LIDAR_PRO = "51rcxt"
 
 
 def test_supported_classes_are_the_ones_we_patch() -> None:
@@ -77,6 +81,7 @@ def test_supported_classes_are_the_ones_we_patch() -> None:
         A3000_LIDAR,
         O600,
         O1000_LIDAR,
+        A3000_LIDAR_PRO,
     }
 
 
@@ -201,10 +206,12 @@ async def test_patch_wires_a_request_for_the_lawn_boundary(class_: str) -> None:
     # sends unasked. Firmware 1.36 answers getMapInfo_V2 with 32 KB of outline
     # on the atr topic and sends it at no other time, so without this entry
     # onMapInfo_V2 never arrives and the map has no field around its coverage.
+    # A non-V2 mower answers getMI instead, after an appping; the wrapper asks
+    # under whichever name the mower's family answers.
     await patch_device_info(class_)
     info = await get_static_device_info(class_)
     commands = info.capabilities.get_refresh_commands(MowerMapInfoEvent)
-    assert [type(c) for c in commands] == [GetMapInfoV2]
+    assert [type(c) for c in commands] == [GetMapInfoMower]
 
 
 async def test_patch_leaves_the_librarys_own_refresh_commands_alone() -> None:
@@ -562,14 +569,16 @@ async def test_patch_preserves_the_other_life_span_capabilities(class_: str) -> 
     assert after.capabilities.life_span.event is event_before
 
 
-def test_border_mowing_is_flagged_on_the_classes_with_a_captured_request() -> None:
+def test_border_mowing_is_flagged_on_the_classes_where_it_was_confirmed() -> None:
     # The flag means "the border request shape is confirmed on this class",
     # not "we patch it" — the opposite sense from membership in
-    # SUPPORTED_CLASSES. Only the G1-800 has a capture (issue #12).
+    # SUPPORTED_CLASSES. The G1-800 has the app's request captured (issue
+    # #12); the A3000 LiDAR Pro ran a border job started from Home Assistant
+    # to completion (issue #135).
     from custom_components.ecovacs_mower.deebot_patch import hardware
 
     assert {
         class_
         for class_, profile in hardware.SUPPORTED_CLASSES.items()
         if profile.border_mowing
-    } == {G1_800}
+    } == {G1_800, A3000_LIDAR_PRO}

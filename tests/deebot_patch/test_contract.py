@@ -315,7 +315,7 @@ def test_get_charge_state_publishes_docked_from_the_bypassing_success_path() -> 
 
 
 def test_abc_in_bases_exempts_a_message_from_the_name_requirement() -> None:
-    # _OnMowJobEdge is a deliberately NAME-less base: each of the four
+    # _OnMowJobEdge is a deliberately NAME-less base: each of the twelve
     # bury-point handlers under it carries its own NAME, and there is no name
     # the shared parsing could claim. Message.__init_subclass__ runs
     # verify_required_class_variables_exists on every subclass and demands a
@@ -584,6 +584,20 @@ def test_execute_command_succeeds_on_an_ack_without_reading_data() -> None:
     assert "data" not in source
     result = ExecuteCommand._handle_body(None, {"code": 0, "msg": "ok"})
     assert result.state is HandlingState.SUCCESS
+
+
+def test_a_command_can_send_its_request_without_waiting_on_its_handling() -> None:
+    # GetMI sends its appping through _execute_api_request directly, so it can
+    # abandon the call after a head start: the mower never answers a ping,
+    # and going through _execute would wait out the cloud and log "No
+    # response received" for every map request.
+    import inspect
+
+    from deebot_client.command import Command
+
+    params = list(inspect.signature(Command._execute_api_request).parameters)
+    assert params == ["self", "authenticator", "device_info"]
+    assert inspect.iscoroutinefunction(Command._execute_api_request)
 
 
 def test_a_refresh_is_not_expected_to_produce_an_event() -> None:

@@ -21,6 +21,7 @@ from deebot_client.models import State, StaticDeviceInfo
 from deebot_client.rs.map import PositionType
 
 from custom_components.ecovacs_mower.deebot_patch import apply
+from custom_components.ecovacs_mower.deebot_patch import messages as messages_module
 from custom_components.ecovacs_mower.deebot_patch.commands import GetChargeStateMower
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     MowerAnimProtectEvent,
@@ -38,20 +39,29 @@ from custom_components.ecovacs_mower.deebot_patch.messages import (
     OnMowAutoStop,
     OnMowBorderStart,
     OnMowBorderStop,
+    OnMowSchedulePause,
+    OnMowScheduleResume,
     OnMowScheduleStart,
     OnMowScheduleStop,
+    OnMowSpotAreaPause,
+    OnMowSpotAreaResume,
     OnMowSpotAreaStart,
     OnMowSpotAreaStop,
     OnPos,
     OnProtectState,
     OnRainDelay,
+    OnReturnNormalStart,
     OnScheduleTaskInfo,
     OnStatsMower,
     OnUwb,
     handle_clean_info,
     notify_mower_beacons,
 )
-from custom_components.ecovacs_mower.deebot_patch.state_precedence import register
+from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
+    DEPARTURE_WINDOW,
+    MowerStateRecord,
+    register,
+)
 
 
 def _bus() -> EventBus:
@@ -1269,11 +1279,168 @@ def test_the_schedule_and_spotarea_job_edge_names_are_registered() -> None:
     assert MESSAGES["onFwBuryPoint-bd_task-mow-spotarea-stop"] is OnMowSpotAreaStop
 
 
-def test_the_return_trip_is_not_registered() -> None:
+# Issue #120. The G1-800 (77atlz, fw 1.36.208) bodies are verbatim from the
+# reporter's log, ids anonymised by the reporter; the O1200 (2i0fns, fw
+# 1.13.10) bodies are from the maintainer's own mower on 2026-10-12. See the
+# spec's Fixtures section for the full sequences.
+_G1800_RESUME_1300 = {
+    "bid": "7101791802821723",
+    "gid": "G1791648417330",
+    "index": "0000000435",
+    "mapid": "0809159361",
+    "pauseId": "9211791733414102",
+    "resumeId": "2261791802821723",
+    "scheduleId": "1791725416643502",
+    "sid": "6211791802821723",
+    "triggerType": "schedule",
+    "ts": "1791802821723",
+}
+_G1800_PAUSE_1330 = {
+    "bid": "9831791804621723",
+    "cuttedArea": 199.292500,
+    "gid": "G1791648417330",
+    "index": "0000000454",
+    "mapid": "0809159361",
+    "pauseId": "4491791804621723",
+    "resumeId": "2261791802821723",
+    "scheduleId": "1791725416643502",
+    "sid": "4301791804621723",
+    "time": 0,
+    "triggerType": "schedule",
+    "ts": "1791804621723",
+    "workArea": 280.177500,
+}
+_G1800_RESUME_1400 = {
+    "bid": "7931791806421723",
+    "gid": "G1791648417330",
+    "index": "0000000491",
+    "mapid": "0809159361",
+    "pauseId": "4491791804621723",
+    "resumeId": "1241791806421724",
+    "scheduleId": "1791725416643502",
+    "sid": "0781791806421724",
+    "triggerType": "schedule",
+    "ts": "1791806421724",
+}
+_G1800_STOP_1501 = {
+    "bid": "0341791810117742",
+    "cuttedArea": 280.202525,
+    "gid": "G1791648417330",
+    "index": "0000000521",
+    "mapid": "0809159361",
+    "pauseId": "4491791804621723",
+    "resumeId": "1241791806421724",
+    "scheduleId": "1791725416643502",
+    "sid": "4061791810117742",
+    "time": 194.183334,
+    # Lower-case c, unlike every other firmware's workComplete. A separate
+    # bug in the stop handling, out of scope here (see the spec's Non-goals).
+    "triggerType": "workcomplete",
+    "ts": "1791810117742",
+    "workArea": 280.202525,
+}
+_O1200_RESUME_1147 = {
+    "bid": "7081791798470484",
+    "gid": "G1790503263492",
+    "index": "0000133051",
+    "jobId": "5251791788453307",
+    "mapId": "511702305",
+    "sid": "4161791798470484",
+    "trigger": "continue",
+    "ts": "1791798470485",
+    "workType": 18,
+}
+_O1200_START_0901 = {
+    "bid": "7301791788466359",
+    "gid": "G1790503263492",
+    "index": "0000126501",
+    "jobId": "5251791788453307",
+    "mapId": "511702305",
+    "sid": "8781791788466360",
+    "trigger": "schedule",
+    "ts": "1791788466360",
+    "workType": 18,
+}
+
+
+@pytest.mark.parametrize(
+    ("message", "phase", "job_type"),
+    [
+        (OnMowAutoStart, "start", "auto"),
+        (OnMowAutoStop, "stop", "auto"),
+        (OnMowBorderStart, "start", "border"),
+        (OnMowBorderStop, "stop", "border"),
+        (OnMowSchedulePause, "pause", "schedule"),
+        (OnMowScheduleResume, "resume", "schedule"),
+        (OnMowScheduleStart, "start", "schedule"),
+        (OnMowScheduleStop, "stop", "schedule"),
+        (OnMowSpotAreaPause, "pause", "spotarea"),
+        (OnMowSpotAreaResume, "resume", "spotarea"),
+        (OnMowSpotAreaStart, "start", "spotarea"),
+        (OnMowSpotAreaStop, "stop", "spotarea"),
+    ],
+)
+def test_every_edge_carries_its_phase_and_job_type(
+    message, phase: str, job_type: str
+) -> None:
+    """The middle topic segment is the job type, and it travels with the edge.
+
+    It is the one signal that says "the schedule's job" the same way on every
+    firmware: the O1200's trigger: continue and the G1-800's triggerType:
+    schedule both arrive on mow-schedule-resume (issue #120).
+    """
+    (event,) = _notified_edges(message, {"trigger": "app"})
+
+    assert event.phase == phase
+    assert event.job_type == job_type
+
+
+def test_a_g1800_scheduled_resume_is_a_resume_of_the_schedules_job() -> None:
+    """The window opening at 13:00 in issue #120, in the triggerType dialect."""
+    (event,) = _notified_edges(OnMowScheduleResume, _G1800_RESUME_1300)
+
+    assert event.phase == "resume"
+    assert event.trigger == "schedule"
+    assert event.job_type == "schedule"
+    assert event.mowed_area is None
+
+
+def test_a_g1800_scheduled_pause_carries_its_areas() -> None:
+    """The window closing at 13:30 in issue #120: cuttedArea, not mowedArea."""
+    (event,) = _notified_edges(OnMowSchedulePause, _G1800_PAUSE_1330)
+
+    assert event.phase == "pause"
+    assert event.trigger == "schedule"
+    assert event.mowed_area == 199.2925
+    assert event.work_area == 280.1775
+
+
+def test_an_o1200_charge_break_resume_says_continue() -> None:
+    """The O1200's resume after a charge break, on the same topic (2026-10-12)."""
+    (event,) = _notified_edges(OnMowScheduleResume, _O1200_RESUME_1147)
+
+    assert event.phase == "resume"
+    assert event.trigger == "continue"
+    assert event.job_type == "schedule"
+
+
+def test_the_pause_and_resume_job_edge_names_are_registered() -> None:
+    """Logged as 'Unknown message' until issue #120."""
+    apply()
+
+    assert MESSAGES["onFwBuryPoint-bd_task-mow-schedule-pause"] is OnMowSchedulePause
+    assert MESSAGES["onFwBuryPoint-bd_task-mow-schedule-resume"] is OnMowScheduleResume
+    assert MESSAGES["onFwBuryPoint-bd_task-mow-spotarea-pause"] is OnMowSpotAreaPause
+    assert MESSAGES["onFwBuryPoint-bd_task-mow-spotarea-resume"] is OnMowSpotAreaResume
+
+
+def test_the_end_of_the_return_trip_is_not_registered() -> None:
     """onFwBuryPoint-bd_task-return-normal-stop also carries trigger workComplete.
 
     There it means the drive home finished, not the job. Registering it would
-    make the sensor write a final value on a docking (issue #73).
+    make the sensor write a final value on a docking (issue #73). Its sibling
+    return-normal-start is registered (issue #120); the docking this one
+    announces already arrives as onChargeState isCharging 1.
     """
     apply()
 
@@ -1700,3 +1867,777 @@ async def test_a_vacuum_without_a_record_still_parses() -> None:
     await asyncio.sleep(0)
 
     assert [event.state for event in published] == [State.CLEANING]
+
+
+# The charge pushes and the O1200's own state pushes around a departure, from
+# the same two logs as the job edges above.
+_UNPLUGGED = {"data": {"isCharging": 0, "mode": "slot"}}
+_PLUGGED_IN = {"data": {"isCharging": 1, "mode": "slot"}}
+_O1200_PUSH_0900 = {
+    "data": {
+        "trigger": "schedule",
+        "other": "loading",
+        "rotationPause": 0,
+        "ssid": "0",
+        "state": "clean",
+        "cleanState": {
+            "motionState": "working",
+            "content": {"type": "auto", "subContent": {"type": "idle"}},
+        },
+    }
+}
+_O1200_PUSH_1147 = {
+    "data": {
+        "trigger": "continue",
+        "other": "",
+        "rotationPause": 0,
+        "ssid": "1",
+        "state": "clean",
+        "cleanState": {
+            "motionState": "working",
+            "content": {"type": "auto", "subContent": {"type": "back"}},
+        },
+    }
+}
+_POS_AWAY_FROM_THE_DOCK = {
+    "deebotPos": {"x": 5000, "y": 0, "a": 0, "invalid": 0},
+    "chargePos": _CHARGER_UNKNOWN,
+    "mid": "0",
+}
+
+
+class _Clock:
+    """A monotonic clock the test steps by hand."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    """Replace the clock the departure pairing reads (issue #120)."""
+    stepped = _Clock()
+    monkeypatch.setattr(messages_module, "monotonic", stepped)
+    return stepped
+
+
+def _push(bus: EventBus, message, body: dict[str, Any]) -> HandlingResult:
+    """Deliver *body* the way the wire does, through ``handle()``."""
+    return message.handle(bus, {"body": body})
+
+
+def _last_state(bus: EventBus) -> State | None:
+    event = bus.get_last_event(StateEvent)
+    return None if event is None else event.state
+
+
+def _docked_mower() -> tuple[EventBus, MowerStateRecord, list[StateEvent]]:
+    """A registered mower on its charger, as the #120 run starts.
+
+    Subscribed before the dock push, so the list holds every state notified
+    from here on, the opening DOCKED included.
+    """
+    bus = _bus()
+    record = register(bus)
+    published = _collect(bus, StateEvent)
+    _push(bus, OnChargeState, _PLUGGED_IN)
+    return bus, record, published
+
+
+def _states(published: list[StateEvent]) -> list[State]:
+    return [event.state for event in published]
+
+
+async def test_a_resume_from_the_dock_waits_for_the_charger(clock: _Clock) -> None:
+    """Issue #120. An announcement alone is not proof that the mower left.
+
+    A resume announced while the mower stays on its charger (a rain delay, a
+    fault) would otherwise read mowing, and nothing would correct it: the
+    poll publishes DOCKED only on isCharging 1, and the polled idle is
+    discarded (#48).
+    """
+    bus, record, _ = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+
+    assert _last_state(bus) is State.DOCKED
+    assert record.departure_edge_at == clock.now
+
+
+async def test_the_unplug_after_a_resume_edge_writes_cleaning(clock: _Clock) -> None:
+    """The #120 order: resume edge at 13:00:23.762, isCharging 0 at 13:00:26.501."""
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    clock.now += 2.739
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.CLEANING]
+    assert record.docked is False
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is None
+
+
+async def test_an_unplug_before_the_resume_edge_pairs_too(clock: _Clock) -> None:
+    """The O1200's charge-break order, without its own push: isCharging 0 at
+    11:47:42.141, the resume edge at 11:47:50.636 (2026-10-12)."""
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnChargeState, _UNPLUGGED)
+    assert _last_state(bus) is State.DOCKED
+    clock.now += 8.495
+    _push(bus, OnMowScheduleResume, _O1200_RESUME_1147)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.CLEANING]
+    assert record.docked is False
+
+
+@pytest.mark.parametrize("edge_first", [True, False])
+async def test_neither_order_pairs_across_the_window(
+    clock: _Clock, edge_first: bool
+) -> None:
+    bus, _, published = _docked_mower()
+    steps = [
+        (OnMowScheduleResume, _G1800_RESUME_1300),
+        (OnChargeState, _UNPLUGGED),
+    ]
+    if not edge_first:
+        steps.reverse()
+
+    _push(bus, *steps[0])
+    clock.now += DEPARTURE_WINDOW + 0.001
+    _push(bus, *steps[1])
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED]
+
+
+async def test_charging_again_cancels_an_unplug(clock: _Clock) -> None:
+    """dock() refutes the unplug: the mower is back on its charger."""
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnChargeState, _UNPLUGGED)
+    clock.now += 1
+    _push(bus, OnChargeState, _PLUGGED_IN)
+    clock.now += 1
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED]
+    assert record.charge_left_at is None
+
+
+def _report_paused(bus: EventBus) -> None:
+    handle_clean_info(
+        bus,
+        {"trigger": "none", "state": "clean", "cleanState": {"motionState": "pause"}},
+    )
+
+
+def _report_go_charging(bus: EventBus) -> None:
+    OnChargeInfo._handle_body_data_dict(bus, {"trigger": "app", "state": "goCharging"})
+
+
+def _report_alert(bus: EventBus) -> None:
+    OnChargeInfo._handle_body_data_dict(bus, {"trigger": "alert", "state": "idle"})
+
+
+@pytest.mark.parametrize(
+    ("report", "reported"),
+    [
+        (_report_paused, State.PAUSED),
+        (_report_go_charging, State.RETURNING),
+        (_report_alert, State.ERROR),
+    ],
+    ids=["clean-info-paused", "charge-info-go-charging", "charge-info-alert"],
+)
+@pytest.mark.parametrize("edge_first", [True, False])
+async def test_a_reported_state_between_the_two_halves_cancels_both(
+    clock: _Clock, report, reported: State, edge_first: bool
+) -> None:
+    """A reported state is better evidence than either half, and a stale half
+    must not re-assert CLEANING over a PAUSED pushed in between."""
+    bus, record, published = _docked_mower()
+    steps = [
+        (OnMowScheduleResume, _G1800_RESUME_1300),
+        (OnChargeState, _UNPLUGGED),
+    ]
+    if not edge_first:
+        steps.reverse()
+
+    _push(bus, *steps[0])
+    # Off the charger as far as the record knows, as OnPos leaves it, so the
+    # PAUSED is published rather than withheld (#67).
+    record.move()
+    report(bus)
+
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is None
+
+    clock.now += 3
+    _push(bus, *steps[1])
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, reported]
+
+
+@pytest.mark.parametrize("edge_first", [True, False])
+async def test_an_error_on_the_charger_between_the_two_halves_stands(
+    clock: _Clock, edge_first: bool
+) -> None:
+    """A fault before the mower leaves: onError, then the owner lifts it off.
+
+    The library publishes that ERROR through ``GetError``, which knows nothing
+    of the pair, and the record still says docked. CLEANING over it would
+    release the fault latch (#53) for a mower that never left.
+
+    The error cancels the first half as it arrives, so the second one is left
+    waiting for a partner rather than completing a pair.
+    """
+    apply()
+    bus, record, published = _docked_mower()
+    steps = [
+        (OnMowScheduleResume, _G1800_RESUME_1300),
+        (OnChargeState, _UNPLUGGED),
+    ]
+    if not edge_first:
+        steps.reverse()
+
+    _push(bus, *steps[0])
+    get_message("onError", _static_device_info()).handle(
+        bus, {"body": {"data": {"code": [406]}}}
+    )
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is None
+    clock.now += 3
+    _push(bus, *steps[1])
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.ERROR]
+    assert record.docked is True
+
+
+async def test_a_polled_error_between_the_two_halves_stands(clock: _Clock) -> None:
+    """A ``getError`` answer goes straight to the library's ``GetError``.
+
+    It cancels nothing, so the pair still completes, and the ERROR gate in
+    ``_confirm_departure`` is what keeps CLEANING off it.
+    """
+    from deebot_client.commands.json.error import GetError
+
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    GetError._handle_body_data_dict(bus, {"code": [406]})
+    assert record.departure_edge_at is not None
+    clock.now += 3
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.ERROR]
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is None
+
+
+async def test_an_error_cancels_the_announcement_before_the_dock_hides_it(
+    clock: _Clock,
+) -> None:
+    """Resume, onError, isCharging 1, isCharging 0, all inside the window.
+
+    The charging confirmation replaces the ERROR with DOCKED and keeps the
+    announcement (``dock()`` only refutes an unplug), so by the time the unplug
+    arrives nothing in the last state says a fault came in between. The error
+    has to settle the pair when it arrives.
+    """
+    apply()
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    get_message("onError", _static_device_info()).handle(
+        bus, {"body": {"data": {"code": [406]}}}
+    )
+    assert record.departure_edge_at is None
+    clock.now += 1
+    _push(bus, OnChargeState, _PLUGGED_IN)
+    clock.now += 1
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert State.CLEANING not in _states(published)
+
+
+async def test_an_error_free_heartbeat_keeps_the_announcement(clock: _Clock) -> None:
+    """``code: [0]`` arrives constantly on 1.36.208 and reports no fault."""
+    apply()
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    get_message("onError", _static_device_info()).handle(
+        bus, {"body": {"data": {"code": [0]}}}
+    )
+    clock.now += 2.739
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.CLEANING]
+
+
+async def test_the_apps_end_on_the_dock_cancels_a_waiting_departure(
+    clock: _Clock,
+) -> None:
+    """A pushed idle without cleanState is the app's End: the job is over.
+
+    On the dock that idle is withheld (#67), but the job it ends must not
+    leave its start edge waiting for an unplug to pair with.
+    """
+    bus, record, published = _docked_mower()
+
+    _push(
+        bus, OnMowScheduleStart, {"mapid": "0809159361", "triggerType": "schedule"}
+    )
+    handle_clean_info(bus, {"trigger": "app", "state": "idle"})
+    assert record.departure_edge_at is None
+    clock.now += 2
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED]
+
+
+async def test_a_withheld_paused_plan_does_not_cancel_the_departure(
+    clock: _Clock,
+) -> None:
+    """A paused-plan push on the dock (#67) says the mower is still docked,
+    which is what the pair is waiting to see resolved, not evidence against it."""
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    _report_paused(bus)
+    assert record.suppressed is State.PAUSED
+    clock.now += 2.739
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.CLEANING]
+    # move() forgets the withheld plan: the mower is out, and a stale PAUSED
+    # would let the mow command resume a plan that has moved on.
+    assert record.suppressed is None
+
+
+@pytest.mark.parametrize(
+    ("message", "body"),
+    [
+        (OnMowSchedulePause, _G1800_PAUSE_1330),
+        (OnMowScheduleStop, _G1800_STOP_1501),
+        (OnMowSchedulePause, {"mapid": "0809159361"}),
+    ],
+    ids=["pause", "stop", "pause-without-a-trigger"],
+)
+async def test_a_pause_or_stop_edge_cancels_a_pending_departure(
+    clock: _Clock, message, body: dict[str, Any]
+) -> None:
+    """The job paused or ended before the mower left, so a later unplug is not
+    that job leaving. The cancel runs before the trigger parsing, so an edge
+    the parsing gives up on still cancels."""
+    bus, _, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    _push(bus, message, body)
+    clock.now += 2.739
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED]
+
+
+def _answer_charging(bus: EventBus) -> None:
+    GetChargeStateMower._handle_body(bus, {"code": 0, "data": {"isCharging": 1}})
+
+
+def _push_charging(bus: EventBus) -> None:
+    _push(bus, OnChargeState, _PLUGGED_IN)
+
+
+def _report_docked(bus: EventBus) -> None:
+    OnChargeInfo._handle_body_data_dict(bus, {"trigger": "workComplete", "state": "idle"})
+
+
+@pytest.mark.parametrize(
+    "report",
+    [_answer_charging, _push_charging, _report_docked],
+    ids=["get-charge-state-answer", "charge-state-push", "charge-info-idle"],
+)
+async def test_a_repeat_dock_report_does_not_stop_the_pair(
+    clock: _Clock, report
+) -> None:
+    """Edge first, as at 13:00:23 -> 13:00:26. A dock already known is
+    confirmed again by update_entity, by the refreshes and by repeated
+    pushes; being on the charger one second after an announcement does not
+    refute a departure three seconds away."""
+    bus, _, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    clock.now += 1
+    report(bus)
+    clock.now += 1.739
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.CLEANING]
+
+
+async def test_a_position_sample_between_the_two_halves_does_not_stop_the_pair(
+    clock: _Clock,
+) -> None:
+    """OnPos calls move() for a sample away from the dock and publishes no
+    state; a getPos from the map image's update_entity (#115) can land
+    between the two halves."""
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    OnPos._handle_body_data_dict(bus, _POS_AWAY_FROM_THE_DOCK)
+    assert record.docked is False
+    clock.now += 2.739
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.CLEANING]
+
+
+async def test_a_get_charge_state_answer_never_completes_a_pair(clock: _Clock) -> None:
+    """Only the push counts. An answer is a snapshot, asked while the mower is
+    docked, and pairing it would write CLEANING for a mower that never left."""
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    clock.now += 2.739
+    GetChargeStateMower._handle_body(bus, {"code": 0, "data": {"isCharging": 0}})
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED]
+    assert record.charge_left_at is None
+
+
+async def test_an_edge_arms_after_a_restart_with_no_state_yet(clock: _Clock) -> None:
+    """After a restart the record starts undocked, and a mower that has said
+    nothing since must still be able to leave."""
+    bus = _bus()
+    register(bus)
+    published = _collect(bus, StateEvent)
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    clock.now += 2.739
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.CLEANING]
+
+
+async def test_an_edge_arms_when_only_the_record_has_left_the_dock(
+    clock: _Clock,
+) -> None:
+    """OnPos can clear record.docked without publishing, leaving DOCKED as the
+    bus's last state."""
+    bus, record, published = _docked_mower()
+    record.move()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    clock.now += 2.739
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.CLEANING]
+
+
+@pytest.mark.parametrize("pushed", [State.CLEANING, State.PAUSED, State.RETURNING])
+async def test_an_edge_after_a_pushed_state_away_from_the_dock_does_not_arm(
+    clock: _Clock, pushed: State
+) -> None:
+    """The O1200's start edge lands 13 s after its own CLEANING push, and a
+    pause or a rain return in those 13 s must not be overwritten. The same
+    rule keeps a repeated reborn start out on the lawn from leaving a half
+    armed for a later unplug."""
+    bus = _bus()
+    record = register(bus)
+    bus.notify(StateEvent(pushed))
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    assert record.departure_edge_at is None
+    clock.now += 2.739
+    _push(bus, OnChargeState, _UNPLUGGED)
+
+    assert _last_state(bus) is pushed
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"msg": "fail", "code": "30007"}, _PLUGGED_IN],
+    ids=["fail-shaped", "charging"],
+)
+async def test_a_charge_push_other_than_an_unplug_stamps_nothing(
+    clock: _Clock, body: dict[str, Any]
+) -> None:
+    """Checked through the pair, not the stamp: both bodies reach dock(),
+    which clears charge_left_at anyway, so only a missing CLEANING proves
+    nothing was stamped."""
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    clock.now += 1
+    _push(bus, OnChargeState, body)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED]
+    assert record.departure_edge_at is not None
+
+
+async def test_a_start_edge_without_a_trigger_still_counts(clock: _Clock) -> None:
+    """The departure is settled before the trigger parsing gives up."""
+    bus, _, published = _docked_mower()
+
+    result = _push(bus, OnMowScheduleStart, {"mapId": "511702305"})
+    clock.now += 7
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    # Through handle(), the library's _handle_error_or_analyse wrapper turns
+    # the handler's ANALYSE into ANALYSE_LOGGED on the way out.
+    assert result.state is HandlingState.ANALYSE_LOGGED
+    assert _states(published) == [State.DOCKED, State.CLEANING]
+
+
+async def test_an_unregistered_bus_gets_no_state_from_a_departure(
+    clock: _Clock,
+) -> None:
+    """A Deebot vacuum on the same account. MESSAGES is global, so these
+    handlers see its pushes too, and must publish nothing of their own."""
+    bus = _bus()
+    published = _collect(bus, StateEvent)
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    clock.now += 2.739
+    result = _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert published == []
+    assert result.state is HandlingState.SUCCESS
+
+
+async def test_pause_and_stop_edges_publish_no_state() -> None:
+    """What follows them says what the mower does: return-normal-start, then
+    isCharging 1. A PAUSED of their own would flash for 0.35 s."""
+    bus = _bus()
+    register(bus)
+    bus.notify(StateEvent(State.CLEANING))
+
+    _push(bus, OnMowSchedulePause, _G1800_PAUSE_1330)
+    _push(bus, OnMowScheduleStop, _G1800_STOP_1501)
+
+    assert _last_state(bus) is State.CLEANING
+
+
+@pytest.mark.parametrize(
+    ("push", "steps"),
+    [
+        (
+            _O1200_PUSH_0900,
+            [(OnMowScheduleStart, _O1200_START_0901), (OnChargeState, _UNPLUGGED)],
+        ),
+        (
+            _O1200_PUSH_1147,
+            [(OnChargeState, _UNPLUGGED), (OnMowScheduleResume, _O1200_RESUME_1147)],
+        ),
+    ],
+    ids=["scheduled-start", "charge-break-resume"],
+)
+async def test_an_o1200_departure_notifies_cleaning_once(
+    clock: _Clock, push: dict[str, Any], steps: list
+) -> None:
+    """The O1200 pushes its own CLEANING before both halves, so the pair
+    writes nothing there (2026-10-12: 09:00:53, 11:47:35)."""
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnScheduleTaskInfo, push)
+    for message, body in steps:
+        clock.now += 7
+        _push(bus, message, body)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.CLEANING]
+    # The bus drops an equal CLEANING, so the list above would also pass if the
+    # pair re-asserted it. The guard is the push keeping the edge from arming:
+    # the unplug is left waiting for a partner instead of completing a pair.
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is not None
+
+
+async def test_a_repeated_unplug_after_a_completed_pair_changes_nothing(
+    clock: _Clock,
+) -> None:
+    """An MQTT redelivery of the unplug must not notify a second CLEANING."""
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    clock.now += 2.739
+    _push(bus, OnChargeState, _UNPLUGGED)
+    clock.now += 0.1
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.CLEANING]
+    assert record.docked is False
+
+
+_G1800_RETURN_1330 = {
+    "bid": "0031791804622040",
+    "gid": "G1791648417330",
+    "index": "0000000457",
+    "mapid": "0809159361",
+    "returnId": "1791804622039907",
+    "sid": "2531791804622040",
+    "triggerType": "schedule",
+    "ts": "1791804622040",
+    "workstate": 1,
+}
+_G1800_RETURN_1501 = {
+    "bid": "4931791810117951",
+    "gid": "G1791648417330",
+    "index": "0000000526",
+    "mapid": "0809159361",
+    "mowId": "",
+    "returnId": "1791810117949218",
+    "sid": "9401791810117951",
+    "triggerType": "schedule",
+    "ts": "1791810117951",
+    "workstate": 1,
+}
+
+
+def test_the_trip_home_is_registered() -> None:
+    """Logged as 'Unknown message' until issue #120."""
+    apply()
+
+    assert MESSAGES["onFwBuryPoint-bd_task-return-normal-start"] is OnReturnNormalStart
+
+
+async def test_the_trip_home_writes_returning() -> None:
+    """On the G1-800 the bury point is the only word that it is driving home."""
+    bus = _bus()
+    record = register(bus)
+    bus.notify(StateEvent(State.CLEANING))
+
+    result = _push(bus, OnReturnNormalStart, _G1800_RETURN_1330)
+
+    assert result.state is HandlingState.SUCCESS
+    assert _last_state(bus) is State.RETURNING
+    assert record.docked is False
+
+
+async def test_a_late_trip_home_after_docking_writes_nothing() -> None:
+    """It must not flip DOCKED back to RETURNING, or clear the paused plan
+    #67 and the mow command rely on."""
+    bus, record, published = _docked_mower()
+    record.suppressed = State.PAUSED
+
+    result = _push(bus, OnReturnNormalStart, _G1800_RETURN_1330)
+    await asyncio.sleep(0)
+
+    assert result.state is HandlingState.SUCCESS
+    assert _states(published) == [State.DOCKED]
+    assert record.docked is True
+    assert record.suppressed is State.PAUSED
+
+
+async def test_a_trip_home_after_a_pushed_error_keeps_the_error() -> None:
+    """A mower stuck on its way home: goCharging, then an error, then the late
+    bury point. The error stands until the mower reports something else."""
+    bus = _bus()
+    register(bus)
+    _report_go_charging(bus)
+    OnChargeInfo._handle_body_data_dict(bus, {"trigger": "alert", "state": "goCharging"})
+
+    _push(bus, OnReturnNormalStart, _G1800_RETURN_1330)
+
+    assert _last_state(bus) is State.ERROR
+
+
+async def test_an_unregistered_bus_gets_no_state_from_the_trip_home() -> None:
+    bus = _bus()
+    published = _collect(bus, StateEvent)
+
+    result = _push(bus, OnReturnNormalStart, _G1800_RETURN_1330)
+    await asyncio.sleep(0)
+
+    assert result.state is HandlingState.SUCCESS
+    assert published == []
+
+
+async def test_the_trip_home_is_not_a_job_edge() -> None:
+    """A return is not a job boundary, and the progress sensor must not see one."""
+    bus = _bus()
+    register(bus)
+    bus.notify(StateEvent(State.CLEANING))
+    edges = _collect(bus, MowerJobEdgeEvent)
+
+    _push(bus, OnReturnNormalStart, _G1800_RETURN_1330)
+    await asyncio.sleep(0)
+
+    assert edges == []
+
+
+async def test_the_trip_home_cancels_a_pending_departure(clock: _Clock) -> None:
+    bus, record, published = _docked_mower()
+
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    record.move()  # as OnPos leaves it, so the trip home is published
+    _push(bus, OnReturnNormalStart, _G1800_RETURN_1330)
+
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is None
+
+    clock.now += 3
+    _push(bus, OnChargeState, _UNPLUGGED)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [State.DOCKED, State.RETURNING]
+
+
+async def test_the_issue_120_scheduled_run_replays_to_mowing_returning_and_docked(
+    clock: _Clock,
+) -> None:
+    """The reporter's two schedule windows (13:00-13:30, 14:00-15:01) through
+    the real handlers, at the logged intervals. Before #120 the state read
+    docked throughout."""
+    bus, _, published = _docked_mower()
+
+    for step, (seconds, message, body, expected) in enumerate(
+        [
+            (0.0, OnMowScheduleResume, _G1800_RESUME_1300, State.DOCKED),
+            (2.739, OnChargeState, _UNPLUGGED, State.CLEANING),
+            (1796.951, OnMowSchedulePause, _G1800_PAUSE_1330, State.CLEANING),
+            (0.349, OnReturnNormalStart, _G1800_RETURN_1330, State.RETURNING),
+            (72.049, OnChargeState, _PLUGGED_IN, State.DOCKED),
+            (1727.974, OnMowScheduleResume, _G1800_RESUME_1400, State.DOCKED),
+            (3.198, OnChargeState, _UNPLUGGED, State.CLEANING),
+            (3692.673, OnMowScheduleStop, _G1800_STOP_1501, State.CLEANING),
+            (0.107, OnReturnNormalStart, _G1800_RETURN_1501, State.RETURNING),
+        ]
+    ):
+        clock.now += seconds
+        _push(bus, message, body)
+        assert _last_state(bus) is expected, (step, message.NAME)
+    await asyncio.sleep(0)
+
+    assert _states(published) == [
+        State.DOCKED,
+        State.CLEANING,
+        State.RETURNING,
+        State.DOCKED,
+        State.CLEANING,
+        State.RETURNING,
+    ]

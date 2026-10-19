@@ -8,7 +8,11 @@ three unsolicited MQTT messages, but the library only handles one of them:
     onChargeInfo        returning / finished    falls through as unknown
 
 Without the latter two the entity never leaves "docked" during a scheduled run,
-and never returns to "returning"/"docked" once the work is finished.
+and never returns to "returning"/"docked" once the work is finished. A G1-800
+on firmware 1.36.208 sends neither during a scheduled run (issue #120), so the
+task bury points below are a third way out of "docked": a start or resume edge
+paired with the mower's own ``onChargeState`` unplug push writes CLEANING, and
+``OnReturnNormalStart`` writes RETURNING for the trip home.
 
 Two additions here are not part of that PR:
 
@@ -28,7 +32,8 @@ parses the answer to ``getStats``, and ``OnStatsMower`` below parses the
 
 ``MowerJobEdgeEvent`` republishes the task bury points that mark a job's own
 boundaries — ``onFwBuryPoint-bd_task-mow-<type>-{start,stop}`` for the four
-types ``auto``, ``schedule``, ``spotarea`` and ``border``, eight more messages
+types ``auto``, ``schedule``, ``spotarea`` and ``border``, plus the ``pause``
+and ``resume`` edges of ``schedule`` and ``spotarea``, twelve more messages
 the library has no handler for. They are the only thing on the wire that
 separates a job which has finished from one parked to charge, which ``State``
 reports identically (issue #73), and a completion carries the two areas its
@@ -37,6 +42,10 @@ the middle topic segment is the type, not the trigger: a zone job started from
 the app ends on ``mow-spotarea-stop``, an edge cut on ``mow-border-stop``, and
 a job started from Home Assistant on ``mow-auto-stop`` — ``auto`` is the type
 the library's own start command sends (issue #74).
+``OnReturnNormalStart`` handles one more task bury point,
+``onFwBuryPoint-bd_task-return-normal-start``. It is not a job edge and
+publishes no ``MowerJobEdgeEvent``; it writes RETURNING for the trip home
+(issue #120).
 
 ``OnPos`` is different in kind from the rest of this module: ``onPos`` is not
 unhandled, it is handled wrongly. See the class for what and why.
@@ -81,10 +90,12 @@ import logging
 from abc import ABC
 from dataclasses import dataclass, field
 from datetime import time
+from time import monotonic
 from typing import TYPE_CHECKING, Any, ClassVar
 from weakref import WeakKeyDictionary
 
 from deebot_client.commands.json.clean import GetCleanInfo
+from deebot_client.commands.json.error import GetError
 from deebot_client.events import Position, PositionsEvent, StateEvent
 from deebot_client.events.base import Event
 from deebot_client.message import HandlingResult, MessageBody, MessageBodyDataDict
@@ -97,6 +108,8 @@ from .state_precedence import record_for
 
 if TYPE_CHECKING:
     from deebot_client.event_bus import EventBus
+
+    from .state_precedence import MowerStateRecord
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -133,9 +146,10 @@ class MowerJobEdgeEvent(Event):
     rather than observed — and the middle segment is the *job type*, not the
     trigger: a zone job started from the app ends on ``mow-spotarea-stop``,
     and a job started from Home Assistant on ``mow-auto-stop``, ``auto`` being
-    the type the library's start command sends. Only the two edges this
-    integration acts on are registered; adding a ``pause`` or ``resume`` is
-    one subclass each (issue #73).
+    the type the library's start command sends. ``start`` and ``stop`` are
+    registered for all four types, and ``pause`` and ``resume`` for
+    ``schedule`` and ``spotarea``, the two types they have been observed on
+    (issue #120); another is one subclass each.
 
     The border and auto points speak a different dialect of the same payload:
     ``triggerType`` where the others say ``trigger``, and ``cuttedArea`` on a
@@ -145,15 +159,27 @@ class MowerJobEdgeEvent(Event):
     handler reads the original spellings first, so the schedule and spot-area
     paths are untouched by them.
 
-    ``phase`` is ``"start"`` or ``"stop"``. ``trigger`` is the raw string, and
-    what it means is the consumer's business — see ``MowerTriggerEvent`` for
-    the same rule stated at length. The vocabulary observed so far is
-    ``schedule``/``app``/``reborn`` on a start and ``workComplete``/``app`` on
-    a stop; a ``stop`` is therefore not necessarily a completion, and a
-    ``start`` is not necessarily a new job.
+    ``phase`` is ``"start"``, ``"pause"``, ``"resume"`` or ``"stop"``.
+    ``trigger`` is the raw string, and what it means is the consumer's
+    business — see ``MowerTriggerEvent`` for the same rule stated at length.
+    The vocabulary observed so far is ``schedule``/``app``/``reborn`` on a
+    start, ``continue``/``schedule`` on a resume, ``lowBattery``/``schedule``
+    on a pause and ``workComplete``/``app`` on a stop; a ``stop`` is therefore
+    not necessarily a completion, and a ``start`` is not necessarily a new
+    job.
+
+    ``job_type`` is the topic's middle segment — ``schedule``, ``spotarea``,
+    ``border`` or ``auto`` — taken from the handler class, not the payload.
+    It is the one signal that names the schedule's job the same way on every
+    firmware: the O1200's ``trigger: continue`` and the G1-800's
+    ``triggerType: schedule`` both arrive on ``mow-schedule-resume`` (issue
+    #120). It is not the ``cleanState.content.type`` that
+    ``MowerStateRecord.job_type`` keeps for the mow command (``spotArea``
+    there, ``spotarea`` here), and the two are not merged.
 
     ``mowed_area`` and ``work_area`` are square metres as floats, present on a
-    stop and absent on a start. They are not converted to the centimetre
+    stop and, on the firmware that sends them there, on a pause (issue #120),
+    and absent on a start or resume. They are not converted to the centimetre
     counts ``MowerStatsEvent`` carries: every consumer wants their ratio, and
     a ratio does not care about the unit.
 
@@ -166,6 +192,7 @@ class MowerJobEdgeEvent(Event):
 
     phase: str
     trigger: str
+    job_type: str
     mowed_area: float | None = None
     work_area: float | None = None
     _seq: int = field(default_factory=itertools.count().__next__, repr=False)
@@ -174,6 +201,45 @@ class MowerJobEdgeEvent(Event):
 def _as_area(value: Any) -> float | None:
     """The payload's square metres, or None where the field is absent."""
     return float(value) if isinstance(value, (int, float)) else None
+
+
+def _may_be_on_charger(event_bus: EventBus, record: MowerStateRecord) -> bool:
+    """Whether a start or resume edge may still be announcing a departure.
+
+    Docked as far as the record knows, or the last state published is DOCKED
+    (or none has been): after a restart the record starts undocked, and ``OnPos`` can
+    clear ``record.docked`` without publishing anything. A pushed CLEANING,
+    PAUSED or RETURNING says the mower is already out, and an edge arriving
+    after it — the O1200's start edge lands 13 s after its own push — must not
+    arm anything (issue #120).
+    """
+    if record.docked:
+        return True
+    last = event_bus.get_last_event(StateEvent)
+    return last is None or last.state is State.DOCKED
+
+
+def _confirm_departure(event_bus: EventBus, record: MowerStateRecord) -> None:
+    """Both halves of a departure arrived: the mower has left its charger.
+
+    ``move()`` is what ``handle_clean_info`` calls on CLEANING, so the charge
+    gate (#67) then sees the mower as off its charger.
+
+    A published ERROR settles the pair instead, the same gate
+    ``OnReturnNormalStart`` has. The ``onError`` push cancels the pair itself
+    (``OnError``), but a polled ``getError`` answer goes straight to the
+    library's ``GetError``, which publishes ERROR without cancelling anything
+    here. A fault on the charger followed by the owner lifting the mower off is
+    exactly the pair's two halves, and CLEANING over it would release the fault
+    latch (#53) for a mower that never left; the ERROR stands until the mower
+    reports something else.
+    """
+    last = event_bus.get_last_event(StateEvent)
+    if last is not None and last.state is State.ERROR:
+        record.cancel_departure()
+        return
+    record.move()
+    event_bus.notify(StateEvent(State.CLEANING))
 
 
 class _OnMowJobEdge(MessageBody, ABC):
@@ -188,13 +254,36 @@ class _OnMowJobEdge(MessageBody, ABC):
     demands a ``NAME`` on every subclass and exempts only classes with ``ABC``
     directly in ``__bases__``. Without it this base itself fails to define,
     at import time. Pinned in ``test_contract.py``.
+
+    ``PHASE`` and ``JOB_TYPE`` are the topic's last two segments, set per
+    subclass: the payload names neither.
+
+    A start or resume edge is also one half of a departure from the dock
+    (issue #120): on a mower that may still be on its charger it is noted on
+    the record, and the mower's own ``onChargeState`` unplug push within
+    ``DEPARTURE_WINDOW``, in either order, completes it into CLEANING. A
+    pause or stop cancels a departure still waiting for its other half. Both
+    run before the trigger parsing, so an edge that parsing gives up on still
+    counts.
     """
 
     PHASE: ClassVar[str]
+    JOB_TYPE: ClassVar[str]
 
     @classmethod
     def _handle_body(cls, event_bus: EventBus, body: dict[str, Any]) -> HandlingResult:
         """Handle message->body."""
+        if (record := record_for(event_bus)) is not None:
+            if cls.PHASE in ("start", "resume"):
+                if _may_be_on_charger(
+                    event_bus, record
+                ) and record.note_departure_edge(monotonic()):
+                    _confirm_departure(event_bus, record)
+            else:
+                # The job paused or ended before the mower left, so a later
+                # unplug is not this job leaving.
+                record.cancel_departure()
+
         trigger = body.get("trigger")
         if not isinstance(trigger, str) or not trigger:
             # The border dialect spells it ``triggerType`` (issue #74).
@@ -210,6 +299,7 @@ class _OnMowJobEdge(MessageBody, ABC):
             MowerJobEdgeEvent(
                 phase=cls.PHASE,
                 trigger=trigger,
+                job_type=cls.JOB_TYPE,
                 # ``cuttedArea`` is the border dialect's ``mowedArea`` (issue #74).
                 mowed_area=_as_area(body.get("mowedArea", body.get("cuttedArea"))),
                 work_area=_as_area(body.get("workArea")),
@@ -218,11 +308,32 @@ class _OnMowJobEdge(MessageBody, ABC):
         return HandlingResult.success()
 
 
+class OnMowSchedulePause(_OnMowJobEdge):
+    """A scheduled job pauses: a schedule window closing, or a charge break."""
+
+    NAME = "onFwBuryPoint-bd_task-mow-schedule-pause"
+    PHASE = "pause"
+    JOB_TYPE = "schedule"
+
+
+class OnMowScheduleResume(_OnMowJobEdge):
+    """A scheduled job resumes: a schedule window opening, or after a charge break.
+
+    On a G1-800 on firmware 1.36.208 this is the only word that a scheduled
+    window has opened: no state message follows (issue #120).
+    """
+
+    NAME = "onFwBuryPoint-bd_task-mow-schedule-resume"
+    PHASE = "resume"
+    JOB_TYPE = "schedule"
+
+
 class OnMowScheduleStart(_OnMowJobEdge):
     """A scheduled job begins."""
 
     NAME = "onFwBuryPoint-bd_task-mow-schedule-start"
     PHASE = "start"
+    JOB_TYPE = "schedule"
 
 
 class OnMowScheduleStop(_OnMowJobEdge):
@@ -230,6 +341,23 @@ class OnMowScheduleStop(_OnMowJobEdge):
 
     NAME = "onFwBuryPoint-bd_task-mow-schedule-stop"
     PHASE = "stop"
+    JOB_TYPE = "schedule"
+
+
+class OnMowSpotAreaPause(_OnMowJobEdge):
+    """A zone job pauses (issue #73)."""
+
+    NAME = "onFwBuryPoint-bd_task-mow-spotarea-pause"
+    PHASE = "pause"
+    JOB_TYPE = "spotarea"
+
+
+class OnMowSpotAreaResume(_OnMowJobEdge):
+    """A zone job resumes (issue #73)."""
+
+    NAME = "onFwBuryPoint-bd_task-mow-spotarea-resume"
+    PHASE = "resume"
+    JOB_TYPE = "spotarea"
 
 
 class OnMowSpotAreaStart(_OnMowJobEdge):
@@ -237,6 +365,7 @@ class OnMowSpotAreaStart(_OnMowJobEdge):
 
     NAME = "onFwBuryPoint-bd_task-mow-spotarea-start"
     PHASE = "start"
+    JOB_TYPE = "spotarea"
 
 
 class OnMowSpotAreaStop(_OnMowJobEdge):
@@ -244,6 +373,7 @@ class OnMowSpotAreaStop(_OnMowJobEdge):
 
     NAME = "onFwBuryPoint-bd_task-mow-spotarea-stop"
     PHASE = "stop"
+    JOB_TYPE = "spotarea"
 
 
 class OnMowBorderStart(_OnMowJobEdge):
@@ -251,6 +381,7 @@ class OnMowBorderStart(_OnMowJobEdge):
 
     NAME = "onFwBuryPoint-bd_task-mow-border-start"
     PHASE = "start"
+    JOB_TYPE = "border"
 
 
 class OnMowBorderStop(_OnMowJobEdge):
@@ -258,6 +389,7 @@ class OnMowBorderStop(_OnMowJobEdge):
 
     NAME = "onFwBuryPoint-bd_task-mow-border-stop"
     PHASE = "stop"
+    JOB_TYPE = "border"
 
 
 class OnMowAutoStart(_OnMowJobEdge):
@@ -265,6 +397,7 @@ class OnMowAutoStart(_OnMowJobEdge):
 
     NAME = "onFwBuryPoint-bd_task-mow-auto-start"
     PHASE = "start"
+    JOB_TYPE = "auto"
 
 
 class OnMowAutoStop(_OnMowJobEdge):
@@ -272,6 +405,50 @@ class OnMowAutoStop(_OnMowJobEdge):
 
     NAME = "onFwBuryPoint-bd_task-mow-auto-stop"
     PHASE = "stop"
+    JOB_TYPE = "auto"
+
+
+class OnReturnNormalStart(MessageBody):
+    """The mower sets off for its dock (issue #120).
+
+    ``onFwBuryPoint-bd_task-return-normal-start``. On a G1-800 on firmware
+    1.36.208 it is the only word that the trip home has begun: a scheduled run
+    there sends no state message at all, so after its ``mow-schedule-pause``
+    or ``-stop`` nothing else says RETURNING. No field of the body is read.
+
+    Not a job edge, and not an ``_OnMowJobEdge``: a return is not a job
+    boundary, and the progress sensor must not see it as one. Its sibling
+    ``return-normal-stop`` stays unregistered — it carries ``workComplete``
+    for the end of the drive, not of the job (issue #73), and the docking it
+    announces already arrives as ``onChargeState isCharging: 1``.
+
+    Two gates, because a bury point can arrive after the state has moved on.
+    A docked mower writes nothing, so a late one cannot flip DOCKED back to
+    RETURNING or clear the paused plan #67 and ``CleanMower`` rely on. A
+    pushed ERROR writes nothing either: a mower stuck on its way home must not
+    be hidden behind a late announcement, and the ERROR stands until the
+    mower reports something else. Over any other state away from the dock
+    RETURNING is right, because driving home is what the mower is doing.
+    """
+
+    NAME = "onFwBuryPoint-bd_task-return-normal-start"
+
+    @classmethod
+    def _handle_body(cls, event_bus: EventBus, body: dict[str, Any]) -> HandlingResult:
+        """Handle message->body.
+
+        Success either way, gated or not: the message was understood.
+        """
+        record = record_for(event_bus)
+        if record is not None and not record.docked:
+            last = event_bus.get_last_event(StateEvent)
+            if last is None or last.state is not State.ERROR:
+                # A reported state cancels a waiting departure, see
+                # handle_clean_info.
+                record.cancel_departure()
+                record.move()
+                event_bus.notify(StateEvent(State.RETURNING))
+        return HandlingResult.success()
 
 
 def notify_trigger(event_bus: EventBus, data: dict[str, Any]) -> None:
@@ -672,6 +849,10 @@ def handle_clean_info(event_bus: EventBus, data: dict[str, Any]) -> HandlingResu
         # _MowerCleanInfoHandling), so it cannot forget a type by mistake.
         if state == "idle" and "cleanState" not in data:
             record.end_job()
+            # Issue #120. The ended job's start edge must not wait for an
+            # unplug: on the dock the idle is withheld below, before the
+            # cancellation every other reported state gets.
+            record.cancel_departure()
         else:
             clean_state = data.get("cleanState")
             content = (
@@ -687,6 +868,13 @@ def handle_clean_info(event_bus: EventBus, data: dict[str, Any]) -> HandlingResu
             _LOGGER.debug("Withholding %s: mower is on its charger", status)
             record.suppressed = status
             return HandlingResult.success()
+
+        # Issue #120. A state the mower reported is better evidence than
+        # either half of a departure, and a stale half must not re-assert
+        # CLEANING over it. Not on the withheld path above: a paused plan on
+        # the dock says the mower is still docked, which is what a waiting
+        # departure expects.
+        record.cancel_departure()
 
     event_bus.notify(StateEvent(status))
     return HandlingResult.success()
@@ -714,6 +902,10 @@ class OnChargeInfo(MessageBodyDataDict):
         # "trigger": "alert" unambiguously means an error state and must not
         # fall through silently just because the combination is unusual.
         if data.get("trigger") == "alert":
+            # Issue #120: a reported state cancels a waiting departure, see
+            # handle_clean_info.
+            if (record := record_for(event_bus)) is not None:
+                record.cancel_departure()
             event_bus.notify(StateEvent(State.ERROR))
             return HandlingResult.success()
 
@@ -728,10 +920,14 @@ class OnChargeInfo(MessageBodyDataDict):
         # A mid-session docking. on_status stops the poll loop on DOCKED, so
         # nothing asks getChargeState again; without this the record would stay
         # unset until something restarted polling — one flap per docking.
+        #
+        # The dock does not cancel a waiting departure, only dock()'s unplug
+        # half, the same as a repeat isCharging 1 (issue #120).
         if (record := record_for(event_bus)) is not None:
             if status is State.DOCKED:
                 record.dock()
             elif status is State.RETURNING:
+                record.cancel_departure()
                 record.move()
 
         event_bus.notify(StateEvent(status))
@@ -745,6 +941,12 @@ class OnChargeState(MessageBodyDataDict):
     ``get_legacy_message()`` today, which publishes ``DOCKED`` and records
     nothing. Observed on firmware 1.36.208 in issue #67, four seconds ahead of
     a paused plan on the same dock.
+
+    The push is also the charger's half of a departure (issue #120): an
+    ``isCharging: 0`` pairs with a start or resume bury point within
+    ``DEPARTURE_WINDOW``, in either order, into CLEANING. Only the push does:
+    a ``getChargeState`` answer is a snapshot, asked while the mower is
+    docked, and pairing it would write CLEANING for a mower that never left.
     """
 
     NAME = "onChargeState"
@@ -771,6 +973,15 @@ class OnChargeState(MessageBodyDataDict):
         #67) is reachable from this push path too, not only from a
         ``getChargeState`` answer.
         """
+        data = body.get("data")
+        if (
+            isinstance(data, dict)
+            and data.get("isCharging") == 0
+            and (record := record_for(event_bus)) is not None
+            and record.note_charge_left(monotonic())
+        ):
+            _confirm_departure(event_bus, record)
+
         # Imported here, not at module level: GetChargeStateMower lives in
         # commands.py, which already imports from this module, and a top-level
         # import back the other way would make the two files a cycle.
@@ -801,6 +1012,38 @@ class OnChargeState(MessageBodyDataDict):
         from .commands import GetChargeStateMower
 
         return GetChargeStateMower._handle_body_data_dict(event_bus, data)
+
+
+class OnError(MessageBodyDataDict):
+    """The mower's error push, which the library reads as ``getError``.
+
+    Registered only to settle a waiting departure (issue #120): a fault cancels
+    the pair as it arrives, the same as any other state the mower reports.
+    Leaving that to ``_confirm_departure``'s ERROR gate is not enough, since a
+    charging confirmation in between publishes DOCKED over the ERROR and keeps
+    the announcement, and the unplug that follows would then pair.
+
+    Only a non-zero last code is a fault, as ``GetError`` itself decides: 1.36
+    sends ``code: [0]`` constantly, and that must not cancel anything.
+    Everything else is ``GetError``'s, unchanged.
+    """
+
+    NAME = "onError"
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data."""
+        codes = data.get("code")
+        if (
+            isinstance(codes, list)
+            and codes
+            and codes[-1] not in (0, None)
+            and (record := record_for(event_bus)) is not None
+        ):
+            record.cancel_departure()
+        return GetError._handle_body_data_dict(event_bus, data)
 
 
 class OnScheduleTaskInfo(MessageBodyDataDict):

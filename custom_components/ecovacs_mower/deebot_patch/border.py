@@ -12,10 +12,12 @@ else. The request shape was captured from the Ecovacs app on a GOAT G1-800
 envelope — see ``state_precedence.note_map``. The mower stores everything
 else about the job, so the command carries nothing but that id.
 
-Only the ``clean_V2`` shape is confirmed. The non-V2 delegate sends the same
-nested payload on ``clean``, which is what the confirmed ``spotArea`` command
-does on that family; the ``border_mowing`` flag on ``hardware.MowerProfile``
-keeps the button off the non-V2 hardware until someone confirms it there.
+The non-V2 delegate sends the same nested payload on ``clean``, which is what
+the confirmed ``spotArea`` command does on that family. That shape was never
+captured from the app, but a border job started this way from Home Assistant
+ran to completion on an A3000 LiDAR Pro (``51rcxt``, firmware 1.13.10, issue
+#135). The ``border_mowing`` flag on ``hardware.MowerProfile`` keeps the
+button off every class where neither shape has been confirmed.
 """
 
 from __future__ import annotations

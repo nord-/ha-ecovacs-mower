@@ -362,8 +362,9 @@ class EcovacsController:
 
         async def on_status(event: StateEvent) -> None:
             # There is nothing to ask about in the dock — the battery reports
-            # itself — and leaving is the one transition the mower has not
-            # been seen to drop.
+            # itself. A departure the mower does not push itself, as on a
+            # G1-800's scheduled run, is written from the task bury points in
+            # messages.py (issue #120), so it reaches this as well.
             if event.state is State.DOCKED:
                 self._stop_polling(device.device_info["did"])
             else:

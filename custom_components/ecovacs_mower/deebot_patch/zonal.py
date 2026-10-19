@@ -5,7 +5,9 @@ PhilippF1992/ecovacs_goat_zonal_additions (MIT licensed) and confirmed by
 the PR author on an A1600 LiDAR Pro (``e4gqia``), firmware 1.11.31, and
 later on a G1-800 (``77atlz``), firmware 1.36.208, where it goes out on
 ``clean_V2``. On an O1200 LiDAR Pro (``2i0fns``), firmware 1.13.10, the
-app's own start was captured and matches the non-V2 payload exactly.
+app's own start was captured and matches the non-V2 payload exactly. On an
+A3000 LiDAR Pro (``51rcxt``), firmware 1.13.10, a start sent from Home
+Assistant mowed the area it named (issue #135).
 
 Which classes receive it is decided by the ``zone_mowing`` flag on their
 ``MowerProfile`` in ``hardware.py``, set only where the payload has been

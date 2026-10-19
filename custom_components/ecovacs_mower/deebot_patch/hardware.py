@@ -28,7 +28,7 @@ from .commands import (
     GetAreaParameter,
     GetAreaSet,
     GetLifeSpanMower,
-    GetMapInfoV2,
+    GetMapInfoMower,
     GetProtectState,
     GetRainDelay,
     GetStatsMower,
@@ -113,6 +113,10 @@ class MowerProfile:
 #            GOAT_INT_O1200_LIDAR_PLUS_NA, and upstream's 0jbd6s.py is
 #            byte-identical to 2i0fns.py, docstring included — so the O1200's
 #            patch applies unchanged, not the O800's.
+#   51rcxt — GOAT A3000 LiDAR Pro (issue #135, firmware 1.13.10 — start,
+#            pause and dock user-verified). Upstream's module is
+#            byte-identical to e4gqia.py, docstring included, so the O800
+#            RTK's patch applies unchanged.
 #
 # Presence in this mapping means the class is supported by the integration.
 # Capability flags are deliberately narrower: they are enabled only where the
@@ -123,6 +127,8 @@ class MowerProfile:
 # How each flag was validated:
 #   area_parameters — e4gqia: raw-to-HA mappings confirmed on the A1600 LiDAR
 #                     Pro; see docs/area-parameter-capability.md.
+#                     51rcxt: the A3000 LiDAR Pro's raw values, read for
+#                     every app setting (issue #131), match the A1600's.
 #   zone_mowing     — e4gqia: the spotArea payload confirmed on the A1600
 #                     LiDAR Pro, firmware 1.11.31 (PR #78); see zonal.py.
 #                     77atlz: two zone runs on the G1-800, firmware 1.36.208,
@@ -137,12 +143,21 @@ class MowerProfile:
 #                     from Home Assistant against that job were all obeyed.
 #                     A start sent from Home Assistant itself has not been
 #                     run yet; it is the same payload on the same topic.
+#                     51rcxt: a zone run started from Home Assistant on the
+#                     A3000 LiDAR Pro mowed the area asked for (issue #135).
 #   border_mowing   — 77atlz: the app's border-job request captured on the
 #                     G1-800, firmware 1.36.208 (issue #12): clean_V2 with
 #                     {"type": "border", "value": "mid:<mid>"}, acknowledged
-#                     code 0. Only the V2 shape is captured; the non-V2 one is
-#                     a guess nobody has tested, which is why no non-V2 class
-#                     has the flag — see border.py.
+#                     code 0.
+#                     51rcxt: the first non-V2 class with the flag. Started
+#                     from Home Assistant on the A3000 LiDAR Pro, firmware
+#                     1.13.10 (issue #135), the border job set its target
+#                     area and duration, its progress reached 100 and the
+#                     "Last mowing job" event fired finished. The app's own
+#                     job starts go out on clean and its state arrives as
+#                     onCleanInfo, so the start went out in the non-V2 shape
+#                     — see border.py. The app offers no border job on this
+#                     model, only its trimming job (borderrotate, issue #138).
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile("2i0fns", zone_mowing=True),
     "9bts2s": MowerProfile("9bts2s"),
@@ -153,6 +168,9 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "o4kvvk": MowerProfile("o4kvvk"),
     "6n9pcz": MowerProfile("6n9pcz"),
     "0jbd6s": MowerProfile("0jbd6s"),
+    "51rcxt": MowerProfile(
+        "51rcxt", area_parameters=True, zone_mowing=True, border_mowing=True
+    ),
 }
 
 
@@ -191,9 +209,10 @@ async def patch_device_info(class_: str) -> None:
     * ``MowerProtectStateEvent``, ``MowerRainDelayEvent``,
       ``MowerAnimProtectEvent``, ``MowerStatsEvent`` and ``MowerBeaconsEvent``:
       given the refresh commands they had none of.
-    * ``MowerMapInfoEvent``: given ``GetMapInfoV2``, without which firmware
-      1.36 never sends the lawn boundary at all — it answers the request and
-      pushes at no other time (issue #81).
+    * ``MowerMapInfoEvent``: given ``GetMapInfoMower``, without which a V2
+      mower never sends the lawn boundary at all — it answers the request and
+      pushes at no other time (issue #81) — and a non-V2 mower does not name
+      the map in use until a map message happens to arrive.
 
     The call is idempotent and does nothing for classes outside
     ``SUPPORTED_CLASSES``.
@@ -294,12 +313,16 @@ async def patch_device_info(class_: str) -> None:
     # unasked. Firmware 1.36 answers getMapInfo_V2 with the lawn outline on
     # the atr topic and sends it at no other time, so without an entry here
     # the boundary never arrives at all and the map stays a coverage patch
-    # with no field around it (issue #81). controller._setup_map subscribes
-    # MowerMapInfoEvent eagerly, so this alone gets the request sent at setup
-    # and again on every reconnect — no new lifecycle code, and no risk of a
-    # command firing before the device exists. The answer is an ack; the
-    # payload lands separately in OnMapInfo, which is why this refresh
-    # publishes no event of its own and why that is fine — see GetMapInfoV2.
+    # with no field around it (issue #81). A non-V2 mower answers getMI
+    # instead, preceded by an appping, with an onMI whose envelope is also the
+    # first word on which map is in use, which GetAreaSet waits for;
+    # GetMapInfoMower asks under whichever name the mower's family answers.
+    # controller._setup_map subscribes MowerMapInfoEvent eagerly, so this
+    # alone gets the request sent at setup and again on every reconnect — no
+    # new lifecycle code, and no risk of a command firing before the device
+    # exists. The answer is an ack; the payload lands separately in OnMI or
+    # OnMapInfo, which is why this refresh publishes no event of its own and
+    # why that is fine — see GetMapInfoMower.
     events = {
         **patched._events,
         MowerProtectStateEvent: [GetProtectState()],
@@ -307,7 +330,7 @@ async def patch_device_info(class_: str) -> None:
         MowerAnimProtectEvent: [GetAnimProtect()],
         MowerStatsEvent: [GetStatsMower()],
         MowerBeaconsEvent: [GetLifeSpanMower()],
-        MowerMapInfoEvent: [GetMapInfoV2()],
+        MowerMapInfoEvent: [GetMapInfoMower()],
     }
     if profile.area_parameters:
         # One area event represents the whole area capability. The two protocol

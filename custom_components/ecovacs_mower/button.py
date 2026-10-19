@@ -26,6 +26,11 @@ the device's recorded map id, the other sends a ``CleanAction`` HA's
 ``EcovacsMowerCommandButtonEntityDescription``, whose ``command_fn`` builds
 the command from the device at press time. A third such button is one more
 entry in ``MOWER_COMMAND_DESCRIPTIONS``.
+
+And the debug buttons, which start a log for a report rather than tell the
+mower anything: ``log_area_parameters`` shows the raw area parameters while
+the owner changes them in the app (see ``debug.py``). Another such log is one more
+entry in ``DEBUG_DESCRIPTIONS``.
 """
 
 from __future__ import annotations
@@ -54,6 +59,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from . import EcovacsMowerConfigEntry
 from .const import SUPPORTED_LIFESPANS
 from .controller import EcovacsController
+from .debug import AreaParameterLog, DebugLog, Execute
 from .deebot_patch.border import MowBorder
 from .deebot_patch.commands import CleanMower
 from .deebot_patch.hardware import MowerProfile, profile_for_class
@@ -173,6 +179,26 @@ MOWER_COMMAND_DESCRIPTIONS: tuple[EcovacsMowerCommandButtonEntityDescription, ..
 )
 
 
+@dataclass(kw_only=True, frozen=True)
+class EcovacsDebugButtonEntityDescription(ButtonEntityDescription):
+    """A button that starts a debug log for one mower."""
+
+    log_fn: Callable[[HomeAssistant, Device, Execute], DebugLog]
+
+
+DEBUG_DESCRIPTIONS: tuple[EcovacsDebugButtonEntityDescription, ...] = (
+    EcovacsDebugButtonEntityDescription(
+        key="log_area_parameters",
+        translation_key="log_area_parameters",
+        log_fn=AreaParameterLog,
+        # Disabled until an owner who wants to help map a model enables it;
+        # everyone else never needs it on the device page.
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+)
+
+
 def _mower_command_entities(
     controller: EcovacsController,
 ) -> list[EcovacsMowerCommandButtonEntity]:
@@ -216,6 +242,14 @@ async def async_setup_entry(
         if device.capabilities.device_type is DeviceType.MOWER
     )
     entities.extend(_mower_command_entities(controller))
+    # Every mower, the unsupported classes included: the logs only read, and
+    # an unmapped model is exactly who they are for.
+    entities.extend(
+        EcovacsDebugButtonEntity(device, description)
+        for device in controller.devices
+        if device.capabilities.device_type is DeviceType.MOWER
+        for description in DEBUG_DESCRIPTIONS
+    )
     async_add_entities(entities)
 
 
@@ -319,3 +353,37 @@ class EcovacsMowerCommandButtonEntity(
         if self.entity_description.starts_job:
             self._controller.start_polling(self._device)
         await self._execute_command(command)
+
+
+class EcovacsDebugButtonEntity(
+    EcovacsEntity[Capabilities],
+    ButtonEntity,
+):
+    """Start a debug log for one mower; see ``debug.py``."""
+
+    entity_description: EcovacsDebugButtonEntityDescription
+
+    def __init__(
+        self, device: Device, description: EcovacsDebugButtonEntityDescription
+    ) -> None:
+        """Initialize entity."""
+        # Before the base __init__, which reads the key for the unique id.
+        self.entity_description = description
+        super().__init__(device, device.capabilities)
+        self._log: DebugLog | None = None
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Create the log once hass is known, and stop it with the entity."""
+        await super().async_added_to_hass()
+        log = self.entity_description.log_fn(
+            self.hass, self._device, self._execute_command
+        )
+        self._log = log
+        self.async_on_remove(log.async_shutdown)
+
+    @override
+    async def async_press(self) -> None:
+        """Press the button."""
+        if self._log is not None:
+            await self._log.async_start()

@@ -60,6 +60,7 @@
     "button": {
       "clear_fault": { "name": "Clear fault" },
       "end_task": { "name": "End mowing task" },
+      "log_area_parameters": { "name": "Log area parameters" },
       "mow_border": { "name": "Mow border" },
       "play_sound": { "name": "Locate mower" },
       "reset_lifespan_blade": { "name": "Reset blades" },
@@ -68,6 +69,19 @@
       "reset_lifespan_weed_rope": { "name": "Reset weed rope" }
     },
     "event": {
+      "job_started": {
+        "name": "Job started",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "schedule": "Schedule",
+              "app": "App",
+              "continue": "Continued",
+              "reborn": "Restarted"
+            }
+          }
+        }
+      },
       "last_job": {
         "name": "Last mowing job",
         "state_attributes": {
