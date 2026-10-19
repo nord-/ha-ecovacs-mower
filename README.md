@@ -248,9 +248,10 @@ planned for the next release.
 ### A live position while the mower is out
 
 While the mower is out, the integration asks for its position every five
-minutes, together with the state and the stats. Some runs on the G1-800 never
-push a position by themselves, and without that question the map marker stays
-in the dock for the whole run.
+minutes, together with the state, the stats and the network info (what the
+Wi-Fi signal strength, network name and IP address sensors show, once you have
+enabled them). Some runs on the G1-800 never push a position by themselves, and
+without that question the map marker stays in the dock for the whole run.
 
 Five minutes is too slow to draw a path. If you want a live marker, ask more
 often yourself: the map image answers `homeassistant.update_entity` with one
@@ -289,6 +290,11 @@ The answer reaches the map like a pushed position. On mowers that already push
 their position, the extra question is simply answered again. If the mower stops
 answering, every call logs one warning from this integration, so a long outage
 shows up as a warning every 15 seconds in the log.
+
+The Wi-Fi signal strength sensor answers `homeassistant.update_entity` too: each
+call asks the mower for its network info again, along with an availability
+check. To map the signal across the yard, give it a loop like the one above,
+with a longer delay.
 
 ### Zone-specific mowing
 

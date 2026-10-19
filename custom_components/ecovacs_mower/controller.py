@@ -18,7 +18,7 @@ from deebot_client.authentication import create_rest_config
 from deebot_client.capabilities import DeviceType
 from deebot_client.const import UNDEFINED, UndefinedType
 from deebot_client.device import Device
-from deebot_client.events import StateEvent, StatsEvent
+from deebot_client.events import NetworkInfoEvent, StateEvent, StatsEvent
 from deebot_client.exceptions import (
     DeebotError,
     DeviceVerificationRequiredError,
@@ -393,12 +393,19 @@ class EcovacsController:
             unsub()
 
     async def _poll(self, device: Device, now: datetime) -> None:
-        """One tick: refresh the state, the mowing stats and the position.
+        """One tick: refresh the state, stats, network info and position.
 
         One getStats notifies both StatsEvent and MowerStatsEvent, so
         refreshing StatsEvent — which Device.__init__ always subscribes to —
         covers the mowing_progress sensor too without depending on it being
         enabled.
+
+        The network sensors are otherwise read at setup and on reconnect
+        only, so the Wi-Fi signal would show the dock's value for the whole
+        run (issue #139). The getNetInfo goes out even where those sensors
+        are disabled, which is the default: Device.__init__ always subscribes
+        to NetworkInfoEvent to keep device.mac, so request_refresh never
+        skips it. One small command per tick while the mower is out.
 
         The position is asked for with a command of its own: some runs on the
         G1-800 never push onPos, and deebot-client defines no map capability
@@ -407,6 +414,7 @@ class EcovacsController:
         """
         device.events.request_refresh(StateEvent)
         device.events.request_refresh(StatsEvent)
+        device.events.request_refresh(NetworkInfoEvent)
         await device.execute_command(GetPosMower())
 
     async def teardown(self) -> None:

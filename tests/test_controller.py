@@ -660,10 +660,10 @@ async def test_start_polling_is_idempotent() -> None:
         track.assert_called_once()
 
 
-async def test_poll_refreshes_state_and_stats() -> None:
+async def test_poll_refreshes_state_stats_and_network() -> None:
     from unittest.mock import AsyncMock, MagicMock
 
-    from deebot_client.events import StateEvent, StatsEvent
+    from deebot_client.events import NetworkInfoEvent, StateEvent, StatsEvent
 
     from custom_components.ecovacs_mower.controller import EcovacsController
 
@@ -674,7 +674,9 @@ async def test_poll_refreshes_state_and_stats() -> None:
     await controller._poll(device, None)
 
     asked = {call.args[0] for call in device.events.request_refresh.call_args_list}
-    assert asked == {StateEvent, StatsEvent}
+    # The network sensors would otherwise keep the value read at the dock
+    # for the whole run (issue #139).
+    assert asked == {StateEvent, StatsEvent, NetworkInfoEvent}
 
 
 async def test_poll_asks_the_mower_where_it_is() -> None:
