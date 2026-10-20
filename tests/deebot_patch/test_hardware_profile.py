@@ -28,10 +28,10 @@ def test_area_parameters_are_enabled_only_for_validated_classes() -> None:
 
 def test_zone_mowing_is_enabled_only_for_validated_class() -> None:
     """spotArea is confirmed on the A1600/A3000 LiDAR Pro, G1-800, O1200
-    and O800 RTK."""
+    O800 RTK and O1200 RTK."""
     assert {
         class_ for class_, profile in SUPPORTED_CLASSES.items() if profile.zone_mowing
-    } == {"e4gqia", "77atlz", "2i0fns", "51rcxt", "9bts2s"}
+    } == {"e4gqia", "77atlz", "2i0fns", "51rcxt", "9bts2s", "qhq6i0"}
 
 
 def test_area_names_are_enabled_only_for_the_validated_class() -> None:

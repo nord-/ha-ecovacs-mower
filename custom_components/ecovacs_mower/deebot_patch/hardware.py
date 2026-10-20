@@ -127,6 +127,11 @@ class MowerProfile:
 #            pause and dock user-verified). Upstream's module is
 #            byte-identical to e4gqia.py, docstring included, so the O800
 #            RTK's patch applies unchanged.
+#   qhq6i0 — GOAT O1200 RTK (issue #140, firmware 1.17.11 — zone mowing
+#            user-verified). A different machine from the O1200 LiDAR Pro
+#            (2i0fns). Upstream's docstring calls it "GOAT G1"; its module
+#            is byte-identical to 9bts2s.py apart from that docstring, so the
+#            O800 RTK's patch applies unchanged.
 #
 # Presence in this mapping means the class is supported by the integration.
 # Capability flags are deliberately narrower: they are enabled only where the
@@ -168,6 +173,9 @@ class MowerProfile:
 #                     while it ran, and getChargeState went from charging to
 #                     not. The non-V2 family was chosen first try, so no
 #                     clean_V2 attempt was needed.
+#                     qhq6i0: a mow_area call on the O1200 RTK, firmware
+#                     1.17.11, after adding the class locally (issue #140);
+#                     the user reported it working, with no detail beyond that.
 #   border_mowing   — 77atlz: the app's border-job request captured on the
 #                     G1-800, firmware 1.36.208 (issue #12): clean_V2 with
 #                     {"type": "border", "value": "mid:<mid>"}, acknowledged
@@ -204,6 +212,7 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "51rcxt": MowerProfile(
         "51rcxt", area_parameters=True, zone_mowing=True, border_mowing=True
     ),
+    "qhq6i0": MowerProfile("qhq6i0", zone_mowing=True),
 }
 
 
