@@ -217,6 +217,7 @@ _SUPPORTED = (
     "0jbd6s",
     "51rcxt",
     "qhq6i0",
+    "300lc5",
 )
 
 
