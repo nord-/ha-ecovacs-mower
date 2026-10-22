@@ -13,6 +13,7 @@ from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
     DEPARTURE_WINDOW,
     MowerStateRecord,
     map_id_for,
+    profile_for_bus,
     record_for,
     register,
 )
@@ -37,6 +38,41 @@ def test_registering_returns_a_record_that_starts_undocked() -> None:
 def test_the_same_bus_gets_the_same_record() -> None:
     bus = _bus()
     assert register(bus) is record_for(bus)
+
+
+def test_registering_without_a_profile_claims_nothing() -> None:
+    # The only thing a handler may conclude from a missing profile: this
+    # device has had nothing validated on it.
+    bus = _bus()
+    register(bus)
+    assert profile_for_bus(bus) is None
+
+
+def test_profile_for_an_unregistered_bus_is_none() -> None:
+    assert profile_for_bus(_bus()) is None
+
+
+def test_the_profile_reaches_the_handlers_through_the_record() -> None:
+    from custom_components.ecovacs_mower.deebot_patch.hardware import (
+        profile_for_class,
+    )
+
+    bus = _bus()
+    register(bus, profile_for_class("9bts2s"))
+    assert profile_for_bus(bus).device_class == "9bts2s"
+
+
+def test_registering_again_with_a_profile_fills_it_in() -> None:
+    # setdefault keeps the first record, so the profile has to be written
+    # onto it rather than handed to a constructor that never runs.
+    bus = _bus()
+    first = register(bus)
+    from custom_components.ecovacs_mower.deebot_patch.hardware import (
+        profile_for_class,
+    )
+
+    assert register(bus, profile_for_class("9bts2s")) is first
+    assert first.profile.device_class == "9bts2s"
 
 
 def test_two_buses_are_independent() -> None:

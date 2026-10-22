@@ -64,7 +64,7 @@ from .deebot_patch import (
     verify_capabilities,
 )
 from .deebot_patch.areas import MowerAreaEvent
-from .deebot_patch.commands import GetPosMower
+from .deebot_patch.commands import GetMapTrack, GetPosMower
 from .deebot_patch.hardware import (
     SUPPORTED_CLASSES,
     patch_device_info,
@@ -72,6 +72,7 @@ from .deebot_patch.hardware import (
 )
 from .deebot_patch.map_messages import (
     MowerCoverageEvent,
+    MowerRemainingEvent,
     MowerCoveredAreaEvent,
     MowerMapInfoEvent,
     MowerNoGoZonesEvent,
@@ -232,7 +233,16 @@ class EcovacsController:
                             # warning, and this registry means "belongs to a
                             # patched mower". Registering one would apply the
                             # gate to a device nothing else in here patched.
-                            register_mower_bus(device.events)
+                            #
+                            # The profile goes with it because a message
+                            # handler has no other way to learn which mower
+                            # it is reading — see state_precedence.register.
+                            register_mower_bus(
+                                device.events,
+                                profile_for_class(
+                                    device.device_info["class"]
+                                ),
+                            )
                         await device.initialize(mqtt)
                         self._devices.append(device)
                         if device.capabilities.device_type is DeviceType.MOWER:
@@ -285,11 +295,17 @@ class EcovacsController:
         messages of a session.
         """
         did = device.device_info["did"]
+        profile = profile_for_class(device.device_info["class"])
+        # What onMapTrack means on this class, which the map has to carry
+        # for the renderer and the store; see MowerProfile.remaining_plan.
+        remaining_plan = profile is not None and profile.remaining_plan
         store = _map_store(self._hass, did)
-        mower_map = MowerMap()
+        mower_map = MowerMap(remaining_plan=remaining_plan)
         if (data := await store.async_load()) is not None:
             try:
-                mower_map = MowerMap.from_dict(data)
+                mower_map = MowerMap.from_dict(
+                    data, remaining_plan=remaining_plan
+                )
             except (KeyError, TypeError, ValueError, IndexError):
                 _LOGGER.warning(
                     "Discarding corrupt map store for %s; starting empty", did
@@ -325,6 +341,14 @@ class EcovacsController:
             mower_map.update_obstacles(event.obstacles)
             save()
 
+        async def on_remaining(event: MowerRemainingEvent) -> None:
+            # The one writer for the plan, the end of a job included: a
+            # stop edge arrives here as an empty complete plan, which is
+            # how the mower itself reports a job it finished. See
+            # map_messages.reset_remaining_plan().
+            mower_map.update_remaining(event.rows, event.complete)
+            save()
+
         async def on_coverage(event: MowerCoverageEvent) -> None:
             mower_map.update_coverage(event.lanes)
             save()
@@ -352,6 +376,11 @@ class EcovacsController:
 
         device.events.subscribe(MowerMapInfoEvent, on_map_info)
         device.events.subscribe(MowerObstaclesEvent, on_obstacles)
+        # Both readings of onMapTrack are subscribed on every device, and
+        # OnMapTrack publishes whichever one the class has: the handler is
+        # the single place the decision is made, so nothing here has to
+        # agree with it.
+        device.events.subscribe(MowerRemainingEvent, on_remaining)
         device.events.subscribe(MowerCoverageEvent, on_coverage)
         device.events.subscribe(MowerCoveredAreaEvent, on_covered)
         device.events.subscribe(MowerNoGoZonesEvent, on_nogo)
@@ -364,7 +393,6 @@ class EcovacsController:
         # not a map coordinate drags the viewport out with it, shrinking
         # the lawn to make room. Nothing in this repo shows what those
         # two models send there; issue #131 collects such readings.
-        profile = profile_for_class(device.device_info["class"])
         if profile is not None and profile.area_names:
             device.events.subscribe(MowerAreaEvent, on_areas)
 
@@ -450,11 +478,22 @@ class EcovacsController:
         G1-800 never push onPos, and deebot-client defines no map capability
         for that class to refresh through the event bus. The tick only runs
         while the mower is out, so a parked mower is never asked.
+
+        So is what is left to mow, and for a sharper reason: the mower
+        pushes that one row at a time as it works, and sends the whole
+        plan only when asked. Without this a listener holds the row
+        under the mower and whatever the phone's last visit happened to
+        broadcast — see GetMapTrack. Only on a class that reads
+        onMapTrack that way: nothing else needs the whole set, and the
+        request's own shape is confirmed on that one class too.
         """
         device.events.request_refresh(StateEvent)
         device.events.request_refresh(StatsEvent)
         device.events.request_refresh(NetworkInfoEvent)
         await device.execute_command(GetPosMower())
+        profile = profile_for_class(device.device_info["class"])
+        if profile is not None and profile.remaining_plan:
+            await device.execute_command(GetMapTrack())
 
     async def teardown(self) -> None:
         """Disconnect controller."""

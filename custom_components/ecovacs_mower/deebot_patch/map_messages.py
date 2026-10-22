@@ -42,7 +42,7 @@ from .geometry import (
     parse_map_track,
     parse_special_contour,
 )
-from .state_precedence import record_for
+from .state_precedence import profile_for_bus, record_for
 
 if TYPE_CHECKING:
     from deebot_client.event_bus import EventBus
@@ -73,9 +73,33 @@ class MowerObstaclesEvent(Event):
 
 @dataclass(frozen=True)
 class MowerCoverageEvent(Event):
-    """Mowed lane spans keyed (zone, row); an empty list clears the row."""
+    """Mowed lane spans keyed (zone, row); an empty list clears the row.
+
+    The reading onMapTrack gets on a class whose ``remaining_plan`` flag
+    is off: unvalidated, and what this integration has always published.
+    Merged forever, because under this reading nothing a row says can
+    take back what an earlier one said.
+    """
 
     lanes: dict[tuple[str, int], list[Segment]]
+
+
+@dataclass(frozen=True)
+class MowerRemainingEvent(Event):
+    """The lanes still to mow, keyed (zone, row).
+
+    Not coverage: see ``MapTrack``. An empty list is a row with nothing
+    left in it. Published in place of ``MowerCoverageEvent`` for a class
+    whose profile sets ``remaining_plan``.
+
+    ``complete`` is the whole remaining plan, in answer to
+    ``GetMapTrack``: it is the entire truth and anything not in it is
+    finished. Otherwise this is the single row the mower is working on,
+    pushed as it goes, and only that row changes.
+    """
+
+    rows: dict[tuple[str, int], list[Segment]]
+    complete: bool = False
 
 
 @dataclass(frozen=True)
@@ -225,14 +249,18 @@ class OnMapInfo(OnMI):
 
 class OnArI(_MapMessage):
     """Area info: zones, obstacles, outlines, flush-mow edges — plus
-    no-go zones from firmware 1.17 on.
+    no-go zones from firmware 1.17 on, and on a class whose profile says
+    its chain-dialect section 2 holds them.
     """
 
     NAME = "onArI"
 
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
-        area = parse_area_info(blob)
+        profile = profile_for_bus(event_bus)
+        area = parse_area_info(
+            blob, area_nogo=profile is not None and profile.area_nogo
+        )
         map_info = area.map_info
         if (
             map_info.boundaries is not None
@@ -249,22 +277,40 @@ class OnArI(_MapMessage):
         if area.obstacles is not None:
             event_bus.notify(MowerObstaclesEvent(obstacles=area.obstacles))
         if area.nogo is not None:
-            # 1.17 only: up to 1.13 the no-go zones come in their own
-            # onSpecialContour message and this stays None.
             event_bus.notify(MowerNoGoZonesEvent(zones=area.nogo))
         return HandlingResult.success()
 
 
 class OnMapTrack(_MapMessage):
-    """Coverage: mowed lane spans per 100 mm row."""
+    """Lane stretches per 100 mm row — what is still to mow, or coverage.
+
+    Which of the two is the class's business, not the blob's: the bytes
+    are identical and only one mower has been watched long enough to say
+    what they mean. A class whose profile sets ``remaining_plan`` gets the
+    measured reading; every other one keeps the coverage reading this
+    integration has always published. See ``MapTrack`` and
+    ``MowerProfile.remaining_plan``.
+    """
 
     NAME = "onMapTrack"
 
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
         track = parse_map_track(blob)
-        if track.lanes:
-            event_bus.notify(MowerCoverageEvent(lanes=track.lanes))
+        profile = profile_for_bus(event_bus)
+        if profile is None or not profile.remaining_plan:
+            # Coverage grows and never shrinks under this reading, so an
+            # empty blob has nothing to say.
+            if track.rows:
+                event_bus.notify(MowerCoverageEvent(lanes=track.rows))
+            return HandlingResult.success()
+        # An empty full snapshot is the most informative blob there is:
+        # it says the job is finished. Only an empty incremental one has
+        # nothing in it.
+        if track.rows or track.full:
+            event_bus.notify(
+                MowerRemainingEvent(rows=track.rows, complete=track.full)
+            )
         return HandlingResult.success()
 
 
@@ -289,8 +335,50 @@ class OnSpecialContour(_MapMessage):
 
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
+        # Two sources for one complete-set event, which would otherwise
+        # take turns overwriting each other. onArI wins where its section
+        # 2 is validated: it reports per area and traced, while this
+        # message has been seen carrying a single point for the very zone
+        # the same mower names in full on onArI (issue #41). Where it is
+        # not validated this is the source, and the only one.
+        profile = profile_for_bus(event_bus)
+        if profile is not None and profile.area_nogo:
+            return HandlingResult.success()
         zones = parse_special_contour(blob)
         if zones is None:
             return HandlingResult.analyse()  # nothing readable in it
         event_bus.notify(MowerNoGoZonesEvent(zones=zones))
         return HandlingResult.success()
+
+
+def reset_remaining_plan(event_bus: EventBus) -> None:
+    """Publish the empty plan that says a finished job's remainder is gone.
+
+    Called by the job-edge handler in ``messages.py`` on a stop edge, the
+    only announcement there is that a job is over. Nothing else would
+    say so: the mower pushes rows while it works and sends the whole plan
+    only when asked, and the poll tick that would ask stops the moment it
+    docks. So whatever was left at the last tick stayed drawn as uncut,
+    and was persisted that way too — after an End, a rain stop or a
+    return to charge, most of a lawn the mower never reached. An empty
+    full plan is exactly how the mower itself reports a job it finished.
+
+    Published rather than written into the map directly, even though the
+    controller holds the map and could clear it from the same edge. The
+    bus keeps the last event of each type and drops the next one equal to
+    it, so a reset that never travelled the bus would leave the dropped
+    plan cached: stop a job before the mower has mowed a row, start the
+    same job again, and the identical plan is discarded as a duplicate
+    and never reaches the map, which stays empty until a row is mowed and
+    makes the next plan differ. Going through the bus also puts the reset
+    in order with the rows that arrive after it, and leaves the map with
+    one writer for the plan, ``on_remaining``.
+
+    Only where ``onMapTrack`` is read as that plan; coverage survives a
+    job by definition. The flag is read here because this module owns
+    what ``onMapTrack`` means — see ``OnMapTrack``.
+    """
+    profile = profile_for_bus(event_bus)
+    if profile is None or not profile.remaining_plan:
+        return
+    event_bus.notify(MowerRemainingEvent(rows={}, complete=True))

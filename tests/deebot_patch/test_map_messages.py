@@ -6,14 +6,21 @@ installed (CI; local Python 3.12 cannot install the cp314-only wheels).
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
+from deebot_client.event_bus import EventBus
+
+from custom_components.ecovacs_mower.deebot_patch.hardware import (
+    profile_for_class,
+)
 from custom_components.ecovacs_mower.deebot_patch.map_messages import (
     MowerCoverageEvent,
+    MowerRemainingEvent,
     MowerCoveredAreaEvent,
     MowerMapInfoEvent,
     MowerNoGoZonesEvent,
@@ -25,6 +32,12 @@ from custom_components.ecovacs_mower.deebot_patch.map_messages import (
     OnMI,
     OnSpecialContour,
 )
+from custom_components.ecovacs_mower.deebot_patch.messages import (
+    OnMowScheduleStop,
+)
+from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
+    register,
+)
 
 FIXTURES: dict[str, list[Any]] = json.loads(
     (Path(__file__).parent / "fixtures" / "map_capture.json").read_text()
@@ -33,6 +46,7 @@ FIXTURES: dict[str, list[Any]] = json.loads(
 
 _MAP_EVENTS = (
     MowerCoverageEvent,
+    MowerRemainingEvent,
     MowerCoveredAreaEvent,
     MowerMapInfoEvent,
     MowerNoGoZonesEvent,
@@ -40,17 +54,41 @@ _MAP_EVENTS = (
 )
 
 
-def _notified(message, key: str) -> list[Any]:
+def _nogo_events(event_bus: Mock) -> list[Any]:
+    """Every MowerNoGoZonesEvent *event_bus* has been handed, in order."""
+    return [
+        call.args[0]
+        for call in event_bus.notify.call_args_list
+        if isinstance(call.args[0], MowerNoGoZonesEvent)
+    ]
+
+
+def _feed(message, event_bus, key: str) -> None:
+    """Hand every captured fragment of a fixture to *message*, in order.
+
+    Deep-copied, because handling reads the payload apart — a fixture fed
+    to a second bus, or twice to one, has to arrive intact.
+    """
+    for item in sorted(
+        FIXTURES[key], key=lambda i: int(i["payload"]["body"]["data"]["index"])
+    ):
+        message.handle(event_bus, deepcopy(item["payload"]))
+
+
+def _notified(message, key: str, class_: str | None = None) -> list[Any]:
     """Feed every captured fragment of a fixture through the handler.
 
     Only map events are returned: the library notifies a FirmwareEvent
     from the real headers' fwVer before body handling runs.
+
+    *class_* registers the bus as that device class's, which is how a
+    handler reads the profile flags; left out, the bus is an unregistered
+    one and nothing is validated.
     """
     event_bus = Mock()
-    for item in sorted(
-        FIXTURES[key], key=lambda i: int(i["payload"]["body"]["data"]["index"])
-    ):
-        message.handle(event_bus, item["payload"])
+    if class_ is not None:
+        register(event_bus, profile_for_class(class_))
+    _feed(message, event_bus, key)
     return [
         call.args[0]
         for call in event_bus.notify.call_args_list
@@ -82,13 +120,27 @@ def test_on_mi_idle_notifies_nothing() -> None:
     assert _notified(OnMI, "on_mi_idle") == []
 
 
-def test_on_ari_multipart_notifies_map_info_and_obstacles() -> None:
-    events = _notified(OnArI, "on_ari_multipart")
-    assert len(events) == 2
+def test_on_ari_multipart_notifies_map_info_obstacles_and_nogo() -> None:
+    events = _notified(OnArI, "on_ari_multipart", class_="9bts2s")
+    assert len(events) == 3
     map_info = next(e for e in events if isinstance(e, MowerMapInfoEvent))
     obstacles = next(e for e in events if isinstance(e, MowerObstaclesEvent))
-    assert map_info.boundaries is not None and len(map_info.zones) == 5
+    nogo = next(e for e in events if isinstance(e, MowerNoGoZonesEvent))
+    assert map_info.boundaries is not None and len(map_info.zones) == 3
     assert len(obstacles.obstacles) == 15
+    assert len(nogo.zones) == 2  # section 2, no longer merged into zones
+
+
+def test_on_ari_keeps_section_2_in_the_zones_without_the_flag() -> None:
+    # This fixture is the O1200 LiDAR Pro's, whose section 2 nobody has
+    # checked against the app: it keeps master's reading, five zones and
+    # no no-go event, so onSpecialContour stays the source of that layer.
+    events = _notified(OnArI, "on_ari_multipart", class_="2i0fns")
+    assert [type(e).__name__ for e in events] == [
+        "MowerMapInfoEvent",
+        "MowerObstaclesEvent",
+    ]
+    assert len(events[0].zones) == 5
 
 
 def test_on_ari_obstacle_update_leaves_geometry_alone() -> None:
@@ -98,11 +150,78 @@ def test_on_ari_obstacle_update_leaves_geometry_alone() -> None:
     assert len(events[0].obstacles) == 14
 
 
-def test_on_map_track_notifies_coverage() -> None:
-    events = _notified(OnMapTrack, "on_map_track_single_lane")
+def test_on_map_track_notifies_the_rows_still_to_mow() -> None:
+    events = _notified(OnMapTrack, "on_map_track_single_lane", class_="9bts2s")
+    assert len(events) == 1
+    assert isinstance(events[0], MowerRemainingEvent)
+    assert events[0].rows == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
+
+
+def test_on_map_track_notifies_coverage_without_the_flag() -> None:
+    # The same bytes, read as this integration has always read them. The
+    # measurement behind the other reading is one job on one mower, so
+    # every class it was not taken on keeps what it had.
+    events = _notified(OnMapTrack, "on_map_track_single_lane", class_="2i0fns")
     assert len(events) == 1
     assert isinstance(events[0], MowerCoverageEvent)
     assert events[0].lanes == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
+
+
+def test_on_map_track_on_an_unregistered_bus_notifies_coverage() -> None:
+    # No record, no profile, nothing validated — the safe reading.
+    events = _notified(OnMapTrack, "on_map_track_single_lane")
+    assert [type(event) for event in events] == [MowerCoverageEvent]
+
+
+def test_on_map_track_keeps_an_empty_full_plan_to_itself_without_the_flag() -> (
+    None
+):
+    # Under the remaining-plan reading an empty full blob says the job is
+    # finished, which is the most informative blob there is. Under the
+    # coverage reading it says nothing at all, and publishing it as a
+    # complete set would wipe the layer.
+    event_bus = Mock()
+    register(event_bus, profile_for_class("2i0fns"))
+    OnMapTrack._notify(event_bus, json.dumps([["1", "1"]]).encode())
+
+    assert event_bus.notify.call_args_list == []
+
+
+async def test_an_identical_plan_after_a_stop_is_not_dropped_as_a_duplicate() -> (
+    None
+):
+    """Stop a job before a row is mowed, start it again: the same plan.
+
+    ``EventBus`` keeps the last event of each type and drops the next one
+    equal to it. So a reset written into the map without going through
+    the bus would leave the dropped plan cached, and the identical plan
+    the restarted job reports would be discarded as a duplicate — an
+    empty map that further polls could not refill, until a mowed row made
+    the plan differ. Driven on a real bus, because a Mock one never
+    dedupes and would pass either way.
+    """
+    bus = EventBus(AsyncMock(), Mock(get_refresh_commands=lambda _event: []))
+    register(bus, profile_for_class("9bts2s"))
+    received: list[MowerRemainingEvent] = []
+
+    async def on_remaining(event: MowerRemainingEvent) -> None:
+        received.append(event)
+
+    bus.subscribe(MowerRemainingEvent, on_remaining)
+
+    _feed(OnMapTrack, bus, "on_map_track_multipart")
+    # Only the trigger is read, and every stop drops the plan.
+    OnMowScheduleStop._handle_body(bus, {"trigger": "app"})
+    _feed(OnMapTrack, bus, "on_map_track_multipart")
+    await asyncio.sleep(0)
+
+    # The captured plan's 126 records fall on 123 distinct (zone, row)
+    # keys, and both replays of it are the same whole plan.
+    assert [(len(event.rows), event.complete) for event in received] == [
+        (123, True),
+        (0, True),
+        (123, True),
+    ]
 
 
 def test_on_special_contour_notifies_nogo_zones() -> None:
@@ -110,6 +229,62 @@ def test_on_special_contour_notifies_nogo_zones() -> None:
     assert len(events) == 1
     assert isinstance(events[0], MowerNoGoZonesEvent)
     assert len(events[0].zones) == 2
+
+
+def test_on_ari_nogo_zones_outrank_on_special_contour() -> None:
+    # Both messages carry no-go zones on a 1.13 mower, and the event holds
+    # the complete set, so without a rule they would overwrite each other
+    # turn by turn. onArI reports per area and traced; onSpecialContour on
+    # one of those mowers carries a single point (issue #41).
+    event_bus = Mock()
+    register(event_bus, profile_for_class("9bts2s"))
+    for item in sorted(
+        FIXTURES["on_ari_multipart"],
+        key=lambda i: int(i["payload"]["body"]["data"]["index"]),
+    ):
+        OnArI.handle(event_bus, deepcopy(item["payload"]))
+    from_on_ari = _nogo_events(event_bus)
+    OnSpecialContour.handle(
+        event_bus, deepcopy(FIXTURES["on_special_contour"][0]["payload"])
+    )
+
+    # The traced section-2 zones stand; the contour message added nothing.
+    assert [len(event.zones) for event in from_on_ari] == [2]
+    assert _nogo_events(event_bus) == from_on_ari
+
+
+def test_on_special_contour_stays_the_source_without_the_flag() -> None:
+    # The decision is the class's, not the order the messages arrive in.
+    # A latch on "onArI has reported zones once" would have handed the
+    # layer to section 2 on the first onArI and never handed it back —
+    # on the O1200, permanently losing a zone section 2 never mentions.
+    event_bus = Mock()
+    register(event_bus, profile_for_class("2i0fns"))
+    for item in sorted(
+        FIXTURES["on_ari_multipart"],
+        key=lambda i: int(i["payload"]["body"]["data"]["index"]),
+    ):
+        OnArI.handle(event_bus, deepcopy(item["payload"]))
+    assert _nogo_events(event_bus) == []
+
+    OnSpecialContour.handle(
+        event_bus, deepcopy(FIXTURES["on_special_contour"][0]["payload"])
+    )
+    zones = _nogo_events(event_bus)
+    assert len(zones) == 1 and len(zones[0].zones) == 2
+
+
+def test_on_special_contour_is_published_on_an_unregistered_bus() -> None:
+    # An ordinary Deebot vacuum's bus, and a patched mower registered
+    # before its profile was known: nothing is validated, so this message
+    # keeps the layer.
+    event_bus = Mock()
+    OnSpecialContour.handle(
+        event_bus, deepcopy(FIXTURES["on_special_contour"][0]["payload"])
+    )
+
+    zones = _nogo_events(event_bus)
+    assert len(zones) == 1 and len(zones[0].zones) == 2
 
 
 def test_on_special_contour_without_a_polygon_publishes_nothing() -> None:

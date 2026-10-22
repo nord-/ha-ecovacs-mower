@@ -18,11 +18,11 @@ def test_none_fields_leave_previous_values_untouched() -> None:
 
 def test_coverage_merges_per_row() -> None:
     mower_map = MowerMap()
-    mower_map.update_coverage({("1", 5): [((0, 0), (0, 100))]})
-    mower_map.update_coverage({("1", 6): [((100, 0), (100, 100))]})
+    mower_map.update_remaining({("1", 5): [((0, 0), (0, 100))]})
+    mower_map.update_remaining({("1", 6): [((100, 0), (100, 100))]})
     # Resent row replaces its previous extent.
-    mower_map.update_coverage({("1", 5): [((0, 0), (0, 500))]})
-    assert mower_map.lanes == {
+    mower_map.update_remaining({("1", 5): [((0, 0), (0, 500))]})
+    assert mower_map.remaining == {
         ("1", 5): [((0, 0), (0, 500))],
         ("1", 6): [((100, 0), (100, 100))],
     }
@@ -49,13 +49,13 @@ def test_track_thins_the_old_half_when_full() -> None:
 
 
 def test_round_trip_through_dict() -> None:
-    mower_map = MowerMap()
+    mower_map = MowerMap(remaining_plan=True)
     mower_map.update_map_info(
         [BOUNDARY], [[(1, 2), (3, 4)]], [], [[(9, 9), (9, 19)]]
     )
     mower_map.update_obstacles([[(5, 6)]])
     mower_map.update_nogo([[(7, 8)]])
-    mower_map.update_coverage({("1", 5): [((0, 0), (0, 100))]})
+    mower_map.update_remaining({("1", 5): [((0, 0), (0, 100))]})
     mower_map.update_labels([((11, 12), "Hinten")])
     mower_map.update_position(1, 2, 3)
 
@@ -63,17 +63,63 @@ def test_round_trip_through_dict() -> None:
     import json
 
     data = json.loads(json.dumps(mower_map.as_dict()))
-    restored = MowerMap.from_dict(data)
+    restored = MowerMap.from_dict(data, remaining_plan=True)
 
     assert restored.boundaries == [BOUNDARY]
     assert restored.zones == [[(1, 2), (3, 4)]]
     assert restored.corridors == [[(9, 9), (9, 19)]]
     assert restored.obstacles == [[(5, 6)]]
     assert restored.nogo_zones == [[(7, 8)]]
-    assert restored.lanes == {("1", 5): [((0, 0), (0, 100))]}
+    assert restored.remaining == {("1", 5): [((0, 0), (0, 100))]}
     assert restored.labels == [((11, 12), "Hinten")]
     # Track and position are deliberately not persisted.
     assert restored.track == [] and restored.position is None
+
+
+def test_a_legacy_lanes_snapshot_is_ignored_under_the_plan_reading() -> None:
+    """The old key held every row ever reported, merged forever.
+
+    Read back as the remaining plan it would claim the whole season's
+    mowing is still to cut, and keep claiming it until a full plan
+    arrives — which needs the mower out and a poll tick. An empty layer
+    is the honest version of not knowing.
+    """
+    restored = MowerMap.from_dict(
+        {
+            "boundaries": [[[0, 0], [10, 0], [10, 10]]],
+            "lanes": [["1", 5, [[[0, 0], [0, 100]]]]],
+        },
+        remaining_plan=True,
+    )
+
+    assert restored.boundaries == [[(0, 0), (10, 0), (10, 10)]]
+    assert restored.remaining == {}
+
+
+def test_a_lanes_snapshot_still_loads_under_the_coverage_reading() -> None:
+    # The counter-proof: on a class that never got the new reading the
+    # key means what it always meant, and dropping it would throw away a
+    # working layer in the name of fixing another class's bug.
+    restored = MowerMap.from_dict(
+        {"lanes": [["1", 5, [[[0, 0], [0, 100]]]]]}
+    )
+
+    assert restored.lanes == {("1", 5): [((0, 0), (0, 100))]}
+    assert restored.remaining == {}
+
+
+def test_each_reading_writes_only_its_own_key() -> None:
+    # Writing both would leave the old key growing in a plan-reading
+    # snapshot, and a downgrade would read it back as the wrong thing.
+    plan = MowerMap(remaining_plan=True)
+    plan.update_remaining({("1", 5): [((0, 0), (0, 100))]})
+    coverage = MowerMap()
+    coverage.update_coverage({("1", 5): [((0, 0), (0, 100))]})
+
+    assert "lanes" not in plan.as_dict()
+    assert plan.as_dict()["remaining"] == [["1", 5, [((0, 0), (0, 100))]]]
+    assert "remaining" not in coverage.as_dict()
+    assert coverage.as_dict()["lanes"] == [["1", 5, [((0, 0), (0, 100))]]]
 
 
 def test_a_legacy_snapshot_s_one_outline_is_wrapped() -> None:
@@ -148,6 +194,43 @@ def test_round_trip_keeps_the_covered_area() -> None:
     restored = MowerMap.from_dict(json.loads(json.dumps(mower_map.as_dict())))
     assert restored.covered == [[(0, 0), (100, 0)]]
     assert restored.covered_holes == [[(10, 10), (20, 20)]]
+
+
+def test_a_full_plan_replaces_the_stored_one() -> None:
+    # A row the mower has finished is absent from the next full plan, not
+    # reported empty. Merging one keeps every finished row for ever.
+    mower_map = MowerMap()
+    mower_map.update_remaining(
+        {("1", 1): [((0, 0), (900, 0))], ("1", 2): [((0, 100), (900, 100))]},
+        complete=True,
+    )
+    mower_map.update_remaining({("1", 2): [((0, 100), (400, 100))]}, complete=True)
+
+    assert mower_map.remaining == {("1", 2): [((0, 100), (400, 100))]}
+
+
+def test_an_empty_full_plan_means_the_job_is_done() -> None:
+    mower_map = MowerMap()
+    mower_map.update_remaining({("1", 1): [((0, 0), (900, 0))]}, complete=True)
+    mower_map.update_remaining({}, complete=True)
+
+    assert mower_map.remaining == {}
+
+
+def test_a_single_reported_row_leaves_the_others_alone() -> None:
+    # The mower pushes the row it is working on while it works; the rest of
+    # the plan is not in that blob and must not be dropped.
+    mower_map = MowerMap()
+    mower_map.update_remaining(
+        {("1", 1): [((0, 0), (900, 0))], ("1", 2): [((0, 100), (900, 100))]},
+        complete=True,
+    )
+    mower_map.update_remaining({("1", 2): [((0, 100), (400, 100))]})
+
+    assert mower_map.remaining == {
+        ("1", 1): [((0, 0), (900, 0))],
+        ("1", 2): [((0, 100), (400, 100))],
+    }
 
 
 def test_sampled_track_returns_a_short_track_as_it_is() -> None:

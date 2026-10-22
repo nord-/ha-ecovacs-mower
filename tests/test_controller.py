@@ -220,12 +220,22 @@ _SUPPORTED = (
 )
 
 
-async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> None:
+async def _initialize_with(
+    hass: object, device_classes: tuple[str, ...]
+) -> list[object]:
     """Run ``initialize()`` with the devices *device_classes* coming from the API.
 
     Everything outside the verification loop is mocked: get_devices, the MQTT
     client and Device. What is tested is which branch a class ends up in, not
     connectivity.
+
+    The device stand-ins are returned in the order they were built, so a
+    caller can reach the event bus the controller handed each one. Each
+    carries that device's real ``device_info`` dict: ``Device.device_info``
+    is the plain API dict rather than the ``DeviceInfo`` wrapper, and the
+    controller branches on the ``class`` it finds there — a bare mock
+    answers that lookup with another mock, which is in no mapping, so the
+    registration branch would never be taken.
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -265,6 +275,14 @@ async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> Non
             not_supported=[],
         )
 
+    made: list[object] = []
+
+    def make_device(info: DeviceInfo, _authenticator: object) -> object:
+        device = AsyncMock()
+        device.device_info = info.api
+        made.append(device)
+        return device
+
     controller = EcovacsController(
         hass,  # type: ignore[arg-type]
         {
@@ -283,7 +301,7 @@ async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> Non
             patch.object(EcovacsController, "_get_mqtt_client", AsyncMock()),
             patch(
                 "custom_components.ecovacs_mower.controller.Device",
-                MagicMock(return_value=AsyncMock()),
+                MagicMock(side_effect=make_device),
             ),
         ):
             await controller.initialize()
@@ -292,6 +310,7 @@ async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> Non
         # initialize() seeds the cache globally; leave it as we found it.
         for class_ in (*_SUPPORTED, *device_classes):
             _DEVICES.pop(class_, None)
+    return made
 
 
 async def test_unsupported_mower_class_warns(hass, caplog) -> None:
@@ -330,6 +349,25 @@ async def test_vacuum_on_the_same_account_stays_quiet(hass, caplog) -> None:
 
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert any(_VACUUM in r.getMessage() for r in caplog.records)
+
+
+async def test_the_profile_is_registered_with_the_devices_bus(hass) -> None:
+    """A message handler reads the flags off the bus, so they have to get there.
+
+    ``register_mower_bus`` is the only route: handlers are classmethods that
+    receive the bus and the payload and nothing else. Without this the
+    per-class readings — section 2's no-go zones, what onMapTrack means —
+    would silently fall back to "nothing validated" for every device.
+    """
+    from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
+        profile_for_bus,
+    )
+
+    (device,) = await _initialize_with(hass, ("9bts2s",))
+
+    profile = profile_for_bus(device.events)
+    assert profile is not None and profile.device_class == "9bts2s"
+    assert profile.area_nogo is True
 
 
 async def test_supported_mowers_are_verified(hass, caplog) -> None:
@@ -737,8 +775,53 @@ async def test_poll_asks_the_mower_where_it_is() -> None:
 
     await controller._poll(device, None)
 
-    device.execute_command.assert_awaited_once()
-    assert isinstance(device.execute_command.await_args.args[0], GetPosMower)
+    sent = [call.args[0] for call in device.execute_command.await_args_list]
+    assert any(isinstance(command, GetPosMower) for command in sent)
+
+
+async def test_poll_asks_for_the_whole_of_what_is_left_to_mow() -> None:
+    # The mower pushes onMapTrack one row at a time while it works and
+    # sends the whole plan only in answer to getMapTrack. A listener that
+    # never asks holds the row under the mower and nothing else.
+    from unittest.mock import AsyncMock, MagicMock
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        GetMapTrack,
+    )
+
+    controller = EcovacsController.__new__(EcovacsController)
+    device = MagicMock()
+    device.device_info = {"did": "did-1", "class": "9bts2s"}
+    device.execute_command = AsyncMock(return_value={})
+
+    await controller._poll(device, None)
+
+    sent = [call.args[0] for call in device.execute_command.await_args_list]
+    assert any(isinstance(command, GetMapTrack) for command in sent)
+
+
+async def test_poll_does_not_ask_a_class_that_reads_coverage() -> None:
+    # Nothing would read the answer as a plan, and the request's own shape
+    # is confirmed on the one class too — an O1200 is not asked at all.
+    from unittest.mock import AsyncMock, MagicMock
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        GetMapTrack,
+        GetPosMower,
+    )
+
+    controller = EcovacsController.__new__(EcovacsController)
+    device = MagicMock()
+    device.device_info = {"did": "did-1", "class": "2i0fns"}
+    device.execute_command = AsyncMock(return_value={})
+
+    await controller._poll(device, None)
+
+    sent = [call.args[0] for call in device.execute_command.await_args_list]
+    assert [type(command) for command in sent] == [GetPosMower]
+    assert not any(isinstance(command, GetMapTrack) for command in sent)
 
 
 async def test_teardown_cancels_outstanding_polls() -> None:
@@ -782,7 +865,7 @@ async def test_setup_map_restores_persisted_geometry() -> None:
         "flush_edges": [],
         "obstacles": [],
         "nogo_zones": [],
-        "lanes": [["1", 5, [[[0, 0], [0, 100]]]]],
+        "remaining": [["1", 5, [[[0, 0], [0, 100]]]]],
     }
     with patch(
         "custom_components.ecovacs_mower.controller.Store"
@@ -792,12 +875,15 @@ async def test_setup_map_restores_persisted_geometry() -> None:
 
     mower_map = controller.maps["did-1"]
     assert mower_map.boundaries == [[(0, 0), (100, 0), (100, 100)]]
-    assert mower_map.lanes == {("1", 5): [((0, 0), (0, 100))]}
-    # Eager subscriptions: 5 map events, PositionsEvent, and — on this
-    # class — MowerAreaEvent for the labels. EventBus.notify drops events
-    # nobody subscribes to, so waiting for the entity to subscribe would
-    # lose data.
-    assert device.events.subscribe.call_count == 7
+    assert mower_map.remaining == {("1", 5): [((0, 0), (0, 100))]}
+    # Eager subscriptions: 6 map events — both readings of onMapTrack are
+    # subscribed and OnMapTrack publishes whichever this class has —
+    # PositionsEvent, plus MowerAreaEvent for the labels, which this
+    # class is the validated one for. EventBus.notify drops events nobody
+    # subscribes to, so waiting for the entity to subscribe would lose
+    # data. The end of a job needs no subscription of its own: it arrives
+    # as an empty complete plan on MowerRemainingEvent.
+    assert device.events.subscribe.call_count == 8
 
 
 async def test_setup_map_survives_corrupt_store() -> None:
@@ -884,6 +970,61 @@ async def test_setup_map_feeds_the_covered_area_into_the_map() -> None:
     store_cls.return_value.async_delay_save.assert_called_once()
 
 
+async def test_a_stopped_job_takes_its_remaining_plan_with_it() -> None:
+    """Nothing else tells the map a job is over.
+
+    The mower pushes rows while it works and sends the whole plan only
+    when asked, and the poll tick that would ask stops the moment it
+    docks. So whatever was left at the last tick stayed drawn as uncut,
+    and was persisted that way too — after an End or a rain stop, most of
+    a lawn the mower never reached.
+
+    The stop edge reaches the map as the empty complete plan the mower
+    itself reports on a finish, published by the patch layer, so this
+    handler is the one writer for the plan and the bus's cache follows it
+    — see deebot_patch.map_messages.reset_remaining_plan(). The map takes
+    no subscription on the edge itself.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.map_messages import (
+        MowerRemainingEvent,
+    )
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerJobEdgeEvent,
+    )
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = MagicMock()
+    controller.maps = {}
+    controller._map_stores = {}
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1", "class": "9bts2s"}
+    callbacks: dict[type, object] = {}
+    device.events.subscribe = lambda event_type, callback: callbacks.setdefault(
+        event_type, callback
+    )
+
+    with patch(
+        "custom_components.ecovacs_mower.controller.Store"
+    ) as store_cls:
+        store_cls.return_value.async_load = AsyncMock(return_value=None)
+        await controller._setup_map(device)
+
+        mower_map = controller.maps["did-1"]
+        mower_map.update_remaining({("1", 7): [((0, 0), (900, 0))]})
+
+        await callbacks[MowerRemainingEvent](
+            MowerRemainingEvent(rows={}, complete=True)
+        )
+
+    assert MowerJobEdgeEvent not in callbacks
+    assert mower_map.remaining == {}
+    store_cls.return_value.async_delay_save.assert_called()
+
+
 async def test_setup_map_reads_the_area_names_only_where_they_are_validated() -> (
     None
 ):
@@ -936,6 +1077,43 @@ async def test_setup_map_reads_the_area_names_only_where_they_are_validated() ->
     mower_map, callbacks = await setup("e4gqia")
     assert MowerAreaEvent not in callbacks
     assert mower_map.labels == []
+
+
+async def test_setup_map_feeds_what_is_left_to_mow_into_the_map() -> None:
+    """The onMapTrack rows reach the map and get persisted."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.map_messages import (
+        MowerRemainingEvent,
+    )
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = MagicMock()
+    controller.maps = {}
+    controller._map_stores = {}
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1", "class": "9bts2s"}
+    callbacks: dict[type, object] = {}
+    device.events.subscribe = lambda event_type, callback: callbacks.setdefault(
+        event_type, callback
+    )
+
+    with patch(
+        "custom_components.ecovacs_mower.controller.Store"
+    ) as store_cls:
+        store_cls.return_value.async_load = AsyncMock(return_value=None)
+        await controller._setup_map(device)
+
+        await callbacks[MowerRemainingEvent](
+            MowerRemainingEvent(rows={("1", 7): [((0, 0), (900, 0))]})
+        )
+
+    assert controller.maps["did-1"].remaining == {
+        ("1", 7): [((0, 0), (900, 0))]
+    }
+    store_cls.return_value.async_delay_save.assert_called_once()
 
 
 async def test_a_docked_mower_does_not_restart_the_poll_loop(hass) -> None:

@@ -917,6 +917,48 @@ class GetMapInfoMower(_AdaptiveFamily, GetMI):
         return Family.V2
 
 
+class GetMapTrack(ExecuteCommand):
+    """Ask for the whole of what is still to mow.
+
+    A GOAT pushes ``onMapTrack`` on its own, but only one row at a time:
+    47-byte blobs naming the row it is working on, 97 of them in three
+    minutes on an O800 RTK (``9bts2s``, fw 1.13.8). The complete picture
+    — 121 rows in 6.7 KB — arrives only as the answer to this request, and
+    in that capture every one of the 19 full snapshots followed a
+    ``getMapTrack`` the Android app had sent seconds earlier. A client that
+    only listens therefore holds whatever happened to be broadcast while
+    somebody else had the app open, plus the row under the mower.
+
+    The app sends an empty ``data`` object, and that is what goes out here.
+    Like ``GetMapInfoV2``, the reply is a bare ack and the payload follows
+    on the ``atr`` topic a few milliseconds later, where ``OnMapTrack``
+    picks it up — so there is nothing to parse and ``ExecuteCommand`` is the
+    right base. Asked mid-job the mower answers; asked in the first seconds
+    of a job it has answered ``code 10000, "getMapTrack fail"``, which
+    ``ExecuteCommand`` reports as a failed command and nothing else: the
+    next tick asks again.
+    """
+
+    NAME = "getMapTrack"
+
+    def __init__(self) -> None:
+        super().__init__({})
+
+    def _get_payload(self) -> dict[str, Any]:
+        """Send the empty object the app sends, not a header alone.
+
+        ``JsonCommand._get_payload`` only adds ``body`` when there are args
+        (``if len(self._args) > 0``), so an empty one goes out as a header
+        with no body at all. The mower answers that ``code 0, "ok"`` and
+        then sends nothing — captured on an O800 RTK, firmware 1.13.8,
+        docked: ack in 99 ms, no ``onMapTrack`` after it, the map
+        unchanged. The app's request carries ``{"body": {"data": {}}}`` and
+        is answered with the whole plan. Same ack either way, so the
+        difference is invisible without the payload in front of you.
+        """
+        return {**super()._get_payload(), "body": {"data": {}}}
+
+
 class SetRainDelay(ExecuteCommand):
     """Write the rain sensor's setting and its post-rain hold.
 

@@ -7,19 +7,42 @@ import re
 import pytest
 
 from custom_components.ecovacs_mower.map import MowerMap
-from custom_components.ecovacs_mower.map_svg import render
+from custom_components.ecovacs_mower.map_svg import (
+    _LANE,
+    _LAWN_FILL,
+    _UNCUT,
+    render,
+)
 
 BOUNDARY = [(0, 0), (10000, 0), (10000, 10000), (0, 10000)]
 
 
+def _contrast(one: str, other: str) -> float:
+    """The WCAG contrast ratio between two "#rrggbb" colours."""
+
+    def luminance(colour: str) -> float:
+        channels = [int(colour[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+        linear = [
+            c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+            for c in channels
+        ]
+        return (
+            0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+        )
+
+    lighter, darker = sorted((luminance(one), luminance(other)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
 def _populated_map() -> MowerMap:
-    mower_map = MowerMap()
+    mower_map = MowerMap(remaining_plan=True)
     mower_map.update_map_info([BOUNDARY], [[(1, 1), (2, 2), (3, 1)]], [])
     mower_map.update_nogo([[(100, 100), (200, 100), (200, 200)]])
     mower_map.update_obstacles([[(300, 300), (400, 300), (400, 400)]])
-    mower_map.update_coverage({("1", 5): [((500, 0), (500, 9000))]})
+    mower_map.update_remaining({("1", 5): [((500, 0), (500, 9000))]})
     mower_map.update_labels([((2000, 2000), "Hinten & <Vorgarten>")])
     mower_map.update_position(1000, 2000, 90)
+    mower_map.update_position(1000, 2160, 90)
     return mower_map
 
 
@@ -67,6 +90,39 @@ def test_area_labels_are_drawn_where_the_mower_puts_them() -> None:
     assert label.group(1) == "Vorgarten &amp; &lt;Hinten&gt;"
 
 
+def test_grass_still_to_cut_reads_as_lighter_than_the_lawn() -> None:
+    """What is left to mow is the one thing a glance should answer.
+
+    The two greens were a quarter of a step apart in lightness once,
+    which on a real map left a finished lawn and an untouched one
+    looking alike. Asserted as a contrast ratio rather than as hex, so
+    the palette can be retuned but not flattened.
+    """
+    assert _contrast(_UNCUT, _LAWN_FILL) >= 3
+
+
+def test_coverage_is_not_drawn_in_the_colour_of_grass_still_to_cut() -> None:
+    """The two readings mean opposite things in the same brightness.
+
+    A 1.17 mower draws its covered area and never draws a remaining
+    lane, so the two layers never meet on one map and no rendering test
+    would catch them drifting together. What would notice is an owner of
+    that mower reading the README's "the bright lanes are what is still
+    to cut" and seeing a bright area that means the opposite. So the
+    coverage layers keep a colour that reads as cut: far enough from
+    _UNCUT to be a different claim, where #7ecb87 against it was 1.31:1.
+    """
+    mower_map = MowerMap()
+    mower_map.update_covered([[(0, 0), (9000, 0), (9000, 9000)]], [])
+    covered = next(
+        line for line in render(mower_map).splitlines()
+        if 'class="covered"' in line
+    )
+
+    assert f'fill="{_LANE}"' in covered
+    assert _contrast(_LANE, _UNCUT) >= 2
+
+
 def test_empty_map_renders_placeholder() -> None:
     svg = render(MowerMap())
     assert svg.startswith("<svg")
@@ -78,13 +134,40 @@ def test_populated_map_renders_all_layers() -> None:
     assert svg.startswith("<svg")
     assert "No map data yet" not in svg
     assert 'class="boundary"' in svg
-    assert 'class="lane"' in svg
+    assert 'class="uncut"' in svg
     assert 'class="nogo"' in svg
     assert 'class="obstacle"' in svg
     assert 'class="zone"' in svg
-    assert 'class="track"' in svg
+    assert 'class="lane"' not in svg  # this map reads them as remaining
+    assert 'class="track"' not in svg  # the driven path is not a layer here
     assert 'class="dock"' in svg
     assert 'class="mower"' in svg
+
+
+def test_the_coverage_reading_draws_its_lanes_and_the_driven_path() -> None:
+    # The class the remaining-plan reading was not measured on keeps what
+    # it had: the lanes as coverage, and the path, which is then the only
+    # thing that says where the mower has been between two pushes.
+    mower_map = MowerMap()
+    mower_map.update_map_info([BOUNDARY], None, [])
+    mower_map.update_coverage({("1", 5): [((500, 0), (500, 9000))]})
+    mower_map.update_position(1000, 2000, 90)
+    mower_map.update_position(1000, 2160, 90)
+
+    svg = render(mower_map)
+
+    assert 'class="lane"' in svg
+    assert 'class="track"' in svg
+    assert 'class="uncut"' not in svg
+
+
+def test_a_coverage_map_with_lanes_alone_is_not_the_placeholder() -> None:
+    # is_empty has to count both readings, or the only layer such a
+    # device has would render as "No map data yet".
+    mower_map = MowerMap()
+    mower_map.update_coverage({("1", 5): [((500, 0), (500, 9000))]})
+
+    assert "No map data yet" not in render(mower_map)
 
 
 def test_marker_defaults_to_dock_without_position() -> None:

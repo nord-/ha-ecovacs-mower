@@ -30,6 +30,8 @@ if TYPE_CHECKING:
     from deebot_client.event_bus import EventBus
     from deebot_client.models import State
 
+    from .hardware import MowerProfile
+
 # How far apart, in monotonic seconds, a start or resume bury point and the
 # mower's own "stopped charging" push may arrive and still be one departure
 # from the dock (issue #120). The observed gaps are 3 to 8 s, in both orders;
@@ -67,6 +69,7 @@ class MowerStateRecord:
     job_type: str | None = None
     departure_edge_at: float | None = None
     charge_left_at: float | None = None
+    profile: MowerProfile | None = None
 
     def note_job(self, content: object) -> None:
         """Remember the type of the running job, from ``cleanState.content``.
@@ -196,20 +199,42 @@ class MowerStateRecord:
 _RECORDS: WeakKeyDictionary[EventBus, MowerStateRecord] = WeakKeyDictionary()
 
 
-def register(event_bus: EventBus) -> MowerStateRecord:
+def register(
+    event_bus: EventBus, profile: MowerProfile | None = None
+) -> MowerStateRecord:
     """Mark *event_bus* as a patched mower's, and return its record.
 
     Registration is also the marker that separates a mower from an ordinary
     Deebot vacuum on the same account: ``MESSAGES`` is global, so the message
     handlers this integration registers are reached for every JSON device, and
     they use this to tell whose payload they are looking at.
+
+    *profile* is that device's ``MowerProfile``, kept here because it is the
+    only way a message handler can learn which mower it is reading: handlers
+    are classmethods that get the bus and the payload and nothing else. Left
+    out, the record claims no validated behaviour, which is the safe reading
+    for a device nothing has checked.
     """
-    return _RECORDS.setdefault(event_bus, MowerStateRecord())
+    record = _RECORDS.setdefault(event_bus, MowerStateRecord())
+    if profile is not None:
+        record.profile = profile
+    return record
 
 
 def record_for(event_bus: EventBus) -> MowerStateRecord | None:
     """The record for *event_bus*, or ``None`` if it is not a patched mower's."""
     return _RECORDS.get(event_bus)
+
+
+def profile_for_bus(event_bus: EventBus) -> MowerProfile | None:
+    """The profile of *event_bus*'s mower, or ``None`` if there is none.
+
+    ``None`` for an unregistered bus and for a registered one whose profile
+    was never passed; a handler cannot tell them apart and must not, since
+    neither says a behaviour is validated.
+    """
+    record = record_for(event_bus)
+    return None if record is None else record.profile
 
 
 def map_id_for(event_bus: EventBus) -> str | None:

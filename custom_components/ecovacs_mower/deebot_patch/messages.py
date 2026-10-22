@@ -104,6 +104,7 @@ from deebot_client.models import State
 from deebot_client.rs.map import PositionType
 
 from .areas import apply_area_parameters
+from .map_messages import reset_remaining_plan
 from .state_precedence import record_for
 
 if TYPE_CHECKING:
@@ -265,6 +266,10 @@ class _OnMowJobEdge(MessageBody, ABC):
     pause or stop cancels a departure still waiting for its other half. Both
     run before the trigger parsing, so an edge that parsing gives up on still
     counts.
+
+    A stop edge is also the only announcement that a job's remaining plan is
+    gone, on a class that reads ``onMapTrack`` as one: see
+    ``map_messages.reset_remaining_plan()``, which this hands that off to.
     """
 
     PHASE: ClassVar[str]
@@ -294,6 +299,15 @@ class _OnMowJobEdge(MessageBody, ABC):
         if cls.PHASE == "stop" and trigger == "workComplete":
             if (record := record_for(event_bus)) is not None:
                 record.end_job()
+
+        if cls.PHASE == "stop":
+            # The plan belongs to the job, and the job is over. Every
+            # stop, not only workComplete: a job ended early is still
+            # ended, and the next one is planned from scratch. A pause is
+            # left alone, because a paused job still has a remainder.
+            # Here rather than before the trigger check, so the reset and
+            # the edge below are published together or not at all.
+            reset_remaining_plan(event_bus)
 
         event_bus.notify(
             MowerJobEdgeEvent(

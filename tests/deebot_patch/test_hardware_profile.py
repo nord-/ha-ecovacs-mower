@@ -41,11 +41,44 @@ def test_area_names_are_enabled_only_for_the_validated_class() -> None:
     } == {"9bts2s"}
 
 
+def test_area_nogo_is_enabled_only_for_the_validated_class() -> None:
+    """Section 2 means what a capture on that very class says it means.
+
+    The O800 RTK's three-area onArI puts a section-2 ring in exactly the
+    area its owner has a no-go zone in (issue #41). The O1200 LiDAR Pro's
+    puts two rings inside one of the two rectangles its own
+    onSpecialContour reports and none in the other, so reading section 2
+    as the no-go set there would lose a zone (PR #136 review).
+    """
+    assert {
+        class_ for class_, profile in SUPPORTED_CLASSES.items() if profile.area_nogo
+    } == {"9bts2s"}
+
+
+def test_remaining_plan_is_enabled_only_for_the_validated_class() -> None:
+    """One job, watched end to end, on one mower.
+
+    A row's reported length falling to zero at mowing speed and then
+    disappearing is what separates the remainder of a plan from coverage,
+    and that was measured on the O800 RTK alone (firmware 1.13.8). No
+    other class has had a job watched that way, so every other one keeps
+    reading onMapTrack as coverage — and is not asked for the whole plan
+    either, since nothing would read the answer.
+    """
+    assert {
+        class_
+        for class_, profile in SUPPORTED_CLASSES.items()
+        if profile.remaining_plan
+    } == {"9bts2s"}
+
+
 def test_profile_flags_default_to_off() -> None:
     """A newly supported class is patched without claiming any capability."""
     profile = MowerProfile("new000")
 
     assert profile.area_parameters is False
     assert profile.area_names is False
+    assert profile.area_nogo is False
+    assert profile.remaining_plan is False
     assert profile.zone_mowing is False
     assert profile.border_mowing is False

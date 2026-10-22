@@ -23,6 +23,10 @@ from deebot_client.rs.map import PositionType
 from custom_components.ecovacs_mower.deebot_patch import apply
 from custom_components.ecovacs_mower.deebot_patch import messages as messages_module
 from custom_components.ecovacs_mower.deebot_patch.commands import GetChargeStateMower
+from custom_components.ecovacs_mower.deebot_patch.hardware import profile_for_class
+from custom_components.ecovacs_mower.deebot_patch.map_messages import (
+    MowerRemainingEvent,
+)
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     MowerAnimProtectEvent,
     MowerBeaconsEvent,
@@ -1069,6 +1073,72 @@ def _notified_edges(message, data: dict[str, Any]) -> list[MowerJobEdgeEvent]:
         for call_ in bus.notify.call_args_list
         if isinstance(call_.args[0], MowerJobEdgeEvent)
     ]
+
+
+def _notified_plans(
+    message, data: dict[str, Any], class_: str | None = None
+) -> list[MowerRemainingEvent]:
+    """Every remaining-plan event a job edge publishes, in order.
+
+    *class_* registers the bus as that device class's, which is how the
+    handler reads the profile flag; left out, the bus is an unregistered
+    one and nothing is validated.
+    """
+    bus = Mock()
+    if class_ is not None:
+        register(bus, profile_for_class(class_))
+    message._handle_body(bus, data)
+    return [
+        call_.args[0]
+        for call_ in bus.notify.call_args_list
+        if isinstance(call_.args[0], MowerRemainingEvent)
+    ]
+
+
+def test_a_stop_edge_publishes_the_empty_plan_a_finished_job_leaves() -> None:
+    """A stop is the only announcement that the remainder is gone.
+
+    Published rather than written into the map, so the bus's cache of
+    the last plan follows the reset; see
+    map_messages.reset_remaining_plan().
+    """
+    (event,) = _notified_plans(
+        OnMowScheduleStop, _SCHEDULE_STOP_COMPLETE, class_="9bts2s"
+    )
+
+    assert event.rows == {}
+    # Complete, or the map would merge an empty increment into the plan
+    # and change nothing.
+    assert event.complete is True
+
+
+def test_any_stop_drops_the_plan_not_only_a_completed_job() -> None:
+    # A job ended early is still ended, and the next one is planned from
+    # scratch.
+    assert _notified_plans(OnMowAutoStop, _AUTO_STOP, class_="9bts2s")
+
+
+def test_a_pause_edge_keeps_the_plan() -> None:
+    # A paused job still has a remainder.
+    assert (
+        _notified_plans(
+            OnMowSchedulePause, _G1800_PAUSE_1330, class_="9bts2s"
+        )
+        == []
+    )
+
+
+def test_a_stop_edge_drops_no_plan_on_a_class_that_reads_coverage() -> None:
+    # The counter-proof: coverage survives a job by definition, and an
+    # empty complete plan would wipe a layer that is working.
+    assert (
+        _notified_plans(
+            OnMowScheduleStop, _SCHEDULE_STOP_COMPLETE, class_="2i0fns"
+        )
+        == []
+    )
+    # Nor on a bus nothing has registered, where no reading is validated.
+    assert _notified_plans(OnMowScheduleStop, _SCHEDULE_STOP_COMPLETE) == []
 
 
 def test_a_completed_schedule_job_publishes_both_areas() -> None:

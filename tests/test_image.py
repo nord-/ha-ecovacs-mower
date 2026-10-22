@@ -218,6 +218,34 @@ async def test_a_geometry_event_cancels_the_pending_refresh() -> None:
     instance.async_write_ha_state.assert_called_once()
 
 
+async def test_the_end_of_a_job_repaints_the_map() -> None:
+    """The reset arrives as the empty plan the mower reports on a finish.
+
+    So it goes through the same handler as every other plan report, and
+    the entity needs no second subscription to the job edge to notice it
+    — which is what it used to carry. See
+    deebot_patch.map_messages.reset_remaining_plan().
+    """
+    from unittest.mock import MagicMock
+
+    from custom_components.ecovacs_mower.deebot_patch.map_messages import (
+        MowerRemainingEvent,
+    )
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+    from custom_components.ecovacs_mower.map import MowerMap
+
+    instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
+    instance.async_write_ha_state = MagicMock()
+    instance._trailing_bump = None
+    instance._map = MowerMap(remaining_plan=True)
+
+    await EcovacsMowerMap._on_geometry(
+        instance, MowerRemainingEvent(rows={}, complete=True)
+    )
+
+    instance.async_write_ha_state.assert_called_once()
+
+
 async def test_removal_drops_the_pending_refresh() -> None:
     from unittest.mock import MagicMock, patch
 
@@ -322,23 +350,56 @@ def test_track_attribute_is_thinned_and_ends_at_the_mower() -> None:
     assert all(isinstance(point, list) for point in track)
 
 
-async def test_update_entity_asks_the_mower_where_it_is() -> None:
+async def test_update_entity_asks_where_it_is_and_what_is_left() -> None:
     # homeassistant.update_entity is how a live marker is built: an
     # automation calls it as often as it likes while the mower is out. It goes
     # through the entity's wrapper so an unconfirmed command is logged under
     # this integration's logger (issue #26).
     from unittest.mock import AsyncMock
 
-    from custom_components.ecovacs_mower.deebot_patch.commands import GetPosMower
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        GetMapTrack,
+        GetPosMower,
+    )
     from custom_components.ecovacs_mower.image import EcovacsMowerMap
+    from custom_components.ecovacs_mower.map import MowerMap
 
     instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
+    instance._map = MowerMap(remaining_plan=True)
     instance._execute_command = AsyncMock(return_value=True)
 
     await instance.async_update()
 
-    instance._execute_command.assert_awaited_once()
-    assert isinstance(instance._execute_command.await_args.args[0], GetPosMower)
+    sent = [call.args[0] for call in instance._execute_command.await_args_list]
+    assert any(isinstance(command, GetPosMower) for command in sent)
+    # The poll tick stops at the dock, so this is the only way to see a
+    # finished lawn empty out.
+    assert any(isinstance(command, GetMapTrack) for command in sent)
+
+
+async def test_update_entity_asks_only_where_it_is_under_the_coverage_reading() -> (
+    None
+):
+    # Nothing on such a class would read the answer as a plan, so the
+    # command is not sent at all — the map carries the class's reading.
+    from unittest.mock import AsyncMock
+
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        GetMapTrack,
+        GetPosMower,
+    )
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+    from custom_components.ecovacs_mower.map import MowerMap
+
+    instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
+    instance._map = MowerMap()
+    instance._execute_command = AsyncMock(return_value=True)
+
+    await instance.async_update()
+
+    sent = [call.args[0] for call in instance._execute_command.await_args_list]
+    assert [type(command) for command in sent] == [GetPosMower]
+    assert not any(isinstance(command, GetMapTrack) for command in sent)
 
 
 def test_the_map_is_not_polled() -> None:

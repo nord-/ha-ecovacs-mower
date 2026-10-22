@@ -93,6 +93,20 @@ _DEVICE_INFO = {
 }
 
 
+def test_get_map_track_sends_the_empty_body_the_app_sends() -> None:
+    """A header alone is acked and answered with nothing.
+
+    JsonCommand._get_payload only adds a body when there are args, so an
+    empty request goes out without one. Captured on an O800 RTK docked:
+    code 0 in 99 ms and no onMapTrack behind it.
+    """
+    from custom_components.ecovacs_mower.deebot_patch.commands import GetMapTrack
+
+    payload = GetMapTrack()._get_payload()
+
+    assert payload["body"] == {"data": {}}
+
+
 def test_publishes_to_clean_topic_not_clean_v2() -> None:
     # The core of the bug: GOAT listens on "clean", not "clean_V2".
     assert CleanMower.NAME == "clean"

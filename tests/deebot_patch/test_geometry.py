@@ -234,13 +234,29 @@ def test_parse_map_info_idle_carries_nothing() -> None:
 
 
 def test_parse_area_info_full_snapshot() -> None:
-    area = parse_area_info(_blob("on_ari_multipart"))
+    area = parse_area_info(_blob("on_ari_multipart"), area_nogo=True)
     assert area.map_info.boundaries is not None
     (boundary,) = area.map_info.boundaries
     assert boundary[0] == (-31000, 1800)
-    assert len(area.map_info.zones) == 5  # sections 1 + 2
+    assert len(area.map_info.zones) == 3  # section 1
+    assert [len(zone) for zone in area.nogo] == [78, 309]  # section 2
     assert len(area.map_info.flush_edges) == 3  # section 6
     assert len(area.obstacles) == 15  # section 3, ids 100-114
+
+
+def test_parse_area_info_merges_section_2_without_the_flag() -> None:
+    """Master's reading, for a class whose section 2 nobody has checked.
+
+    This fixture is the O1200 LiDAR Pro's, and the reviewer of PR #136
+    decoded its onSpecialContour against it: section 2's two rings sit
+    inside one of the two rectangles that message calls a no-go zone and
+    say nothing about the other. So the five zones here are three mowing
+    zones plus two rings of unknown meaning, drawn as zones the way they
+    have always been, and the no-go layer stays onSpecialContour's.
+    """
+    area = parse_area_info(_blob("on_ari_multipart"))
+    assert len(area.map_info.zones) == 5  # sections 1 and 2 together
+    assert area.nogo is None
 
 
 def test_parse_area_info_zero_sections_mean_no_update() -> None:
@@ -251,39 +267,59 @@ def test_parse_area_info_zero_sections_mean_no_update() -> None:
     assert len(area.obstacles) == 14
 
 
-def test_parse_area_info_logs_when_zone_sections_split(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    # Every captured onArI moves sections 1/2 together (both "1" or both
-    # "0"). If firmware ever splits them, the merge below would silently
-    # drop the other section's zones — this DEBUG line is the only trace.
-    blob = json.dumps([["m", "1", "1", "10;0,0;2"]]).encode()
-    with caplog.at_level("DEBUG"):
-        area = parse_area_info(blob)
-    assert area.map_info.zones is not None
-    assert "without its pair" in caplog.text
+def test_parse_area_info_chain_reads_section_2_as_nogo_zones() -> None:
+    # The two sections are independent: one updating without the other is
+    # no longer a reason to merge them, which is what used to drop a
+    # section-2 ring into the mowing zones.
+    blob = json.dumps([["1", "2", "1", "10;0,0;2"]]).encode()
+    area = parse_area_info(blob, area_nogo=True)
+    assert area.map_info.zones is None
+    assert len(area.nogo) == 1
 
 
-def test_parse_area_info_does_not_log_when_sections_match(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_parse_area_info_chain_section_2_alone_is_a_zone_without_the_flag() -> (
+    None
+):
+    # Section 1 absent and section 2 present: the merge has to carry the
+    # ring through as a zone rather than reporting no update at all.
+    blob = json.dumps([["1", "2", "1", "10;0,0;2"]]).encode()
+    area = parse_area_info(blob)
+    assert len(area.map_info.zones) == 1
+    assert area.nogo is None
+
+
+def test_parse_map_track_marks_a_full_plan() -> None:
+    # entry[1] "1" is the whole remaining plan, sent in answer to
+    # getMapTrack; "2" is the single row the mower is working on. Captured
+    # on an O800 RTK (9bts2s, fw 1.13.8) with the app open beside it.
     blob = json.dumps(
-        [["m", "1", "1", "10;0,0;2"], ["m", "2", "1", "11;0,0;2"]]
+        [["1", "1", "1;1;43;-22652,4669;-22436,5387", "1;1;44;-1,2;-3,4"]]
     ).encode()
-    with caplog.at_level("DEBUG"):
-        parse_area_info(blob)
-    assert "without its pair" not in caplog.text
+
+    track = parse_map_track(blob)
+
+    assert track.full is True
+    assert len(track.rows) == 2
+
+
+def test_parse_map_track_marks_a_single_row_push() -> None:
+    blob = json.dumps([["1", "2", "1;1;155;-22199,14450;-17050,14450"]]).encode()
+
+    track = parse_map_track(blob)
+
+    assert track.full is False
+    assert track.rows == {("1", 155): [((-22199, 14450), (-17050, 14450))]}
 
 
 def test_parse_map_track_single_lane() -> None:
     track = parse_map_track(_blob("on_map_track_single_lane"))
-    assert track.lanes == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
+    assert track.rows == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
 
 
 def test_parse_map_track_bare_record_clears_the_row() -> None:
     track = parse_map_track(_blob("on_map_track_multipart"))
-    assert track.lanes[("1", 36)] == []  # record "1;1;36" — no coordinates
-    assert track.lanes[("1", 41)] == [
+    assert track.rows[("1", 36)] == []  # record "1;1;36" — no coordinates
+    assert track.rows[("1", 41)] == [
         ((-30850, 4025), (-28000, 4025))
     ]
 
