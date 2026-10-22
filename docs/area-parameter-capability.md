@@ -1,6 +1,6 @@
 # Area-parameter capability
 
-This integration provides read/write support for per-area mowing parameters on the A1600 LiDAR Pro (`e4gqia`) and the A3000 LiDAR Pro (`51rcxt`). The mower identifies an area by `areaID`; its friendly name and its parameter values arrive through separate protocol responses.
+This integration provides read/write support for per-area mowing parameters on the A1600 LiDAR Pro (`e4gqia`), the A3000 LiDAR Pro (`51rcxt`) and the O1200 LiDAR Pro (`2i0fns`). The mower identifies an area by `areaID`; its friendly name and its parameter values arrive through separate protocol responses.
 
 ## Functional flow
 
@@ -30,7 +30,7 @@ These commands live in `deebot_patch/commands.py`, alongside the other patched p
 
 For a write, HA converts the requested value back to its raw representation and combines it with the other three raw values — see "Write consistency" below for where those three values come from and why. The entity does not update its state optimistically.
 
-The capability is exposed only for `e4gqia` and `51rcxt`, whose own readings matched the A1600's (issue #131). Other supported mower models do not receive these entities merely because they use the same protocol field names.
+The capability is exposed only for `e4gqia`, `51rcxt`, whose own readings matched the A1600's, and `2i0fns`, whose readings gave its own height and speed tables (issue #23). Other supported mower models do not receive these entities merely because they use the same protocol field names.
 
 ## Write consistency
 
@@ -53,7 +53,7 @@ A future model should be added only after its area protocol has been independent
 2. the raw meaning and valid range of each parameter;
 3. the mapping of those raw values to Home Assistant values and back;
 4. that complete parameter writes are safe with the model's observed payload format; and
-5. whether the model sends `onAreaParameter` at all — it has been observed on `e4gqia`, firmware 1.11.31. On `51rcxt`, firmware 1.13.10, it is inferred rather than captured: a change made in the app showed in Home Assistant immediately (PR #137). `_PendingAreaWrite` does not depend on it, but a model that never sends it will feel slower to confirm writes.
+5. whether the model sends `onAreaParameter` at all — it has been observed on `e4gqia`, firmware 1.11.31. On `51rcxt`, firmware 1.13.10, it is inferred rather than captured: a change made in the app showed in Home Assistant immediately (PR #137). On `2i0fns` it is likewise inferred: changes made in the app showed up seconds apart, faster than the 15-second poll of the area-parameter log (issue #23). `_PendingAreaWrite` does not depend on it, but a model that never sends it will feel slower to confirm writes.
 
 The **Log area parameters** button (`debug.py`, disabled by default) collects the raw side of point 2 and 3 from an owner: it reads the areas once, then for 15 minutes shows every raw value that changes while the owner steps through the settings in the Ecovacs app, in a persistent notification the owner can copy into an issue. It relies on `onAreaParameter` where the model sends it and asks again every 15 seconds for one that does not (point 5). It is read-only and exists on every mower, so it can be used before a model has the profile flag or a mapping. See "Helping to support another model" in the README for the steps a user is asked to follow.
 

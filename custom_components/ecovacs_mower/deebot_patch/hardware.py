@@ -144,6 +144,12 @@ class MowerProfile:
 #                     Pro; see docs/area-parameter-capability.md.
 #                     51rcxt: the A3000 LiDAR Pro's raw values, read for
 #                     every app setting (issue #131), match the A1600's.
+#                     2i0fns: the O1200 LiDAR Pro's raw values, read with the
+#                     app (issue #23): obstacle height and direction fit the
+#                     A1600's; height and speed have their own tables in
+#                     area_numbers.py. Height raw 2-7 are inferred from the
+#                     half-centimetre steps, not read, and no write from Home
+#                     Assistant has run on this class yet.
 #   area_names      — 9bts2s: the ar response captured on a three-lawn O800
 #                     RTK, firmware 1.13.8 (issue #41), after renaming the
 #                     areas in the app:
@@ -198,7 +204,7 @@ class MowerProfile:
 #                     blade alone, and the app names blade, weedRope and
 #                     trimmerBrush to it (issue #146).
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
-    "2i0fns": MowerProfile("2i0fns", zone_mowing=True),
+    "2i0fns": MowerProfile("2i0fns", area_parameters=True, zone_mowing=True),
     "9bts2s": MowerProfile("9bts2s", area_names=True, zone_mowing=True),
     "2px96q": MowerProfile("2px96q"),
     "77atlz": MowerProfile(

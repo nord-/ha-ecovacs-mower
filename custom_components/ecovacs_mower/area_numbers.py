@@ -8,9 +8,9 @@ existing beacon sensors.
 Model- and firmware-specific conversion from raw device values to
 human-sensible Home Assistant values lives exclusively in this HA layer. The
 A1600 LiDAR Pro findings that established these mappings are deliberately scoped
-to that model and to the A3000 LiDAR Pro, whose own readings matched them: the
-values have not been verified on the other mower classes supported by this
-integration.
+to that model and to the A3000 LiDAR Pro, whose own readings matched them; the
+O1200 LiDAR Pro has its own height and speed tables. The values have not been
+verified on the other mower classes supported by this integration.
 
 The four parameter views are writable on the validated models. Each write
 is converted back to raw protocol values and merged with the other three
@@ -174,11 +174,13 @@ class AreaParameterMapping:
 
 
 # The following three tables are the A1600 LiDAR Pro's validated HA
-# representations, which the A3000 LiDAR Pro shares through ``_A1600_MAPPING``:
-# a change made on new A1600 evidence changes both models, so it needs
-# evidence from both. Each pair is a raw value and its HA value, so each table
-# is the single source of truth for conversion in both directions and for the
-# HA number entity's min/max/step metadata.
+# representations. The A3000 LiDAR Pro shares all of them, and the angle
+# formula below, through ``_A1600_MAPPING``; the O1200 LiDAR Pro shares the
+# obstacle height and the angle formula. A change made on new A1600 evidence
+# therefore needs evidence from every model that shares what it changes. Each
+# pair is a raw value and its HA value, so each table is the single source of
+# truth for conversion in both directions and for the HA number entity's
+# min/max/step metadata.
 _A1600_MOW_HEIGHT = AreaParameterLookup(
     {1: 9, 2: 8, 3: 7, 4: 6, 5: 5, 6: 4, 7: 3},
 )
@@ -211,13 +213,15 @@ def _a1600_cut_angle(wire_angle: int) -> int | None:
 def _a1600_cut_angle_to_raw(value: float) -> int | None:
     """Convert an A1600 app-space cutting direction to wire-space angle.
 
-    Whole degrees from 0 to 180 only, as in the Ecovacs app on both models
-    that share this mapping: on the A3000 LiDAR Pro, too, every angle the app
-    sent lay within 0-180 (issue #131). A cutting direction is a line, not a
-    bearing, so 0-180 covers every stripe pattern; the device-wide
-    ``cut_direction`` in ``number.py`` has the same range. The A1600 accepts a
-    higher value written here, and the app then shows it, but the app never
-    sends one and what the mower does with it is untested.
+    Whole degrees from 0 to 180 only, as in the Ecovacs app on every model
+    that shares this formula: on the A3000 LiDAR Pro every angle the app sent
+    lay within 0-180 (issue #131), and on the O1200 LiDAR Pro the raw values of
+    its left, straight and right, and those set in between, all land inside it
+    (issue #23). A cutting direction is a line, not a bearing, so 0-180 covers
+    every stripe pattern; the device-wide ``cut_direction`` in ``number.py``
+    has the same range. The A1600 accepts a higher value written here, and the
+    app then shows it, but the app never sends one and what the mower does
+    with it is untested.
     """
     if value not in range(181):
         return None
@@ -230,6 +234,21 @@ _A1600_CUT_ANGLE = AreaParameterFormula(
     native_min_value=0,
     native_max_value=180,
     native_step=1,
+)
+
+# The O1200 LiDAR Pro's own readings (issue #23). Its height runs in half
+# centimetres, from raw 1 = 8 cm down to raw 11 = 3 cm: raw 1 and 8-11 were
+# read, raw 2-7 follow the same steps. Its app offers only two speeds, so only
+# those two raw values exist here: raw 5 and 6, in between, are never written.
+_O1200_MOW_HEIGHT = AreaParameterLookup(
+    {
+        1: 8.0, 2: 7.5, 3: 7.0, 4: 6.5, 5: 6.0, 6: 5.5,
+        7: 5.0, 8: 4.5, 9: 4.0, 10: 3.5, 11: 3.0,
+    },
+)
+
+_O1200_CUT_SPEED = AreaParameterLookup(
+    {4: 0.50, 7: 0.35},
 )
 
 _A1600_MAPPING = AreaParameterMapping(
@@ -256,6 +275,17 @@ AREA_PARAMETER_MAPPINGS: dict[str, AreaParameterMapping] = {
     # every raw value, and writes from Home Assistant landed as the app shows
     # them (PR #137), so it shares the A1600's mapping rather than a copy.
     "51rcxt": _A1600_MAPPING,
+    # The O1200 LiDAR Pro's obstacle heights matched the A1600's (issue #23). Its
+    # app labels the direction left, straight and right, whose raw 270, 180 and
+    # 90 fall on the A1600 formula's 0, 90 and 180; the in-between raw values
+    # set in the app (141, 177) land inside 0-180 too. Its heights and speeds
+    # did not match, so those are its own.
+    "2i0fns": AreaParameterMapping(
+        mow_height=_O1200_MOW_HEIGHT,
+        cut_speed=_O1200_CUT_SPEED,
+        obstacle_height=_A1600_OBSTACLE_HEIGHT,
+        cut_angle=_A1600_CUT_ANGLE,
+    ),
 }
 
 

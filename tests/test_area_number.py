@@ -465,7 +465,7 @@ async def test_no_area_entities_for_a_vacuum() -> None:
     device.events.subscribe.assert_not_called()
 
 
-@pytest.mark.parametrize("class_", ["e4gqia", "51rcxt"])
+@pytest.mark.parametrize("class_", ["e4gqia", "51rcxt", "2i0fns"])
 async def test_the_validated_mower_gets_area_discovery(class_) -> None:
     from deebot_client.capabilities import DeviceType
 
@@ -584,3 +584,37 @@ def test_a_lookup_cannot_be_changed_after_validation() -> None:
     assert lookup.to_native(3) is None
     with pytest.raises(TypeError):
         lookup.values_by_raw[3] = 1  # type: ignore[index]
+
+
+# The O1200 LiDAR Pro's readings from issue #23, as the app showed them.
+@pytest.mark.parametrize(
+    ("parameter", "raw", "native"),
+    [
+        ("mow_height", 1, 8.0),
+        ("mow_height", 8, 4.5),
+        ("mow_height", 9, 4.0),
+        ("mow_height", 10, 3.5),
+        ("mow_height", 11, 3.0),
+        ("cut_speed", 4, 0.50),
+        ("cut_speed", 7, 0.35),
+        ("obstacle_height", 1, 10),
+        ("obstacle_height", 2, 15),
+        ("obstacle_height", 3, 20),
+    ],
+)
+def test_the_o1200_maps_its_readings(parameter, raw, native) -> None:
+    from custom_components.ecovacs_mower.area_numbers import AREA_PARAMETER_MAPPINGS
+
+    lookup = getattr(AREA_PARAMETER_MAPPINGS["2i0fns"], parameter)
+
+    assert lookup.to_native(raw) == native
+    assert lookup.to_raw(native) == raw
+
+
+def test_the_o1200_offers_only_the_apps_two_speeds() -> None:
+    from custom_components.ecovacs_mower.area_numbers import AREA_PARAMETER_MAPPINGS
+
+    speed = AREA_PARAMETER_MAPPINGS["2i0fns"].cut_speed
+
+    assert [raw for raw in range(1, 8) if speed.to_native(raw) is not None] == [4, 7]
+    assert (speed.native_min_value, speed.native_max_value) == (0.35, 0.50)
