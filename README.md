@@ -138,11 +138,37 @@ model at <issue tracker> so it can be added
 ```
 
 That device class string is exactly what to paste into a
-[new issue](https://github.com/nord-/ha-ecovacs-mower/issues). Adding a
-reported model to `SUPPORTED_CLASSES` is a small, low-risk change — this is
-one of the more useful ways to contribute without touching Python. Saying
-afterwards whether it actually worked is what turns the row into a confirmed
-one.
+[new issue](https://github.com/nord-/ha-ecovacs-mower/issues), along with
+the model name. A new model is added once someone has run the patch on it,
+and you can do that on your own mower before anything is merged — one of
+the more useful ways to contribute, and it takes a single line:
+
+1. Open `config/custom_components/ecovacs_mower/deebot_patch/hardware.py`
+   and add your class inside `SUPPORTED_CLASSES`, using the string from the
+   warning:
+
+   ```python
+       "<class>": MowerProfile("<class>"),
+   ```
+
+2. Restart Home Assistant. The warning should be gone from the log.
+3. From the lawn mower entity, test start, pause, resume and return to dock,
+   and check that the state follows the mower (mowing → paused → returning
+   → docked) and that its position moves on the map while it mows.
+4. Report the result in the issue, together with the mower's firmware
+   version, which the Ecovacs app shows.
+
+Once it is confirmed, the class is added to the integration and ships in
+the next release, so its row enters the table above already confirmed. The
+`o4kvvk`, `6n9pcz` and `0jbd6s` rows were added before this way of working,
+which is why they still wait for that confirmation. Until a release includes
+your class, updating the integration overwrites your local edit, so add the
+line again after each update; once it is included, leave it out.
+
+The line has no capability flags on purpose. Features only some models have,
+such as zone mowing or border mowing, are enabled per device class, and only
+once someone has confirmed them on that class, so you may be asked to test
+one of them as well.
 
 ## Installation
 
