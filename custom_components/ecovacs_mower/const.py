@@ -11,8 +11,12 @@ DOMAIN = "ecovacs_mower"
 # read the manifest.
 ISSUE_TRACKER_URL = "https://github.com/nord-/ha-ecovacs-mower/issues"
 
-# Same key name as the pending core fix (home-assistant/core#178558), so an
-# entry written by either one is readable by the other.
+# The account pair (access_token, user_id) behind the token based login. Core's
+# fix (home-assistant/core#186796) stores the same pair as "account_credentials",
+# but the two integrations never read each other's entries — they belong to
+# different domains — so the name stays: renaming it would need an
+# async_migrate_entry, and an older release would no longer find the pair and
+# would fall back to the password login (the 1013 loop of #21).
 CONF_CREDENTIALS = "credentials"
 CONF_OVERRIDE_REST_URL = "override_rest_url"
 CONF_OVERRIDE_MQTT_URL = "override_mqtt_url"
