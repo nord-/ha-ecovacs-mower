@@ -69,6 +69,9 @@ A3000_LIDAR_PRO = "51rcxt"
 # A tenth, a GOAT O1200 RTK (issue #140); upstream's module is byte-identical
 # to 9bts2s.py apart from the docstring. Not the O1200 LiDAR Pro (2i0fns).
 O1200_RTK = "qhq6i0"
+# An eleventh, a GOAT O500 Panorama (issue #152); upstream's module is
+# byte-identical to 9bts2s.py apart from the docstring.
+O500 = "300lc5"
 
 
 def test_supported_classes_are_the_ones_we_patch() -> None:
@@ -86,6 +89,7 @@ def test_supported_classes_are_the_ones_we_patch() -> None:
         O1000_LIDAR,
         A3000_LIDAR_PRO,
         O1200_RTK,
+        O500,
     }
 
 
