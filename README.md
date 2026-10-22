@@ -62,11 +62,12 @@ in brackets is as of 10 September 2026:
 - [DeebotUniverse/client.py#1587](https://github.com/DeebotUniverse/client.py/pull/1587) — RTK support (open, the author's July ping unanswered)
 - [home-assistant/core#168621](https://github.com/home-assistant/core/issues/168621) — the user-facing symptom report this integration exists to fix (open)
 - [home-assistant/core#169723](https://github.com/home-assistant/core/issues/169723) — mowers exposed with vacuum terminology (open)
-- [DeebotUniverse/client.py#1743](https://github.com/DeebotUniverse/client.py/pull/1743) — password-free session renewal, the fix for the verification loop (open). One thing its thread turned up: the renewed session is only accepted from the same `device_id` that was verified, so the id has to survive restarts. This integration keeps it in the config entry, so it survives restarts.
-- [home-assistant/core#178558](https://github.com/home-assistant/core/pull/178558) — the core side of that fix, blocked on the library release (open, no review)
+- [DeebotUniverse/client.py#1743](https://github.com/DeebotUniverse/client.py/pull/1743) — password-free session renewal, the fix for the verification loop (merged 15 October 2026, released in `deebot-client` 18.7.0; this integration keeps its backport while the manifest accepts 18.6.0). One thing its thread turned up: the renewed session is only accepted from the same `device_id` that was verified, so the id has to survive restarts. This integration keeps it in the config entry, so it survives restarts.
+- [home-assistant/core#186796](https://github.com/home-assistant/core/pull/186796) — the core side of that fix (merged 16 October 2026, shipped in Home Assistant 2026.10.2; it replaced the earlier home-assistant/core#178558)
 
 This integration does not depend on any of those merging. If they do,
-the corresponding patch in this repo becomes dead code and gets deleted.
+the corresponding patch in this repo becomes dead code once the manifest's
+minimum `deebot-client` includes the fix, and gets deleted then.
 
 ### Protocol work upstream that this integration does not have yet
 
