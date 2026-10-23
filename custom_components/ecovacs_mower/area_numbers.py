@@ -314,6 +314,27 @@ AREA_PARAMETER_VALUE_MAPPINGS: dict[
         # land inside 0-180 too.
         "angle": AreaParameterAngle(wire_at_zero=270, native_max_value=180),
     },
+    # GOAT A1600 RTK, read with the app (issue #23, firmware 1.17.11). Its
+    # areas have no cutting direction: they report no angle, the app's own
+    # setAreaParameter carries none, and the direction is set for the whole
+    # mower instead. So it gets no per-area direction entity, and its writes
+    # carry no angle.
+    #
+    # The per-area values in the owner's log are height 1 and 6, speed 1 and
+    # 2, obstacle height 1 and 3. Their app values come from the same app
+    # settings read in Auto mode on this mower, whose levels run the same
+    # way: height 9 cm = 1, 4 cm = 6, 3 cm = 7; Quick = 1, Delicate = 2;
+    # 10, 15, 20 cm = 1, 2, 3.
+    "xmp9ds": {
+        # Cutting height, cm. Raw 2-5 follow the one-centimetre steps.
+        "mowHeightLevel": AreaParameterLookup(
+            {1: 9, 2: 8, 3: 7, 4: 6, 5: 5, 6: 4, 7: 3}
+        ),
+        # Mowing speed, m/s. The app offers two only: Quick and Delicate.
+        "cutMode": AreaParameterLookup({1: 0.70, 2: 0.40}),
+        # Obstacle height, cm.
+        "obstacleHeight": AreaParameterLookup({1: 10, 2: 15, 3: 20}),
+    },
 }
 
 
