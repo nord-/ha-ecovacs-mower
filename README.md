@@ -255,9 +255,9 @@ above), that loop returns for the vacuum.
 
 Forty-six fixed entities on the mower's device page, across eight platforms —
 forty-seven on the G1-800 and A3000 LiDAR Pro, which also get the "Mow border"
-button — plus four writable entities per saved mowing area on the A1600 LiDAR
-Pro (`e4gqia`), A3000 LiDAR Pro (`51rcxt`) and O1200 LiDAR Pro (`2i0fns`), and
-one per UWB beacon on the models that use them:
+button — plus one writable entity per setting of each saved mowing area on the
+A1600 LiDAR Pro (`e4gqia`), A3000 LiDAR Pro (`51rcxt`) and O1200 LiDAR Pro
+(`2i0fns`), and one per UWB beacon on the models that use them:
 
 | Platform | Count | What |
 |---|---|---|
@@ -265,7 +265,7 @@ one per UWB beacon on the models that use them:
 | `sensor` | 16 + one per beacon | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowing progress (see below), job target area, job target duration, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name, and on a beacon-guided mower one battery percentage per UWB beacon (see below) |
 | `binary_sensor` | 6 | Fault — a latched problem that stays on until the mower recovers or you clear it (see below) — plus rain sensor, rain delay, emergency stop, locked, animal protection active: the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
 | `switch` | 9 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection, rain detection, animal protection (see below) |
-| `number` | 3 + four per saved area on the A1600, A3000 and O1200 LiDAR Pro | Notification volume, cutting direction, rain delay duration, plus cutting height, mowing speed, obstacle height and cutting direction for each saved area (see below) |
+| `number` | 3 + one per setting per saved area (four on the A1600, A3000 and O1200 LiDAR Pro) | Notification volume, cutting direction, rain delay duration, plus cutting height, mowing speed, obstacle height and cutting direction for each saved area (see below) |
 | `button` | 8, 9 on the G1-800 and A3000 LiDAR Pro | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), "Clear fault" (releases the latched fault; see below), "End mowing task" (ends the current job for good; see below), "Log area parameters" (diagnostic, disabled by default; shows the raw per-area values to help support another model, see below) and, on the G1-800 and A3000 LiDAR Pro, "Mow border" (starts a border job; see below) |
 | `event` | 2 | Last mowing job (finished / finished with warnings / manually stopped — see below) and Job started (what started or resumed the job — see below) |
 | `image` | 1 | The mower's map — lawn boundary, mowed coverage, no-go zones, detected obstacles, the dock and the mower's live position track. A map that holds several lawns reports one outline per lawn and all of them are drawn, along with the passages between them, the stretches of edge the mower is told to mow flush against, and, on the O800 RTK, each area's name where the mower itself puts it. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, `onMapTrace` on firmware 1.17, and `onMapInfo_V2` on 1.36 — that last one only ever arrives in answer to a `getMapInfo_V2` the integration now sends, as `onMI` does on a non-V2 mower in answer to `getMI`); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only. The mower's position, its heading, the dock and the path it has driven are also attributes of the entity (`position_x`, `position_y`, `heading`, `dock_x`, `dock_y`, `track`) — millimetres in the map's own frame, with the dock as the origin, `heading` in degrees as the mower reports it (counter-clockwise from the frame's +x axis, measured on the G1-800 at firmware 1.36.208 only), and `track` a list of `[x, y]` points thinned to at most about 250 — so a card can draw the mower on something other than the SVG. `position_x`, `position_y` and `heading` are `null` until the mower has reported a position since Home Assistant started |
@@ -405,21 +405,21 @@ one `setAreaParameter` request containing every raw value the mower reported
 for that area, the changed one included, rather than replacing the others with
 defaults.
 
-If the mower has not reported the complete parameter set for an area yet, the
-integration refuses the write rather than guessing the missing values. The
-entity state is also not changed optimistically: Home Assistant reflects the
-value reported back by the mower.
+If the mower has not yet reported a value for every setting the model has in an
+area, the integration refuses the write rather than guessing the missing
+values. The entity state is also not changed optimistically: Home Assistant
+reflects the value reported back by the mower.
 
 Changes made anywhere — the Ecovacs app or Home Assistant — reach the other
 within a couple hundred milliseconds, confirmed both directions. The mower
-broadcasts its current area parameters to every connected client whenever
-they change, not just to whoever made the change, and this integration
-listens for that broadcast. There is no polling involved; nothing needs a
-manual refresh for this to work. Reloading the integration, or restarting
-Home Assistant, still refreshes the saved area name and its parameter values
-from the mower as a fallback — and so does manually calling Home
-Assistant's "Update entity" action (`homeassistant.update_entity`) on any of
-the area entities, without needing a reload.
+broadcasts its current area parameters to every connected client whenever they
+change, not just to whoever made the change, and this integration listens for
+that broadcast. There is no polling involved; nothing needs a manual refresh
+for this to work. Reloading the integration, or restarting Home Assistant,
+still refreshes the saved area name and its parameter values from the mower as
+a fallback — and so does manually calling Home Assistant's "Update entity"
+action (`homeassistant.update_entity`) on any of the area entities, without
+needing a reload.
 
 These parameter mappings are currently confirmed only on the A1600 LiDAR Pro
 (`e4gqia`), A3000 LiDAR Pro (`51rcxt`) and O1200 LiDAR Pro (`2i0fns`). Other
@@ -438,14 +438,14 @@ setting in the Ecovacs app. The **Log area parameters** button collects that:
    turn on *Enabled* in its settings.
 2. Press **Log area parameters**. A notification (the bell in the sidebar)
    opens with a table of every area's raw values.
-3. Within the next 15 minutes, change each setting in the Ecovacs app (cutting
-   height, speed, obstacle height, cutting direction) through the values the
-   app offers, its minimum and maximum included, and write down what you set.
-   The notification updates as the mower reports each change, and lists every
-   change with its time, for example
-   `18:07:06 Area 1 (Front lawn): mowHeightLevel 6 → 7`. A mower that
-   reports changes on its own shows them within a second; for any other the
-   integration asks every 15 seconds, so wait that long between steps.
+3. Within the next 15 minutes, change each setting the app offers per area
+   (cutting height, speed, obstacle height, cutting direction — your model may
+   have fewer) through the values the app offers, its minimum and maximum
+   included, and write down what you set. The notification updates as the mower
+   reports each change, and lists every change with its time, for example
+   `18:07:06 Area 1 (Front lawn): mowHeightLevel 6 → 7`. A mower that reports
+   changes on its own shows them within a second; for any other the integration
+   asks every 15 seconds, so wait that long between steps.
 4. Copy the notification into a new issue, together with your notes and your
    mower's model. The device class the integration needs is in the
    notification's title, in brackets.

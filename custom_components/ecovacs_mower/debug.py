@@ -48,7 +48,7 @@ _LOGGER = logging.getLogger(__name__)
 LOG_WINDOW = timedelta(minutes=15)
 POLL_INTERVAL = timedelta(seconds=15)
 
-# Enough for stepping four settings through their ranges; past it the oldest
+# Enough for stepping every setting through its range; past it the oldest
 # changes give way so the notification stays readable.
 MAX_CHANGES = 50
 
