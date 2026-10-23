@@ -39,7 +39,7 @@ from homeassistant.helpers.event import async_call_later, async_track_time_inter
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .deebot_patch.areas import MowerArea, MowerAreaEvent
+from .deebot_patch.areas import AREA_PARAMETER_KEYS, MowerArea, MowerAreaEvent
 from .deebot_patch.commands import GetAreaParameter, GetAreaSet
 from .deebot_patch.state_precedence import map_id_for
 
@@ -53,9 +53,6 @@ POLL_INTERVAL = timedelta(seconds=15)
 MAX_CHANGES = 50
 
 _TAG = "[area parameters]"
-
-# The raw fields, in the order they are shown.
-_FIELDS = ("mow_height_level", "cut_mode", "obstacle_height", "angle")
 
 type Execute = Callable[[Command], Awaitable[bool]]
 
@@ -179,11 +176,11 @@ class AreaParameterLog:
                 elif before is None:
                     self._change(f"{time} {_name(after)}: new, {_values(after)}")
                 else:
-                    for field in _FIELDS:
-                        old, new = getattr(before, field), getattr(after, field)
+                    for key in AREA_PARAMETER_KEYS:
+                        old, new = before.parameters.get(key), after.parameters.get(key)
                         if old != new:
                             self._change(
-                                f"{time} {_name(after)}: {field} {_raw(old)} → {_raw(new)}"
+                                f"{time} {_name(after)}: {key} {_raw(old)} → {_raw(new)}"
                             )
         self._publish()
 
@@ -220,11 +217,13 @@ class AreaParameterLog:
         elif not self._areas:
             lines.append("The mower reported no areas.")
         else:
-            lines.append("| Area | " + " | ".join(_FIELDS) + " |")
-            lines.append("|---" * (len(_FIELDS) + 1) + "|")
+            # Every known key, also one this model may not have: a column of
+            # "?" is itself what an owner of an unmapped model can report.
+            lines.append("| Area | " + " | ".join(AREA_PARAMETER_KEYS) + " |")
+            lines.append("|---" * (len(AREA_PARAMETER_KEYS) + 1) + "|")
             for area_id in sorted(self._areas, key=_area_order):
                 area = self._areas[area_id]
-                cells = (_raw(getattr(area, field)) for field in _FIELDS)
+                cells = (_raw(area.parameters.get(key)) for key in AREA_PARAMETER_KEYS)
                 lines.append(f"| {_name(area)} | " + " | ".join(cells) + " |")
         if self._changes:
             lines += ["", "**Changes**", *(f"- {line}" for line in self._changes)]
@@ -247,9 +246,11 @@ def _name(area: MowerArea) -> str:
 
 
 def _values(area: MowerArea) -> str:
-    return ", ".join(f"{field}={_raw(getattr(area, field))}" for field in _FIELDS)
+    return ", ".join(
+        f"{key}={_raw(area.parameters.get(key))}" for key in AREA_PARAMETER_KEYS
+    )
 
 
 def _raw(value: int | None) -> str:
-    # None is a field the mower has not reported yet, not a value of zero.
+    # None is a key the mower has not reported, not a value of zero.
     return "?" if value is None else str(value)

@@ -146,10 +146,10 @@ class MowerProfile:
 #                     every app setting (issue #131), match the A1600's.
 #                     2i0fns: the O1200 LiDAR Pro's raw values, read with the
 #                     app (issue #23): obstacle height and direction fit the
-#                     A1600's; height and speed have their own tables in
-#                     area_numbers.py. Height raw 2-7 are inferred from the
-#                     half-centimetre steps, not read, and no write from Home
-#                     Assistant has run on this class yet.
+#                     A1600's, height and speed do not; its own entry in
+#                     area_numbers.py has all four. Height raw 2-7 are
+#                     inferred from the half-centimetre steps, not read, and
+#                     no write from Home Assistant has run on this class yet.
 #   area_names      — 9bts2s: the ar response captured on a three-lawn O800
 #                     RTK, firmware 1.13.8 (issue #41), after renaming the
 #                     areas in the app:

@@ -16,19 +16,24 @@ Area names and IDs are also kept in that same snapshot because `getAreaSet` is t
 
 The patch layer owns only the missing Ecovacs protocol pieces and their raw values:
 
-- `GetAreaParameter` parses `getAreaParameter` and stores `mowHeightLevel`, `cutMode`, `obstacleHeight`, and `angle` as raw values.
+- `GetAreaParameter` parses `getAreaParameter` and stores the raw value of each known key — `AREA_PARAMETER_KEYS` in `areas.py`: `mowHeightLevel`, `cutMode`, `obstacleHeight` and `angle` — in `MowerArea.parameters`, keyed by wire key. A key the mower does not report is absent, so a model without a parameter simply lacks it. A key not in that list is not stored: a field a firmware adds reaches Home Assistant only once it is added there and mapped per model.
 - `OnAreaParameter` parses the mower's unsolicited `onAreaParameter` push through the same `apply_area_parameters` helper `GetAreaParameter` uses, registered in `deebot_patch/messages.py` and `apply()` the same way as this integration's other unsolicited-message handlers (`OnProtectState`, `OnRainDelay`, etc.).
 - `GetAreaSet` reassembles the mower's chunked `ar` response in a per-device fragment buffer, decodes it using the existing deebot-client decompressor, and extracts the area ID and name.
-- `SetAreaParameter` sends all four raw parameter fields for one `areaID`. It extends `ExecuteCommand`, so a reply with a non-zero `code` fails the command instead of passing for success.
+- `SetAreaParameter` sends the raw values it is given for one `areaID`, by wire key; the HA layer gives it the area's whole stored set. It extends `ExecuteCommand`, so a reply with a non-zero `code` fails the command instead of passing for success.
 - The two read commands are registered together as the area refresh so the snapshot can be populated from both responses.
 
 These commands live in `deebot_patch/commands.py`, alongside the other patched protocol commands. `deebot_patch` does not translate the values into units or user-facing meanings.
 
 ## What Home Assistant owns
 
-`area_numbers.py` turns the raw `MowerArea` state into the four Home Assistant parameter entities. The model-specific mappings between raw protocol values and HA values are defined there because those mappings are part of the validated behavior of each mower model, not generic Ecovacs protocol knowledge. The A3000 LiDAR Pro shares the A1600's mapping object, so a change to it changes both models.
+`area_numbers.py` turns the raw `MowerArea` state into one Home Assistant entity per parameter the model has. It holds two tables:
 
-For a write, HA converts the requested value back to its raw representation and combines it with the other three raw values — see "Write consistency" below for where those three values come from and why. The entity does not update its state optimistically.
+- `AREA_PARAMETERS` describes each known parameter as Home Assistant shows it on every model: name, unit, icon, and the suffix in the entity's unique ID.
+- `AREA_PARAMETER_VALUE_MAPPINGS` has one self-contained entry per validated class: the parameters that model has, by wire key, each with its conversion between raw and HA values. A parameter the model does not have is left out and gets no entity.
+
+The model-specific conversions are defined there because they are part of the validated behavior of each mower model, not generic Ecovacs protocol knowledge. Each entry is written out in full, also where two models' values are the same, as the A3000 LiDAR Pro's are the A1600's: a change made for one model never changes another.
+
+For a write, HA converts the requested value back to its raw representation and combines it with the area's other raw values — see "Write consistency" below for where those values come from and why. The write carries every value the mower reported for the area, as the Ecovacs app's own `setAreaParameter` does, and is refused while one the model maps is unknown. The entity does not update its state optimistically.
 
 The capability is exposed only for `e4gqia`, `51rcxt`, whose own readings matched the A1600's, and `2i0fns`, whose readings gave its own height and speed tables (issue #23). Other supported mower models do not receive these entities merely because they use the same protocol field names.
 
@@ -43,7 +48,7 @@ Neither layer updates HA entity state optimistically; `_PendingAreaWrite` only a
 
 ## Availability
 
-An area removed from the mower's inventory (per `getAreaSet`/`GetAreaSet`) is not deleted from Home Assistant — its four entities become unavailable (`EcovacsAreaNumber.available` combines device availability with area presence) rather than showing a stale or blank value. Each entity tracks its own area's presence from its own `MowerAreaEvent` subscription; the platform-level handler only discovers new areas. If the area reappears with the same `areaID`, the existing entities recover; nothing is re-created.
+An area removed from the mower's inventory (per `getAreaSet`/`GetAreaSet`) is not deleted from Home Assistant — its entities become unavailable (`EcovacsAreaNumber.available` combines device availability with area presence) rather than showing a stale or blank value. Each entity tracks its own area's presence from its own `MowerAreaEvent` subscription; the platform-level handler only discovers new areas. If the area reappears with the same `areaID`, the existing entities recover; nothing is re-created.
 
 ## Adding another mower model
 
@@ -57,7 +62,7 @@ A future model should be added only after its area protocol has been independent
 
 The **Log area parameters** button (`debug.py`, disabled by default) collects the raw side of point 2 and 3 from an owner: it reads the areas once, then for 15 minutes shows every raw value that changes while the owner steps through the settings in the Ecovacs app, in a persistent notification the owner can copy into an issue. It relies on `onAreaParameter` where the model sends it and asks again every 15 seconds for one that does not (point 5). It is read-only and exists on every mower, so it can be used before a model has the profile flag or a mapping. See "Helping to support another model" in the README for the steps a user is asked to follow.
 
-Keep the raw protocol handling shared where the wire format is genuinely the same. Add model-specific value mappings in `area_numbers.py` only when they have been validated for that model, and gate the HA capability to that model. Do not assume that an identically named Ecovacs field has identical units, ranges, or semantics on another mower.
+Keep the raw protocol handling shared where the wire format is genuinely the same. Add a model's entry to `AREA_PARAMETER_VALUE_MAPPINGS` only when its values have been validated for that model, naming only the parameters it has, and gate the HA capability to that model with the `area_parameters` profile flag. A parameter no model has had before needs its wire key in `AREA_PARAMETER_KEYS` and an entry in `AREA_PARAMETERS` first; neither gives any model an entity by itself. Do not assume that an identically named Ecovacs field has identical units, ranges, or semantics on another mower.
 
 This keeps the area-parameter capability narrowly scoped: protocol parsing and raw state in `deebot_patch`, model-specific interpretation and HA exposure in `area_numbers.py`, with no unrelated restructuring of existing mower capabilities.
 

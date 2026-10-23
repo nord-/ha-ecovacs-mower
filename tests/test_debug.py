@@ -30,13 +30,18 @@ def _event(*areas):
         MowerAreaEvent,
     )
 
-    return MowerAreaEvent(tuple(MowerArea(**area) for area in areas))
+    def area(fields):
+        # area_id and name as they are; every other key is a raw parameter.
+        fields = dict(fields)
+        return MowerArea(fields.pop("area_id"), fields.pop("name", None), parameters=fields)
+
+    return MowerAreaEvent(tuple(area(fields) for fields in areas))
 
 
-_FRONT = {"area_id": "1", "name": "Front", "mow_height_level": 6, "cut_mode": 7,
-          "obstacle_height": 1, "angle": 227}
-_BACK = {"area_id": "2", "mow_height_level": 3, "cut_mode": 7,
-         "obstacle_height": 1, "angle": 90}
+_FRONT = {"area_id": "1", "name": "Front", "mowHeightLevel": 6, "cutMode": 7,
+          "obstacleHeight": 1, "angle": 227}
+_BACK = {"area_id": "2", "mowHeightLevel": 3, "cutMode": 7,
+         "obstacleHeight": 1, "angle": 90}
 
 
 def _answering(device, event):
@@ -79,13 +84,31 @@ async def test_a_press_shows_every_area_as_a_table(hass) -> None:
         "title": "Area parameters: GOAT (abc123)",
         "notification_id": "ecovacs_mower_area_parameters_did",
     }
-    assert "| Area | mow_height_level | cut_mode | obstacle_height | angle |" in message
+    assert "| Area | mowHeightLevel | cutMode | obstacleHeight | angle |" in message
     # Ordered by id; an unnamed area is still shown, by id alone.
     assert message.index("| Area 1 (Front) | 6 | 7 | 1 | 227 |") < message.index(
         "| Area 2 | 3 | 7 | 1 | 90 |"
     )
     assert "Changes" not in message
     assert [command.NAME for command in sent] == ["getAreaParameter"]
+    log.async_shutdown()
+
+
+async def test_a_key_the_mower_does_not_report_shows_as_unknown(hass) -> None:
+    # The A1600 RTK reports no per-area angle: its column says so, rather
+    # than the key disappearing from the table.
+    from custom_components.ecovacs_mower.debug import AreaParameterLog
+
+    device = _device()
+    rtk = {"area_id": "1", "mowHeightLevel": 6, "cutMode": 2, "obstacleHeight": 1}
+    execute, _ = _answering(device, _event(rtk))
+    log = AreaParameterLog(hass, device, execute)
+
+    with patch(_NOTIFY) as notify:
+        await log.async_start()
+        await _settle()
+
+    assert "| Area 1 | 6 | 2 | 1 | ? |" in _shown(notify)
     log.async_shutdown()
 
 
@@ -100,17 +123,17 @@ async def test_each_change_is_listed_and_the_table_follows(hass) -> None:
         await log.async_start()
         await _settle()
         # What onAreaParameter produces when the app changes one value, twice.
-        device.events.notify(_event({**_FRONT, "mow_height_level": 7}, _BACK))
+        device.events.notify(_event({**_FRONT, "mowHeightLevel": 7}, _BACK))
         await _settle()
-        device.events.notify(_event({**_FRONT, "mow_height_level": 8}, _BACK))
+        device.events.notify(_event({**_FRONT, "mowHeightLevel": 8}, _BACK))
         await _settle()
 
     message = _shown(notify)
     assert "| Area 1 (Front) | 8 | 7 | 1 | 227 |" in message
     changes = [line for line in message.splitlines() if line.startswith("- ")]
     assert [line.split(" ", 2)[2] for line in changes] == [
-        "Area 1 (Front): mow_height_level 6 → 7",
-        "Area 1 (Front): mow_height_level 7 → 8",
+        "Area 1 (Front): mowHeightLevel 6 → 7",
+        "Area 1 (Front): mowHeightLevel 7 → 8",
     ]
     log.async_shutdown()
 
@@ -132,7 +155,7 @@ async def test_areas_that_come_and_go_are_listed(hass) -> None:
 
     message = _shown(notify)
     assert "Area 2: no longer reported" in message
-    assert "Area 2: new, mow_height_level=3, cut_mode=7" in message
+    assert "Area 2: new, mowHeightLevel=3, cutMode=7" in message
     log.async_shutdown()
 
 
@@ -293,13 +316,13 @@ async def test_the_areas_are_asked_again_for_a_mower_that_does_not_push(hass) ->
     with patch(_NOTIFY) as notify:
         await log.async_start()
         await _settle()
-        current[0] = _event({**_FRONT, "cut_mode": 6})
+        current[0] = _event({**_FRONT, "cutMode": 6})
         async_fire_time_changed(hass, dt_util.utcnow() + POLL_INTERVAL)
         await hass.async_block_till_done()
         await _settle()
 
     assert sent == ["getAreaParameter", "getAreaParameter"]
-    assert "Area 1 (Front): cut_mode 7 → 6" in _shown(notify)
+    assert "Area 1 (Front): cutMode 7 → 6" in _shown(notify)
     log.async_shutdown()
 
 

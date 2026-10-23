@@ -376,8 +376,8 @@ range does not imply that the mower has a zone with that ID.
 The A1600 LiDAR Pro (`e4gqia`), A3000 LiDAR Pro (`51rcxt`) and O1200 LiDAR
 Pro (`2i0fns`) also expose the settings stored for each saved mowing area. The
 integration discovers the mower's current area IDs and names at runtime and
-creates four writable `number` entities for each area, with the values each
-model's app offers:
+creates a writable `number` entity for each setting of each area, with the
+values each model's app offers:
 
 | Setting | A1600 and A3000 LiDAR Pro | O1200 LiDAR Pro |
 |---|---|---|
@@ -393,7 +393,7 @@ The entities use the numeric `areaID` for their identity, not the area's name.
 The name shown by the mower is user-editable in the Ecovacs app, so changing
 it does not create a new Home Assistant entity.
 
-If an area is removed from the mower — deleted or re-mapped away — its four
+If an area is removed from the mower — deleted or re-mapped away — its
 entities become unavailable rather than disappearing or showing a stale
 value. They recover automatically if an area with the same ID is reported
 again.
@@ -401,8 +401,9 @@ again.
 The settings are read from the mower with `getAreaParameter` and `getAreaSet`.
 The integration combines those responses into one authoritative area snapshot,
 so a write can preserve the other settings. Changing one value therefore sends
-one complete `setAreaParameter` request containing all four raw parameter
-values rather than replacing the other three with defaults.
+one `setAreaParameter` request containing every raw value the mower reported
+for that area, the changed one included, rather than replacing the others with
+defaults.
 
 If the mower has not reported the complete parameter set for an area yet, the
 integration refuses the write rather than guessing the missing values. The
@@ -415,8 +416,8 @@ broadcasts its current area parameters to every connected client whenever
 they change, not just to whoever made the change, and this integration
 listens for that broadcast. There is no polling involved; nothing needs a
 manual refresh for this to work. Reloading the integration, or restarting
-Home Assistant, still refreshes the saved area name and all four parameter
-values from the mower as a fallback — and so does manually calling Home
+Home Assistant, still refreshes the saved area name and its parameter values
+from the mower as a fallback — and so does manually calling Home
 Assistant's "Update entity" action (`homeassistant.update_entity`) on any of
 the area entities, without needing a reload.
 
@@ -442,7 +443,7 @@ setting in the Ecovacs app. The **Log area parameters** button collects that:
    app offers, its minimum and maximum included, and write down what you set.
    The notification updates as the mower reports each change, and lists every
    change with its time, for example
-   `18:07:06 Area 1 (Front lawn): mow_height_level 6 → 7`. A mower that
+   `18:07:06 Area 1 (Front lawn): mowHeightLevel 6 → 7`. A mower that
    reports changes on its own shows them within a second; for any other the
    integration asks every 15 seconds, so wait that long between steps.
 4. Copy the notification into a new issue, together with your notes and your

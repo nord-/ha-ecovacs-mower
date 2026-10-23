@@ -46,11 +46,12 @@ def test_get_area_parameter_stores_one_areas_values() -> None:
 
     result = GetAreaParameter()._handle_response(event_bus, response)
 
-    area = _areas_for(event_bus)["12"]
-    assert area.mow_height_level == 7
-    assert area.cut_mode == 4
-    assert area.obstacle_height == 15
-    assert area.angle == 90
+    assert _areas_for(event_bus)["12"].parameters == {
+        "mowHeightLevel": 7,
+        "cutMode": 4,
+        "obstacleHeight": 15,
+        "angle": 90,
+    }
     assert result.state is HandlingState.SUCCESS
     event_bus.notify.assert_called_once()
 
@@ -223,7 +224,8 @@ def test_get_area_set_waits_for_the_stream_to_complete() -> None:
 def test_get_area_set_applies_names_once_the_stream_completes() -> None:
     event_bus = Mock()
     _areas_for(event_bus)["12"] = MowerArea(
-        "12", mow_height_level=7, cut_mode=4, obstacle_height=15, angle=90
+        "12",
+        parameters={"mowHeightLevel": 7, "cutMode": 4, "obstacleHeight": 15, "angle": 90},
     )
     command = GetAreaSet()
     decoded = [[1, 12, "North lawn"], [1, 13, "South lawn"]]
@@ -238,8 +240,8 @@ def test_get_area_set_applies_names_once_the_stream_completes() -> None:
     areas = _areas_for(event_bus)
     assert areas["12"].name == "North lawn"
     # Raw parameter values already known for area 12 are untouched by a
-    # getAreaSet answer: it only carries names, never the four parameters.
-    assert areas["12"].mow_height_level == 7
+    # getAreaSet answer: it only carries names, never the parameters.
+    assert areas["12"].parameters["mowHeightLevel"] == 7
     assert areas["13"].name == "South lawn"
     assert result.state is HandlingState.SUCCESS
     event_bus.notify.assert_called_once()
@@ -394,7 +396,7 @@ def _fragment_response(*, batid: str, index: int, subsets: str) -> dict:
 def test_fragments_are_joined_by_index_whatever_order_they_arrive_in() -> None:
     """Completion is a successful decode, not ``infoSize`` (498 vs 196 bytes)."""
     event_bus = Mock()
-    _areas_for(event_bus)["12"] = MowerArea("12", mow_height_level=7)
+    _areas_for(event_bus)["12"] = MowerArea("12", parameters={"mowHeightLevel": 7})
     command = GetAreaSet()
     blob = _ecovacs_lzma(b'[[1,12,"North lawn"],[1,13,"South lawn"]]')
     third = len(blob) // 3
@@ -416,7 +418,9 @@ def test_fragments_are_joined_by_index_whatever_order_they_arrive_in() -> None:
 
     assert all(result.state is HandlingState.SUCCESS for result in results)
     assert _areas_for(event_bus) == {
-        "12": MowerArea("12", name="North lawn", mow_height_level=7),
+        "12": MowerArea(
+            "12", name="North lawn", parameters={"mowHeightLevel": 7}
+        ),
         "13": MowerArea("13", name="South lawn"),
     }
     event_bus.notify.assert_called_once()
@@ -466,10 +470,15 @@ def test_a_new_transfer_is_not_joined_onto_an_abandoned_one() -> None:
     assert _areas_for(event_bus) == {"12": MowerArea("12", name="North lawn")}
 
 
-def test_set_area_parameter_sends_the_complete_raw_payload() -> None:
-    command = SetAreaParameter(
-        area_id="12", mow_height_level=4, cut_mode=3, obstacle_height=15, angle=270
+def _set_area_parameter() -> SetAreaParameter:
+    return SetAreaParameter(
+        area_id="12",
+        parameters={"mowHeightLevel": 4, "cutMode": 3, "obstacleHeight": 15, "angle": 270},
     )
+
+
+def test_set_area_parameter_sends_the_complete_raw_payload() -> None:
+    command = _set_area_parameter()
 
     assert command.NAME == "setAreaParameter"
     assert command._args == {
@@ -488,9 +497,7 @@ def test_set_area_parameter_sends_the_complete_raw_payload() -> None:
 def test_set_area_parameter_reads_the_reply_code(code, state) -> None:
     # The transport says "ok" either way; only body.code says whether the
     # mower took the values.
-    command = SetAreaParameter(
-        area_id="12", mow_height_level=4, cut_mode=3, obstacle_height=15, angle=270
-    )
+    command = _set_area_parameter()
     response = {"ret": "ok", "resp": {"header": {}, "body": {"code": code}}}
 
     assert command._handle_response(Mock(), response).state is state
@@ -520,7 +527,7 @@ def test_on_area_parameter_applies_the_push_the_same_way_as_the_get_answer() -> 
 
     result = OnAreaParameter._handle_body_data_dict(event_bus, data)
 
-    assert _areas_for(event_bus)["3"].obstacle_height == 3
+    assert _areas_for(event_bus)["3"].parameters["obstacleHeight"] == 3
     assert result.state is HandlingState.SUCCESS
     event_bus.notify.assert_called_once()
 
@@ -530,14 +537,16 @@ def test_a_partial_push_keeps_the_fields_it_does_not_carry() -> None:
 
     event_bus = Mock()
     _areas_for(event_bus)["3"] = MowerArea(
-        "3", mow_height_level=6, cut_mode=7, obstacle_height=3, angle=227
+        "3",
+        parameters={"mowHeightLevel": 6, "cutMode": 7, "obstacleHeight": 3, "angle": 227},
     )
     data = {"areaParameters": [{"areaID": "3", "angle": 90, "cutMode": "bad"}]}
 
     OnAreaParameter._handle_body_data_dict(event_bus, data)
 
     assert _areas_for(event_bus)["3"] == MowerArea(
-        "3", mow_height_level=6, cut_mode=7, obstacle_height=3, angle=90
+        "3",
+        parameters={"mowHeightLevel": 6, "cutMode": 7, "obstacleHeight": 3, "angle": 90},
     )
 
 
@@ -550,3 +559,50 @@ def test_on_area_parameter_rejects_a_missing_areaParameters_key() -> None:
 
     assert result.state is HandlingState.ANALYSE
     event_bus.notify.assert_not_called()
+
+
+def test_set_area_parameter_sends_only_the_keys_it_is_given() -> None:
+    # A model without a per-area angle: the key is left out, not sent as 0.
+    command = SetAreaParameter(
+        area_id="1", parameters={"obstacleHeight": 1, "mowHeightLevel": 6, "cutMode": 2}
+    )
+
+    assert list(command._args.items()) == [
+        ("areaID", "1"),
+        ("mowHeightLevel", 6),
+        ("cutMode", 2),
+        ("obstacleHeight", 1),
+    ]
+
+
+@pytest.mark.parametrize(
+    "parameters", [{}, {"mowHeightLevel": 6, "edgeMode": 1}], ids=["none", "unknown key"]
+)
+def test_set_area_parameter_refuses_what_is_not_a_known_parameter_set(
+    parameters,
+) -> None:
+    with pytest.raises(ValueError):
+        SetAreaParameter(area_id="1", parameters=parameters)
+
+
+def test_a_payload_key_that_is_not_known_is_not_stored() -> None:
+    # A field a firmware adds stays out of the snapshot until it is added to
+    # AREA_PARAMETER_KEYS and mapped per model.
+    event_bus = Mock()
+    data = {"areaParameters": [{"areaID": "1", "cutMode": 2, "edgeMode": 1}]}
+
+    GetAreaParameter()._handle_response(
+        event_bus, _ok_area_parameter_response(*data["areaParameters"])
+    )
+
+    assert _areas_for(event_bus)["1"].parameters == {"cutMode": 2}
+
+
+def test_an_area_keeps_its_parameters_read_only_and_in_the_known_order() -> None:
+    area = MowerArea("1", parameters={"angle": 90, "cutMode": 2})
+
+    assert list(area.parameters) == ["cutMode", "angle"]
+    with pytest.raises(TypeError):
+        area.parameters["cutMode"] = 3  # type: ignore[index]
+    with pytest.raises(ValueError):
+        MowerArea("1", parameters={"edgeMode": 1})

@@ -18,16 +18,17 @@ def _device() -> MagicMock:
 
 
 def _mapping():
-    from custom_components.ecovacs_mower.area_numbers import AREA_PARAMETER_MAPPINGS
+    from custom_components.ecovacs_mower.area_numbers import AREA_PARAMETER_VALUE_MAPPINGS
 
-    return AREA_PARAMETER_MAPPINGS["e4gqia"]
+    return AREA_PARAMETER_VALUE_MAPPINGS["e4gqia"]
 
 
 def _full_area(area_id: str = "12"):
     from custom_components.ecovacs_mower.deebot_patch.areas import MowerArea
 
     return MowerArea(
-        area_id, mow_height_level=7, cut_mode=4, obstacle_height=15, angle=90
+        area_id,
+        parameters={"mowHeightLevel": 7, "cutMode": 4, "obstacleHeight": 15, "angle": 90},
     )
 
 
@@ -46,41 +47,68 @@ def _seed_area(device: MagicMock, area) -> None:
 def _cutting_height_description():
     from custom_components.ecovacs_mower.area_numbers import area_number_descriptions
 
-    return area_number_descriptions("12", area_mapping=_mapping())[0]
+    return area_number_descriptions("12", value_mappings=_mapping())[0]
 
 
 def _mowing_speed_description():
     from custom_components.ecovacs_mower.area_numbers import area_number_descriptions
 
-    return area_number_descriptions("12", area_mapping=_mapping())[1]
+    return area_number_descriptions("12", value_mappings=_mapping())[1]
+
+
+_ALL_KEYS = ("mowHeightLevel", "cutMode", "obstacleHeight", "angle")
 
 
 def test_build_set_area_parameter_refuses_an_incomplete_snapshot() -> None:
     from custom_components.ecovacs_mower.area_numbers import build_set_area_parameter
 
-    incomplete = {
-        "mow_height_level": 7,
-        "cut_mode": None,
-        "obstacle_height": 15,
-        "angle": 90,
-    }
-    assert build_set_area_parameter("12", incomplete, "mow_height_level", 6) is None
+    # cutMode is mapped but not reported yet.
+    incomplete = {"mowHeightLevel": 7, "obstacleHeight": 15, "angle": 90}
+    assert (
+        build_set_area_parameter("12", incomplete, _ALL_KEYS, "mowHeightLevel", 6)
+        is None
+    )
 
 
-def test_build_set_area_parameter_merges_the_other_three_values() -> None:
+def test_build_set_area_parameter_merges_the_other_values() -> None:
     from custom_components.ecovacs_mower.area_numbers import build_set_area_parameter
 
-    current = {
-        "mow_height_level": 7,
-        "cut_mode": 4,
-        "obstacle_height": 15,
+    current = {"mowHeightLevel": 7, "cutMode": 4, "obstacleHeight": 15, "angle": 90}
+    command = build_set_area_parameter("12", current, _ALL_KEYS, "cutMode", 2)
+    assert command._args == {
+        "areaID": "12",
+        "mowHeightLevel": 7,
+        "cutMode": 2,
+        "obstacleHeight": 15,
         "angle": 90,
     }
-    command = build_set_area_parameter("12", current, "cut_mode", 2)
-    assert command._args["mowHeightLevel"] == 7
-    assert command._args["cutMode"] == 2
-    assert command._args["obstacleHeight"] == 15
-    assert command._args["angle"] == 90
+
+
+def test_a_model_without_an_angle_writes_without_one() -> None:
+    from custom_components.ecovacs_mower.area_numbers import build_set_area_parameter
+
+    current = {"mowHeightLevel": 6, "cutMode": 2, "obstacleHeight": 1}
+    required = ("mowHeightLevel", "cutMode", "obstacleHeight")
+    command = build_set_area_parameter("1", current, required, "cutMode", 1)
+
+    assert command._args == {
+        "areaID": "1",
+        "mowHeightLevel": 6,
+        "cutMode": 1,
+        "obstacleHeight": 1,
+    }
+
+
+def test_a_reported_value_the_model_does_not_map_is_sent_back_unchanged() -> None:
+    # The write is the area's whole stored set, as the app sends it: a value
+    # the mapping leaves out is neither dropped nor changed.
+    from custom_components.ecovacs_mower.area_numbers import build_set_area_parameter
+
+    current = {"mowHeightLevel": 6, "cutMode": 2, "obstacleHeight": 1, "angle": 227}
+    required = ("mowHeightLevel", "cutMode", "obstacleHeight")
+    command = build_set_area_parameter("1", current, required, "cutMode", 1)
+
+    assert command._args["angle"] == 227
 
 
 async def test_write_raises_when_the_area_has_not_reported_yet() -> None:
@@ -107,7 +135,7 @@ async def test_write_raises_when_the_area_has_not_reported_yet() -> None:
 def test_every_slider_position_maps_to_a_raw_speed() -> None:
     # The frontend sends min + step * n, which is not always the float the
     # table spells: 0.40 + 0.05 * 4 is 0.6000000000000001.
-    speed = _mapping().cut_speed
+    speed = _mapping()["cutMode"]
     positions = [
         speed.native_min_value + speed.native_step * n
         for n in range(len(speed.values_by_raw))
@@ -440,7 +468,7 @@ def test_every_area_parameters_class_has_a_mapping() -> None:
     The setup skips a class with the flag but no mapping without a word, which
     is how issue #135 met it: the flag set by hand, and no entities, no log.
     """
-    from custom_components.ecovacs_mower.area_numbers import AREA_PARAMETER_MAPPINGS
+    from custom_components.ecovacs_mower.area_numbers import AREA_PARAMETER_VALUE_MAPPINGS
     from custom_components.ecovacs_mower.deebot_patch.hardware import (
         SUPPORTED_CLASSES,
     )
@@ -449,7 +477,7 @@ def test_every_area_parameters_class_has_a_mapping() -> None:
         class_
         for class_, profile in SUPPORTED_CLASSES.items()
         if profile.area_parameters
-    } == AREA_PARAMETER_MAPPINGS.keys()
+    } == AREA_PARAMETER_VALUE_MAPPINGS.keys()
 
 
 async def test_no_area_entities_for_a_vacuum() -> None:
@@ -488,12 +516,12 @@ async def test_the_validated_mower_gets_area_discovery(class_) -> None:
 def test_the_a1600_cut_angle_reads_any_wire_angle(wire, app) -> None:
     # Also above the app's 180: an area set to 181 from HA before the limit
     # (wire 89) still reads as what it is.
-    assert _mapping().cut_angle.to_native(wire) == app
+    assert _mapping()["angle"].to_native(wire) == app
 
 
 @pytest.mark.parametrize(("app", "wire"), [(0, 270), (90, 180), (180, 90)])
 def test_the_a1600_cut_angle_writes_the_apps_range(app, wire) -> None:
-    angle = _mapping().cut_angle
+    angle = _mapping()["angle"]
 
     assert angle.to_raw(app) == wire
     assert angle.to_native(wire) == app
@@ -502,7 +530,7 @@ def test_the_a1600_cut_angle_writes_the_apps_range(app, wire) -> None:
 def test_the_a1600_cut_angle_refuses_what_the_app_cannot_set() -> None:
     # A direction is a line: 0-180 covers every stripe pattern, and the app
     # offers nothing above it. Fractions are refused as before.
-    angle = _mapping().cut_angle
+    angle = _mapping()["angle"]
 
     assert angle.native_min_value == 0
     assert angle.native_max_value == 180
@@ -511,24 +539,28 @@ def test_the_a1600_cut_angle_refuses_what_the_app_cannot_set() -> None:
 
 
 def test_the_a1600_cut_angle_rejects_values_outside_a_circle() -> None:
-    angle = _mapping().cut_angle
+    angle = _mapping()["angle"]
 
     assert angle.to_native(360) is None
     assert angle.to_raw(-1) is None
 
 
 # The validated A1600 readings, raw values counting from 1. The tables must name
-# exactly these pairs.
+# exactly these pairs, on the A1600 and on the A3000 LiDAR Pro, which writes
+# the same values out in its own entry.
 _A1600_POSITIONAL = {
-    "mow_height": (9, 8, 7, 6, 5, 4, 3),
-    "cut_speed": (0.70, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40),
-    "obstacle_height": (10, 15, 20),
+    "mowHeightLevel": (9, 8, 7, 6, 5, 4, 3),
+    "cutMode": (0.70, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40),
+    "obstacleHeight": (10, 15, 20),
 }
 
 
+@pytest.mark.parametrize("class_", ["e4gqia", "51rcxt"])
 @pytest.mark.parametrize("parameter", sorted(_A1600_POSITIONAL))
-def test_the_a1600_tables_behave_as_before(parameter) -> None:
-    lookup = getattr(_mapping(), parameter)
+def test_the_a1600_tables_behave_as_before(class_, parameter) -> None:
+    from custom_components.ecovacs_mower.area_numbers import AREA_PARAMETER_VALUE_MAPPINGS
+
+    lookup = AREA_PARAMETER_VALUE_MAPPINGS[class_][parameter]
     positional = _A1600_POSITIONAL[parameter]
     expected = dict(enumerate(positional, start=1))
 
@@ -539,6 +571,88 @@ def test_the_a1600_tables_behave_as_before(parameter) -> None:
     assert lookup.native_min_value == float(min(positional))
     assert lookup.native_max_value == float(max(positional))
     assert lookup.native_step == abs(round(positional[1] - positional[0], 10))
+
+
+@pytest.mark.parametrize("class_", ["e4gqia", "51rcxt"])
+def test_the_a1600_cut_angle_is_written_out_on_both_models(class_) -> None:
+    from custom_components.ecovacs_mower.area_numbers import (
+        AREA_PARAMETER_VALUE_MAPPINGS,
+        AreaParameterAngle,
+    )
+
+    assert AREA_PARAMETER_VALUE_MAPPINGS[class_]["angle"] == AreaParameterAngle(
+        wire_at_zero=270, native_max_value=180
+    )
+
+
+def test_the_parameters_are_the_known_wire_keys() -> None:
+    # A parameter without a wire key would never have a value, and a known
+    # key without a parameter could never be mapped.
+    from custom_components.ecovacs_mower.area_numbers import AREA_PARAMETERS
+    from custom_components.ecovacs_mower.deebot_patch.areas import (
+        AREA_PARAMETER_KEYS,
+    )
+
+    assert tuple(parameter.key for parameter in AREA_PARAMETERS) == AREA_PARAMETER_KEYS
+
+
+def test_every_mapping_names_only_known_parameters() -> None:
+    # A key no parameter describes would be skipped without a word.
+    from custom_components.ecovacs_mower.area_numbers import (
+        AREA_PARAMETERS,
+        AREA_PARAMETER_VALUE_MAPPINGS,
+    )
+
+    known = {parameter.key for parameter in AREA_PARAMETERS}
+    for class_, mapping in AREA_PARAMETER_VALUE_MAPPINGS.items():
+        assert mapping.keys() <= known, class_
+
+
+def test_the_entity_keys_stay_what_they_were() -> None:
+    # They are part of every existing entity's unique ID.
+    from homeassistant.components.number import NumberMode
+
+    from custom_components.ecovacs_mower.area_numbers import area_number_descriptions
+
+    descriptions = area_number_descriptions("12", value_mappings=_mapping())
+
+    assert [description.key for description in descriptions] == [
+        "area_12_cutting_height",
+        "area_12_mowing_speed",
+        "area_12_obstacle_height",
+        "area_12_cut_direction",
+    ]
+    assert [description.suggested_object_id for description in descriptions] == [
+        "12_cutting_height",
+        "12_mowing_speed",
+        "12_obstacle_height",
+        "12_cut_direction",
+    ]
+    assert descriptions[3].mode is NumberMode.BOX
+
+
+def test_a_model_gets_a_view_only_for_what_its_mapping_names() -> None:
+    from custom_components.ecovacs_mower.area_numbers import (
+        AreaParameterLookup,
+        area_number_descriptions,
+    )
+
+    # Listed out of order on purpose: the entities follow AREA_PARAMETERS.
+    mapping = {
+        "obstacleHeight": AreaParameterLookup({1: 10, 2: 15, 3: 20}),
+        "mowHeightLevel": AreaParameterLookup({1: 9, 2: 8}),
+    }
+
+    descriptions = area_number_descriptions("1", value_mappings=mapping)
+
+    assert [description.parameter_key for description in descriptions] == [
+        "mowHeightLevel",
+        "obstacleHeight",
+    ]
+    assert all(
+        description.area_keys == ("mowHeightLevel", "obstacleHeight")
+        for description in descriptions
+    )
 
 
 def test_a_lookup_offers_only_the_raw_values_it_names() -> None:
@@ -590,31 +704,39 @@ def test_a_lookup_cannot_be_changed_after_validation() -> None:
 @pytest.mark.parametrize(
     ("parameter", "raw", "native"),
     [
-        ("mow_height", 1, 8.0),
-        ("mow_height", 8, 4.5),
-        ("mow_height", 9, 4.0),
-        ("mow_height", 10, 3.5),
-        ("mow_height", 11, 3.0),
-        ("cut_speed", 4, 0.50),
-        ("cut_speed", 7, 0.35),
-        ("obstacle_height", 1, 10),
-        ("obstacle_height", 2, 15),
-        ("obstacle_height", 3, 20),
+        ("mowHeightLevel", 1, 8.0),
+        ("mowHeightLevel", 8, 4.5),
+        ("mowHeightLevel", 9, 4.0),
+        ("mowHeightLevel", 10, 3.5),
+        ("mowHeightLevel", 11, 3.0),
+        ("cutMode", 4, 0.50),
+        ("cutMode", 7, 0.35),
+        ("obstacleHeight", 1, 10),
+        ("obstacleHeight", 2, 15),
+        ("obstacleHeight", 3, 20),
+        # Left, straight and right in the app.
+        ("angle", 270, 0),
+        ("angle", 180, 90),
+        ("angle", 90, 180),
     ],
 )
 def test_the_o1200_maps_its_readings(parameter, raw, native) -> None:
-    from custom_components.ecovacs_mower.area_numbers import AREA_PARAMETER_MAPPINGS
+    from custom_components.ecovacs_mower.area_numbers import (
+        AREA_PARAMETER_VALUE_MAPPINGS,
+    )
 
-    lookup = getattr(AREA_PARAMETER_MAPPINGS["2i0fns"], parameter)
+    value_mapping = AREA_PARAMETER_VALUE_MAPPINGS["2i0fns"][parameter]
 
-    assert lookup.to_native(raw) == native
-    assert lookup.to_raw(native) == raw
+    assert value_mapping.to_native(raw) == native
+    assert value_mapping.to_raw(native) == raw
 
 
 def test_the_o1200_offers_only_the_apps_two_speeds() -> None:
-    from custom_components.ecovacs_mower.area_numbers import AREA_PARAMETER_MAPPINGS
+    from custom_components.ecovacs_mower.area_numbers import (
+        AREA_PARAMETER_VALUE_MAPPINGS,
+    )
 
-    speed = AREA_PARAMETER_MAPPINGS["2i0fns"].cut_speed
+    speed = AREA_PARAMETER_VALUE_MAPPINGS["2i0fns"]["cutMode"]
 
     assert [raw for raw in range(1, 8) if speed.to_native(raw) is not None] == [4, 7]
     assert (speed.native_min_value, speed.native_max_value) == (0.35, 0.50)
