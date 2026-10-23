@@ -4,9 +4,11 @@ The patch owns the mower-reported area snapshot because the upstream client does
 not model these GOAT commands yet. Home Assistant consumes the resulting state
 and does not parse the Ecovacs wire format.
 
-The area values remain raw protocol values here. Model- and firmware-specific
-conversion to human-sensible Home Assistant values belongs exclusively to the
-HA layer and must not be generalized here without validation.
+The area values remain raw protocol values here, keyed by their wire key. Model-
+and firmware-specific conversion to human-sensible Home Assistant values
+belongs exclusively to the HA layer and must not be generalized here without
+validation. Which keys a model has is the HA layer's business too: this layer
+stores every key in ``AREA_PARAMETER_KEYS`` the mower reports, and only those.
 
 The area name is a separate response from ``getAreaSet``. Its ``ar`` response
 contains chunked Base64/LZMA data whose decoded rows start with map ID, area ID
@@ -18,8 +20,10 @@ state here.
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 import logging
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary
 
@@ -32,6 +36,13 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+# The per-area parameters this integration knows, by wire key, in the order
+# they are shown and sent. Explicit on purpose: a key a firmware adds is not
+# stored until it is added here and mapped per model in ``area_numbers.py``,
+# so nothing about an unvalidated field reaches Home Assistant on its own.
+AREA_PARAMETER_KEYS = ("mowHeightLevel", "cutMode", "obstacleHeight", "angle")
+
+
 @dataclass(frozen=True)
 class MowerArea:
     """The raw per-area parameters plus the optional app-defined name.
@@ -39,15 +50,41 @@ class MowerArea:
     ``label`` is where the mower itself puts that name on the map, in the
     map frame's millimetres: columns 5 and 6 of the ``ar`` row, which a
     three-lawn GOAT O800 RTK fills with a point inside each area.
+
+    ``parameters`` maps each key of ``AREA_PARAMETER_KEYS`` the mower has
+    reported for the area to its raw value. A key it has not reported is
+    absent, not ``None``: not every model has every parameter.
     """
 
     area_id: str
     name: str | None = None
     label: tuple[int, int] | None = None
-    mow_height_level: int | None = None
-    cut_mode: int | None = None
-    obstacle_height: int | None = None
-    angle: int | None = None
+    # Excluded from the hash: a mapping is not hashable, and the frozen
+    # dataclass would otherwise generate a __hash__ that fails on first use.
+    parameters: Mapping[str, int] = field(default_factory=dict, hash=False)
+
+    def __post_init__(self) -> None:
+        """Refuse an unknown key, and freeze the table in the known order.
+
+        Read-only because the snapshot is shared: every entity of the area
+        reads the same object, and ``EventBus.notify`` compares it with the
+        next one. In ``AREA_PARAMETER_KEYS`` order so two areas with the same
+        values compare and print alike however the payload ordered them.
+        """
+        unknown = self.parameters.keys() - set(AREA_PARAMETER_KEYS)
+        if unknown:
+            raise ValueError(f"Unknown area parameter keys: {sorted(unknown)}")
+        object.__setattr__(
+            self,
+            "parameters",
+            MappingProxyType(
+                {
+                    key: self.parameters[key]
+                    for key in AREA_PARAMETER_KEYS
+                    if key in self.parameters
+                }
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -103,16 +140,21 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
-def _merged(parameter: dict[str, Any], key: str, known: int | None) -> int | None:
-    """Return the payload's value for *key*, or the known one if it has none.
+def _merged(parameter: dict[str, Any], known: Mapping[str, int]) -> dict[str, int]:
+    """Return the known values with every usable value of the payload applied.
 
-    A row that omits a field, or carries one ``_as_int`` rejects, must not
-    blank what the mower reported earlier: ``build_set_area_parameter``
-    refuses any snapshot with a ``None`` in it, so one short push would make
-    all four entities of the area unwritable until the next full answer.
+    Only the keys of ``AREA_PARAMETER_KEYS`` are read. A row that omits a
+    key, or carries one ``_as_int`` rejects, must not drop what the mower
+    reported earlier: ``build_set_area_parameter`` refuses an area whose
+    mapped keys are not all known, so one short push would make every entity
+    of the area unwritable until the next full answer.
     """
-    value = _as_int(parameter.get(key))
-    return known if value is None else value
+    merged = dict(known)
+    for key in AREA_PARAMETER_KEYS:
+        value = _as_int(parameter.get(key))
+        if value is not None:
+            merged[key] = value
+    return merged
 
 
 def apply_area_parameters(event_bus: EventBus, parameters: Any) -> bool:
@@ -124,7 +166,7 @@ def apply_area_parameters(event_bus: EventBus, parameters: Any) -> bool:
     a field. Returns whether ``parameters`` was even a usable list; a bad row
     inside a good list is skipped, not rejected outright.
 
-    Merged per field, the way ``GetAreaSet`` carries the parameters forward:
+    Merged per key, the way ``GetAreaSet`` carries the parameters forward:
     the push is unsolicited and its shape is not ours to control.
     """
     if not isinstance(parameters, list):
@@ -137,17 +179,10 @@ def apply_area_parameters(event_bus: EventBus, parameters: Any) -> bool:
         area_id = str(parameter["areaID"])
         answers[area_id] = answers.get(area_id, 0) + 1
         current = areas.get(area_id, MowerArea(area_id))
-        areas[area_id] = MowerArea(
-            area_id=current.area_id,
-            name=current.name,
-            mow_height_level=_merged(
-                parameter, "mowHeightLevel", current.mow_height_level
-            ),
-            cut_mode=_merged(parameter, "cutMode", current.cut_mode),
-            obstacle_height=_merged(
-                parameter, "obstacleHeight", current.obstacle_height
-            ),
-            angle=_merged(parameter, "angle", current.angle),
+        # ``replace``, not a new MowerArea: what getAreaSet reported, the
+        # name and the label point, is not this payload's to drop.
+        areas[area_id] = replace(
+            current, parameters=_merged(parameter, current.parameters)
         )
     _notify(event_bus)
     return True
@@ -216,6 +251,7 @@ def reset() -> None:
 
 
 __all__ = [
+    "AREA_PARAMETER_KEYS",
     "MowerArea",
     "MowerAreaEvent",
     "apply_area_parameters",

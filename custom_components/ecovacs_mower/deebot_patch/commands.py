@@ -38,10 +38,10 @@ setting is writable, so it needs both halves (issue #54).
 
 The area commands are also defined here because they are protocol commands,
 not area state. ``GetAreaParameter`` and ``GetAreaSet`` populate the raw area
-snapshot owned by ``areas.py``; ``SetAreaParameter`` writes one complete raw
-area parameter set. Keeping the command definitions beside the other patch
-commands follows the library's command-module ownership while leaving all
-Home Assistant value conversion in ``area_numbers.py``.
+snapshot owned by ``areas.py``; ``SetAreaParameter`` writes one area's raw
+parameters in one request. Keeping the command definitions beside the other
+patch commands follows the library's command-module ownership while leaving
+all Home Assistant value conversion in ``area_numbers.py``.
 
 ``GetAnimProtect`` and ``SetAnimProtect`` are the same pair for the
 animal-protection setting and its window (issue #45).
@@ -62,6 +62,8 @@ from __future__ import annotations
 
 from abc import ABC
 import asyncio
+from collections.abc import Mapping
+from dataclasses import replace
 import logging
 from datetime import time
 from typing import TYPE_CHECKING, Any
@@ -89,6 +91,7 @@ from deebot_client.models import CleanAction, CleanMode, State
 import orjson
 
 from .areas import (
+    AREA_PARAMETER_KEYS,
     MowerArea,
     _areas_for,
     _notify,
@@ -1075,14 +1078,9 @@ class GetAreaSet(CustomCommand):
             name = name.strip() if isinstance(name, str) else None
             label = _label_from(row)
             current = areas.get(area_id, MowerArea(area_id))
-            areas[area_id] = MowerArea(
-                area_id=current.area_id,
-                name=name or current.name,
-                label=label or current.label,
-                mow_height_level=current.mow_height_level,
-                cut_mode=current.cut_mode,
-                obstacle_height=current.obstacle_height,
-                angle=current.angle,
+            # The parameters are carried forward: this answer never has them.
+            areas[area_id] = replace(
+                current, name=name or current.name, label=label or current.label
             )
 
         if not reported_ids:
@@ -1115,7 +1113,13 @@ def _label_from(row: list[Any]) -> tuple[int, int] | None:
 
 
 class SetAreaParameter(ExecuteCommand):
-    """Set the complete raw parameter set for one mower area.
+    """Set the raw parameters of one mower area, all in one request.
+
+    Sends exactly the ``parameters`` it is given, by wire key, in
+    ``AREA_PARAMETER_KEYS`` order. Which keys those are is decided by the
+    caller: ``area_numbers.build_set_area_parameter`` passes every value the
+    mower reported for the area, with the one being changed replaced, which
+    is what the Ecovacs app sends too.
 
     ``ExecuteCommand`` for the same reason as ``SetRainDelay``: a non-zero
     ``code`` in the reply is a refusal, and ``CustomCommand`` checks only the
@@ -1126,22 +1130,18 @@ class SetAreaParameter(ExecuteCommand):
 
     NAME = "setAreaParameter"
 
-    def __init__(
-        self,
-        *,
-        area_id: str,
-        mow_height_level: int,
-        cut_mode: int,
-        obstacle_height: int,
-        angle: int,
-    ) -> None:
+    def __init__(self, *, area_id: str, parameters: Mapping[str, int]) -> None:
+        unknown = parameters.keys() - set(AREA_PARAMETER_KEYS)
+        if unknown or not parameters:
+            raise ValueError(f"Not a set of area parameters: {dict(parameters)}")
         super().__init__(
             {
                 "areaID": area_id,
-                "mowHeightLevel": mow_height_level,
-                "cutMode": cut_mode,
-                "obstacleHeight": obstacle_height,
-                "angle": angle,
+                **{
+                    key: parameters[key]
+                    for key in AREA_PARAMETER_KEYS
+                    if key in parameters
+                },
             }
         )
 
