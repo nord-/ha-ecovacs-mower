@@ -73,6 +73,22 @@ def test_get_area_parameter_preserves_the_name_already_known_from_getAreaSet() -
     assert _areas_for(event_bus)["12"].name == "North lawn"
 
 
+def test_a_parameter_push_keeps_the_label_point_from_getAreaSet() -> None:
+    # The push is handled on every patched mower, so a change made in the
+    # app on an area_names class must not take the name off the map.
+    from custom_components.ecovacs_mower.deebot_patch.messages import OnAreaParameter
+
+    event_bus = Mock()
+    _areas_for(event_bus)["1"] = MowerArea(
+        "1", name="Hinten", label=(-16900, 13900)
+    )
+    data = {"areaParameters": [{"areaID": "1", "mowHeightLevel": 4}]}
+
+    OnAreaParameter._handle_body_data_dict(event_bus, data)
+
+    assert _areas_for(event_bus)["1"].label == (-16900, 13900)
+
+
 def test_get_area_parameter_skips_a_row_without_an_area_id() -> None:
     event_bus = Mock()
     response = _ok_area_parameter_response({"mowHeightLevel": 7})

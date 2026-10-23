@@ -18,7 +18,7 @@ state here.
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary
@@ -137,9 +137,10 @@ def apply_area_parameters(event_bus: EventBus, parameters: Any) -> bool:
         area_id = str(parameter["areaID"])
         answers[area_id] = answers.get(area_id, 0) + 1
         current = areas.get(area_id, MowerArea(area_id))
-        areas[area_id] = MowerArea(
-            area_id=current.area_id,
-            name=current.name,
+        # ``replace``, not a new MowerArea: what getAreaSet reported, the
+        # name and the label point, is not this payload's to drop.
+        areas[area_id] = replace(
+            current,
             mow_height_level=_merged(
                 parameter, "mowHeightLevel", current.mow_height_level
             ),
