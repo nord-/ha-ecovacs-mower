@@ -493,7 +493,7 @@ async def test_no_area_entities_for_a_vacuum() -> None:
     device.events.subscribe.assert_not_called()
 
 
-@pytest.mark.parametrize("class_", ["e4gqia", "51rcxt", "2i0fns"])
+@pytest.mark.parametrize("class_", ["e4gqia", "51rcxt", "2i0fns", "xmp9ds"])
 async def test_the_validated_mower_gets_area_discovery(class_) -> None:
     from deebot_client.capabilities import DeviceType
 
@@ -744,3 +744,93 @@ def test_the_o1200_offers_only_the_apps_two_speeds() -> None:
 
     assert [raw for raw in range(1, 8) if speed.to_native(raw) is not None] == [4, 7]
     assert (speed.native_min_value, speed.native_max_value) == (0.35, 0.50)
+
+
+# The A1600 RTK's per-area values from issue #23, with the app values the
+# owner read for the same levels.
+@pytest.mark.parametrize(
+    ("parameter", "raw", "native"),
+    [
+        ("mowHeightLevel", 1, 9),
+        ("mowHeightLevel", 6, 4),
+        ("mowHeightLevel", 7, 3),
+        # Quick and Delicate.
+        ("cutMode", 1, 0.70),
+        ("cutMode", 2, 0.40),
+        ("obstacleHeight", 1, 10),
+        ("obstacleHeight", 2, 15),
+        ("obstacleHeight", 3, 20),
+    ],
+)
+def test_the_a1600_rtk_maps_its_readings(parameter, raw, native) -> None:
+    from custom_components.ecovacs_mower.area_numbers import (
+        AREA_PARAMETER_VALUE_MAPPINGS,
+    )
+
+    value_mapping = AREA_PARAMETER_VALUE_MAPPINGS["xmp9ds"][parameter]
+
+    assert value_mapping.to_native(raw) == native
+    assert value_mapping.to_raw(native) == raw
+
+
+def test_the_a1600_rtk_offers_only_the_apps_two_speeds() -> None:
+    from custom_components.ecovacs_mower.area_numbers import (
+        AREA_PARAMETER_VALUE_MAPPINGS,
+    )
+
+    speed = AREA_PARAMETER_VALUE_MAPPINGS["xmp9ds"]["cutMode"]
+
+    assert [raw for raw in range(1, 8) if speed.to_native(raw) is not None] == [1, 2]
+    assert (speed.native_min_value, speed.native_max_value) == (0.40, 0.70)
+
+
+def test_the_a1600_rtk_has_no_per_area_cutting_direction() -> None:
+    from custom_components.ecovacs_mower.area_numbers import (
+        AREA_PARAMETER_VALUE_MAPPINGS,
+        area_number_descriptions,
+    )
+
+    descriptions = area_number_descriptions(
+        "1", value_mappings=AREA_PARAMETER_VALUE_MAPPINGS["xmp9ds"]
+    )
+
+    assert [description.key for description in descriptions] == [
+        "area_1_cutting_height",
+        "area_1_mowing_speed",
+        "area_1_obstacle_height",
+    ]
+
+
+async def test_an_a1600_rtk_write_is_shaped_like_the_apps() -> None:
+    # The app's own write, captured in issue #23, carries areaID and these
+    # three keys only; a write from Home Assistant must look the same.
+    from custom_components.ecovacs_mower.area_numbers import (
+        AREA_PARAMETER_VALUE_MAPPINGS,
+        EcovacsAreaNumber,
+        _PendingAreaWrite,
+        area_number_descriptions,
+    )
+    from custom_components.ecovacs_mower.deebot_patch.areas import MowerArea
+
+    device = _device()
+    device.device_info["class"] = "xmp9ds"
+    _seed_area(
+        device,
+        MowerArea(
+            "1", parameters={"mowHeightLevel": 6, "cutMode": 2, "obstacleHeight": 1}
+        ),
+    )
+    speed = area_number_descriptions(
+        "1", value_mappings=AREA_PARAMETER_VALUE_MAPPINGS["xmp9ds"]
+    )[1]
+    entity = EcovacsAreaNumber(device, "1", speed, "Area 1", _PendingAreaWrite())
+    entity._execute_command = AsyncMock(return_value=True)
+
+    await entity.async_set_native_value(0.70)
+
+    assert entity._execute_command.call_args[0][0]._args == {
+        "areaID": "1",
+        "mowHeightLevel": 6,
+        "cutMode": 1,
+        "obstacleHeight": 1,
+    }

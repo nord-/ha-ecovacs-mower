@@ -23,7 +23,7 @@ def test_area_parameters_are_enabled_only_for_validated_classes() -> None:
         class_
         for class_, profile in SUPPORTED_CLASSES.items()
         if profile.area_parameters
-    } == {"e4gqia", "51rcxt", "2i0fns"}
+    } == {"e4gqia", "51rcxt", "2i0fns", "xmp9ds"}
 
 
 def test_zone_mowing_is_enabled_only_for_validated_class() -> None:
