@@ -149,6 +149,28 @@ class MowerTriggerEvent(Event):
 
 
 @dataclass(frozen=True)
+class MowerErrorCodesEvent(Event):
+    """Every code of one ``onError`` push, in the order the mower sent them.
+
+    The library's ``ErrorEvent`` carries only ``codes[-1]``, but the list is
+    the information: on an O1200 a tipped-over mower raised 622, then 627 on
+    top of it, then 621 on top of both, and 621 never appeared alone (issue
+    #133). A code that never reaches the top of the list would not be seen at
+    all.
+
+    Published only for a push with a non-zero code. A firmware that sends
+    ``code: [0]`` as a heartbeat, at about 1.4 Hz on a G1-800 (issue #53),
+    would otherwise flood every subscriber with nothing. ``_seq`` makes every
+    instance compare unequal to the last, for the reason ``MowerTriggerEvent``
+    gives: the same list pushed twice is two reports, and the bus would drop
+    the second.
+    """
+
+    codes: tuple[int, ...]
+    _seq: int = field(default_factory=itertools.count().__next__, repr=False)
+
+
+@dataclass(frozen=True)
 class MowerJobEdgeEvent(Event):
     """A job boundary exactly as the device announces it.
 
@@ -1051,6 +1073,11 @@ class OnError(MessageBodyDataDict):
 
     Only a non-zero last code is a fault, as ``GetError`` itself decides: 1.36
     sends ``code: [0]`` constantly, and that must not cancel anything.
+
+    It also republishes the whole code list as ``MowerErrorCodesEvent``, which
+    ``ErrorEvent`` cannot carry (issue #133), for a patched mower only. The
+    gate is the same record the departure uses: a vacuum on the same account
+    reaches this handler too, and gets exactly the library's behaviour.
     Everything else is ``GetError``'s, unchanged.
     """
 
@@ -1062,13 +1089,17 @@ class OnError(MessageBodyDataDict):
     ) -> HandlingResult:
         """Handle message->body->data."""
         codes = data.get("code")
-        if (
-            isinstance(codes, list)
-            and codes
-            and codes[-1] not in (0, None)
-            and (record := record_for(event_bus)) is not None
-        ):
-            record.cancel_departure()
+        if (record := record_for(event_bus)) is not None and isinstance(codes, list):
+            if codes and codes[-1] not in (0, None):
+                record.cancel_departure()
+            # Any non-zero code, not just the last: a zero or a null beside a
+            # fault is not a reason to hide the fault from the report.
+            if listed := tuple(
+                code for code in codes if isinstance(code, int) and code != 0
+            ):
+                # The zeros are dropped from the list itself, too. A heartbeat
+                # zero among real codes says nothing about their order.
+                event_bus.notify(MowerErrorCodesEvent(listed))
         return GetError._handle_body_data_dict(event_bus, data)
 
 
