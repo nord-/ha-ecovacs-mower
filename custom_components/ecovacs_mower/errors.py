@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import logging
 
+from deebot_client.const import ERROR_CODES
+
 _LOGGER = logging.getLogger(__name__)
 
 # Error codes the mower reports that deebot-client has no text for. Its
@@ -69,3 +71,16 @@ def error_description(code: int, description: str | None = None) -> str | None:
             REPORT_URL,
         )
     return None
+
+
+def known_description(code: int) -> str | None:
+    """The text either table has for the code, without asking for a report.
+
+    ``error_description`` warns the first time it meets a code nobody has
+    described. The error report (issue #133) needs the same lookup for every
+    code of a push, known ones included, and must not trigger that warning for
+    a code it is only listing, so the pure half of the lookup lives here.
+    """
+    if (text := ERROR_CODES.get(code)) is not None:
+        return text
+    return MOWER_ERROR_CODES.get(code)

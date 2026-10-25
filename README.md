@@ -1012,6 +1012,19 @@ code together with what the Ecovacs app shows for the same alarm in
 added here. The app is the only authoritative source — Ecovacs publishes no
 code reference for GOAT.
 
+The app's wording is only readable while the alarm is on screen, and a log
+line is usually read afterwards. So the same code also raises a notification
+(the bell in the sidebar), one per mower, named after the mower and its class.
+**Open the Ecovacs app while it is showing.** Every following error push adds a
+line with its time and its whole code list in the order the mower sent it,
+known codes included: on an O1200 a tipped-over mower raised 622, then 627 on
+top of it, then 621 on top of both, and the order is part of what is worth
+reporting. A push that repeats the line above it is counted on that line. The
+notification stays until you dismiss it, and the next unknown code after that
+starts a fresh one. The zero a mower keeps sending as a heartbeat adds nothing.
+This is raised for the supported mower classes
+([#133](https://github.com/nord-/ha-ecovacs-mower/issues/133)).
+
 ## Collecting logs
 
 The **Show logs** button on the integration page filters Home Assistant's log
