@@ -70,6 +70,12 @@ class MowerStateRecord:
     departure_edge_at: float | None = None
     charge_left_at: float | None = None
     profile: MowerProfile | None = None
+    # The panel lock, from ``onProtectState`` (issue #99). A locked mower
+    # accepts no command and gives no error for it, so whoever sends one has to
+    # know before it goes out. Held here rather than read off the entity's
+    # event for the reason the module docstring gives: the bus drops repeats
+    # and dispatches through tasks, and a refusal cannot wait for either.
+    locked: bool = False
 
     def note_job(self, content: object) -> None:
         """Remember the type of the running job, from ``cleanState.content``.
@@ -246,6 +252,16 @@ def map_id_for(event_bus: EventBus) -> str | None:
     """
     record = record_for(event_bus)
     return None if record is None else record.map_id
+
+
+def is_locked(event_bus: EventBus) -> bool:
+    """Whether *event_bus*'s mower last reported its panel locked (issue #99).
+
+    ``False`` for an unregistered bus, a vacuum's, and for a mower that has not
+    sent ``onProtectState`` yet: nothing is refused on a guess.
+    """
+    record = record_for(event_bus)
+    return record is not None and record.locked
 
 
 def reset() -> None:
