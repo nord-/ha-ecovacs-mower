@@ -406,6 +406,30 @@ class OnMowBorderStop(_OnMowJobEdge):
     JOB_TYPE = "border"
 
 
+class OnMowBorderRotateStart(_OnMowJobEdge):
+    """A trimming job begins: the edge cut with the string trimmer (issue #138).
+
+    ``borderrotate`` is the wire's name for the job the app calls Trimming, and
+    ``workType`` 31 on the payload. It is not ``border``: that one is the
+    G1-800's edge cut without a trimmer. The same two bury points came from an
+    A3000 LiDAR Pro and from an O1200 LiDAR Pro, so they are registered for
+    every patched mower rather than gated on a class. The payload carries
+    ``trigger`` like the other task points do, ``app`` when the app started it.
+    """
+
+    NAME = "onFwBuryPoint-bd_task-mow-border-rotate-start"
+    PHASE = "start"
+    JOB_TYPE = "borderrotate"
+
+
+class OnMowBorderRotateStop(_OnMowJobEdge):
+    """A trimming job ends, for whatever reason its trigger names (issue #138)."""
+
+    NAME = "onFwBuryPoint-bd_task-mow-border-rotate-stop"
+    PHASE = "stop"
+    JOB_TYPE = "borderrotate"
+
+
 class OnMowAutoStart(_OnMowJobEdge):
     """An ``auto`` job begins — the type Home Assistant's start sends (issue #74)."""
 
