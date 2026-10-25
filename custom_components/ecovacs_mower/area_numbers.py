@@ -294,7 +294,9 @@ AREA_PARAMETER_VALUE_MAPPINGS: dict[
     # GOAT O1200 LiDAR Pro, read with the app (issue #23).
     "2i0fns": {
         # Cutting height, cm, in half centimetres from raw 1 = 8 cm down to
-        # raw 11 = 3 cm. Raw 1 and 8-11 were read; raw 2-7 follow the steps.
+        # raw 11 = 3 cm. Raw 1 and 8-11 were read, 5.5 cm = raw 6 was written
+        # from Home Assistant and confirmed (PR #151); the others follow the
+        # steps.
         "mowHeightLevel": AreaParameterLookup(
             {
                 1: 8.0, 2: 7.5, 3: 7.0, 4: 6.5, 5: 6.0, 6: 5.5,
