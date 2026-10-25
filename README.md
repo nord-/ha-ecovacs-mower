@@ -562,6 +562,14 @@ the exact moment you want to read it.
 The five `binary_sensor` entities are the raw flags from `onProtectState`, one
 per flag, with no interpretation on top.
 
+`locked` is the one to look at when nothing happens. A mower whose panel is
+locked, as when it is turned onto its side, discards every command and does
+not say so. The integration therefore refuses a start, pause, dock or setting
+change while `locked` is on, with an error that names the panel; reads still go
+out. The lock can only be released with the PIN on the mower's own panel
+([#99](https://github.com/nord-/ha-ecovacs-mower/issues/99)). The entity is
+shown with the other sensors, not under diagnostics.
+
 `rain_protect` (`isRainProtect`) is the exception: it is presented as a live
 rain reading, named **Rain sensor** and given the `moisture` device class, so it
 reads Wet/Dry. Two samples rule out the reading one could not, with the mower's
