@@ -841,11 +841,16 @@ async def test_teardown_cancels_outstanding_polls() -> None:
     controller._authenticator = AsyncMock()
     unsub = MagicMock()
     controller._unsub_polls = {"did-1": unsub}
+    notifier = MagicMock()
+    controller._error_notifiers = {"did-1": notifier}
 
     await controller.teardown()
 
     unsub.assert_called_once()
     assert controller._unsub_polls == {}
+    # The notification itself is left showing; only the listening stops.
+    notifier.shutdown.assert_called_once()
+    assert controller._error_notifiers == {}
 
 
 async def test_setup_map_restores_persisted_geometry() -> None:
@@ -1183,3 +1188,35 @@ async def test_a_docked_mower_does_not_restart_the_poll_loop(hass) -> None:
 
         track.assert_called_once()
         unsub.assert_called_once()
+
+
+async def test_setup_error_notifier_listens_for_the_codes_and_is_reachable_by_did() -> None:
+    """Issue #133. Controller-owned, like the fault latch, and eager for the same
+    reason: ``EventBus.notify`` drops an event nobody is subscribed to, so a
+    burst before an entity existed would never reach the notification."""
+    from unittest.mock import MagicMock, patch
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerErrorCodesEvent,
+    )
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = MagicMock()
+    controller._error_notifiers = {}
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1", "class": "2i0fns"}
+    subscribed: list[type] = []
+    device.events.subscribe = lambda event_type, callback: subscribed.append(
+        event_type
+    )
+
+    with patch(
+        "custom_components.ecovacs_mower.error_notification.persistent_notification"
+        ".async_register_callback"
+    ):
+        controller._setup_error_notifier(device)
+
+    assert subscribed == [MowerErrorCodesEvent]
+    assert "did-1" in controller._error_notifiers
