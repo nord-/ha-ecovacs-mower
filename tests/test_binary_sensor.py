@@ -91,12 +91,12 @@ def test_rain_protect_is_the_only_moisture_flag() -> None:
     assert set(classes.values()) == {None}
 
 
-def test_rain_is_the_only_non_diagnostic_pair() -> None:
-    """Rain explains the mower's behaviour; the rest is diagnostics.
+def test_rain_and_the_lock_are_the_non_diagnostic_ones() -> None:
+    """Rain and the panel lock explain the mower's behaviour; the rest is diagnostics.
 
     Not a style choice: a diagnostic entity is hidden from the device page's
     main section, which is the wrong place for the reason a scheduled run
-    stopped.
+    stopped, or for the reason every command was silently discarded (issue #99).
     """
     from homeassistant.const import EntityCategory
 
@@ -107,7 +107,7 @@ def test_rain_is_the_only_non_diagnostic_pair() -> None:
         for d in ENTITY_DESCRIPTIONS
         if d.entity_category is not EntityCategory.DIAGNOSTIC
     }
-    assert primary == {"rain_protect", "rain_delay"}
+    assert primary == {"rain_protect", "rain_delay", "locked"}
 
 
 def test_every_description_has_a_translation() -> None:

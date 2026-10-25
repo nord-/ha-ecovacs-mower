@@ -90,12 +90,14 @@ ENTITY_DESCRIPTIONS: tuple[EcovacsProtectStateBinarySensorEntityDescription, ...
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     # Not the same thing as the child_lock switch: that one is a setting, this
-    # is whether the mower is currently locked and refusing to move.
+    # is whether the mower is currently locked and refusing to move. Not
+    # diagnostic: a locked mower discards every command without an error, so
+    # this is the one entity that explains why nothing happens (issue #99), and
+    # the main section is where that is looked for.
     EcovacsProtectStateBinarySensorEntityDescription(
         key="locked",
         translation_key="locked",
         value_fn=lambda e: e.locked,
-        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     # Whether animal protection is in effect right now: switched on, and the
     # clock inside the window the setting carries. Toggled from the app with the
