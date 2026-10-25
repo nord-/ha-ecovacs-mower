@@ -736,7 +736,9 @@ something started or resumed its job. The event type is the word the mower
 sent, unchanged: `schedule`, `app`, `continue` (a resume after a charge
 break) or `reborn`. The event data carries `phase`, `start` or `resume`, and
 `job_type`, the kind of job: `schedule` for the app's schedule, `spotarea`
-for a zone job, `border` for an edge cut and `auto` for a plain start.
+for a zone job, `border` for an edge cut, `borderrotate` for the trimming job
+the app starts with the string trimmer ([#138](https://github.com/nord-/ha-ecovacs-mower/issues/138))
+and `auto` for a plain start.
 
 Use `job_type` to recognise the schedule's job, not the event type. The same
 announcement carries different words on different firmware: a G1-800 says
