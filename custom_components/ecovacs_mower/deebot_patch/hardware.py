@@ -32,11 +32,13 @@ from .commands import (
     GetProtectState,
     GetRainDelay,
     GetStatsMower,
+    GetUWBOta,
     MowerStateRefresh,
 )
 from .map_messages import MowerMapInfoEvent
 from .messages import (
     MowerAnimProtectEvent,
+    MowerBeaconOtaEvent,
     MowerBeaconsEvent,
     MowerProtectStateEvent,
     MowerRainDelayEvent,
@@ -80,6 +82,10 @@ class MowerProfile:
     the core-temperature sensor; like ``border_mowing`` it gates an entity,
     because the reading arrives as an unsolicited bury point with no
     capability behind it (issue #76).
+    ``beacon_ota`` reads the beacons' firmware-update state (``getUWBOta``,
+    ``onUWBOta``) and shows it as two read-only entities. It is its own flag
+    because that shape and its ``needUpdate``/``otaState`` values come from a
+    different capture than the lifespan request behind ``uwb_beacons``.
     """
 
     device_class: str
@@ -91,6 +97,7 @@ class MowerProfile:
     border_mowing: bool = False
     uwb_beacons: bool = False
     core_temperature: bool = False
+    beacon_ota: bool = False
 
 
 # Device classes this integration patches, and how each one was confirmed:
@@ -266,6 +273,12 @@ class MowerProfile:
 #                     captures. The maintainer saw the same shape on an O1200
 #                     (2i0fns), but no owner there has run the sensor, so the
 #                     flag stays off until one has.
+#   beacon_ota      — 77atlz: getUWBOta answered {"needUpdate": 0, "otaState": 0}
+#                     on the G1-800, firmware 1.36.208, read-only and re-checked
+#                     idle; needUpdate 1 after a power cycle; onUWBOta pushed
+#                     otaState 1 and, about 45 s later, 4 after the app started
+#                     an update. Off everywhere else: no other class has been
+#                     asked.
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile("2i0fns", area_parameters=True, zone_mowing=True),
     "9bts2s": MowerProfile(
@@ -282,6 +295,7 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
         border_mowing=True,
         uwb_beacons=True,
         core_temperature=True,
+        beacon_ota=True,
     ),
     "e4gqia": MowerProfile("e4gqia", area_parameters=True, zone_mowing=True),
     "xmp9ds": MowerProfile("xmp9ds"),
@@ -333,6 +347,8 @@ async def patch_device_info(class_: str) -> None:
     * ``MowerProtectStateEvent``, ``MowerRainDelayEvent``,
       ``MowerAnimProtectEvent``, ``MowerStatsEvent`` and ``MowerBeaconsEvent``:
       given the refresh commands they had none of.
+    * ``MowerBeaconOtaEvent``: given ``GetUWBOta`` on a class with
+      ``beacon_ota`` only — no other class has been checked for it.
     * ``MowerMapInfoEvent``: given ``GetMapInfoMower``, without which a V2
       mower never sends the lawn boundary at all — it answers the request and
       pushes at no other time (issue #81) — and a non-V2 mower does not name
@@ -460,6 +476,13 @@ async def patch_device_info(class_: str) -> None:
         MowerBeaconsEvent: [GetLifeSpanMower(life_span_components)],
         MowerMapInfoEvent: [GetMapInfoMower()],
     }
+    if profile.beacon_ota:
+        # Read once when the first beacon-update entity subscribes and again on
+        # a reconnect, like every refresh above: onUWBOta is pushed while an
+        # update runs and never otherwise, so without a read the entities would
+        # sit at "unknown" until the next one. No poll rides on it — the
+        # maintainer counts requests.
+        events[MowerBeaconOtaEvent] = [GetUWBOta()]
     if profile.area_parameters:
         # One area event represents the whole area capability. The two protocol
         # reads populate one authoritative raw snapshot before notifying it.
