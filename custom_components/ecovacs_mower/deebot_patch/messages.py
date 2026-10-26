@@ -81,12 +81,19 @@ class for the samples that establish the disagreement, and
 from ``onAnimProtect``, a seventh. It is the setting ``isAnimProtect`` was long
 mistaken for (issue #45), and like the rain setting it has a refresh command,
 ``GetAnimProtect``, and a write side, ``SetAnimProtect``, in ``commands.py``.
+
+``MowerCoreTemperatureEvent`` carries ``coreTemp`` from the
+``onFwBuryPoint-bd_coreinfo`` bury point (issue #76). Nothing can be asked for
+it: the mower volunteers a reading when the temperature moves by a degree and
+at no other time, so there is no refresh command and the sensor keeps the last
+value it was given.
 """
 
 from __future__ import annotations
 
 import itertools
 import logging
+import math
 from abc import ABC
 from dataclasses import dataclass, field
 from datetime import time
@@ -1368,6 +1375,63 @@ class OnAnimProtect(MessageBodyDataDict):
             )
         )
         return HandlingResult.success()
+
+
+@dataclass(frozen=True)
+class MowerCoreTemperatureEvent(Event):
+    """The mower's core temperature in degrees Celsius, from ``bd_coreinfo``.
+
+    The mower emits it when the reading changes by a degree, irregularly, three
+    to thirty-nine minutes apart in the captures of issue #76 (33 to 37 degrees
+    on a G1-800), so a value has to stand until the next one. The bus drops an
+    event equal to the previous one before any subscriber runs, which is
+    harmless for a reading: an unchanged temperature has nothing to say.
+    """
+
+    celsius: float
+
+
+class OnCoreInfo(MessageBody):
+    """The core-temperature bury point, ``onFwBuryPoint-bd_coreinfo``.
+
+    ``MessageBody``, not ``MessageBodyDataDict``: like the task bury points the
+    fields sit directly under ``body`` with no ``data`` wrapper, and the header
+    carries no ``wkVer``. The sample is ``{"coreTemp": 36, "gid": ..., "index":
+    ..., "ts": ...}``.
+
+    The body is read defensively because a sibling bury point, ``bd_sysinfo``,
+    has a different shape on every class that sends it (a bare list on a G1-800,
+    an object on an O1200), and nothing says ``bd_coreinfo`` will stay put. A
+    body that is not an object, a missing field and a value that is not a real
+    number are all dropped with a debug line and no event: a missing reading
+    leaves the sensor on its last value, and the handler never raises into the
+    library's message loop.
+    """
+
+    NAME = "onFwBuryPoint-bd_coreinfo"
+
+    @classmethod
+    def _handle_body(cls, event_bus: EventBus, body: Any) -> HandlingResult:
+        """Handle message->body."""
+        if not isinstance(body, dict):
+            _LOGGER.debug("%s body is not an object, ignored: %r", cls.NAME, body)
+            return HandlingResult.analyse()
+
+        temperature = body.get("coreTemp")
+        # Exact type tests, not isinstance: bool is an int, and True would read
+        # as one degree. A float is checked for finiteness here and an int is
+        # not, because math.isfinite() raises OverflowError on an int too large
+        # for a float — and an int is finite by construction.
+        if type(temperature) is int or (
+            type(temperature) is float and math.isfinite(temperature)
+        ):
+            event_bus.notify(MowerCoreTemperatureEvent(temperature))
+            return HandlingResult.success()
+
+        _LOGGER.debug(
+            "%s without a usable coreTemp, ignored: %r", cls.NAME, temperature
+        )
+        return HandlingResult.analyse()
 
 
 class OnAreaParameter(MessageBodyDataDict):

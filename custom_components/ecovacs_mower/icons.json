@@ -95,6 +95,9 @@
       "beacon": {
         "default": "mdi:map-marker-radius"
       },
+      "core_temperature": {
+        "default": "mdi:thermometer"
+      },
       "error": {
         "default": "mdi:alert-circle"
       },

@@ -68,7 +68,10 @@ class MowerProfile:
     component instead of naming the library's, because the class reports its
     beacons only in the answer to that request. Without it, the request names
     the library's components, because a class without beacons may answer the
-    empty list with the blades alone (issue #146).
+    empty list with the blades alone (issue #146). ``core_temperature`` gives
+    the class the core-temperature sensor; like ``border_mowing`` it gates an
+    entity, because the reading arrives as an unsolicited bury point with no
+    capability behind it (issue #76).
     """
 
     device_class: str
@@ -77,6 +80,7 @@ class MowerProfile:
     zone_mowing: bool = False
     border_mowing: bool = False
     uwb_beacons: bool = False
+    core_temperature: bool = False
 
 
 # Device classes this integration patches, and how each one was confirmed:
@@ -197,12 +201,23 @@ class MowerProfile:
 #                     O1200, firmware 1.13.10, answers the empty list with
 #                     blade alone, and the app names blade, weedRope and
 #                     trimmerBrush to it (issue #146).
+#   core_temperature — 77atlz: onFwBuryPoint-bd_coreinfo captured on the
+#                     G1-800, firmware 1.36.208 (issue #76): a single
+#                     {"coreTemp": <int>} object directly under body, sent
+#                     when the temperature moves by a degree, 33 to 37 in the
+#                     captures. The maintainer saw the same shape on an O1200
+#                     (2i0fns), but no owner there has run the sensor, so the
+#                     flag stays off until one has.
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile("2i0fns", zone_mowing=True),
     "9bts2s": MowerProfile("9bts2s", area_names=True, zone_mowing=True),
     "2px96q": MowerProfile("2px96q"),
     "77atlz": MowerProfile(
-        "77atlz", zone_mowing=True, border_mowing=True, uwb_beacons=True
+        "77atlz",
+        zone_mowing=True,
+        border_mowing=True,
+        uwb_beacons=True,
+        core_temperature=True,
     ),
     "e4gqia": MowerProfile("e4gqia", area_parameters=True, zone_mowing=True),
     "xmp9ds": MowerProfile("xmp9ds"),

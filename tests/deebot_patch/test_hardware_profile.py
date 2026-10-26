@@ -49,3 +49,14 @@ def test_profile_flags_default_to_off() -> None:
     assert profile.area_names is False
     assert profile.zone_mowing is False
     assert profile.border_mowing is False
+    assert profile.uwb_beacons is False
+    assert profile.core_temperature is False
+
+
+def test_core_temperature_is_enabled_only_for_the_validated_class() -> None:
+    """coreTemp is validated on the G1-800; the O1200's sameness is not an owner."""
+    assert {
+        class_
+        for class_, profile in SUPPORTED_CLASSES.items()
+        if profile.core_temperature
+    } == {"77atlz"}
