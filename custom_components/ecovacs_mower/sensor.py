@@ -32,6 +32,7 @@ unknown (issue #73).
 from collections.abc import Callable
 from dataclasses import dataclass
 import logging
+import math
 from typing import Any, override
 
 from deebot_client.capabilities import CapabilityEvent, CapabilityLifeSpan, DeviceType
@@ -50,6 +51,7 @@ from deebot_client.events import (
 from deebot_client.models import State
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
@@ -61,6 +63,7 @@ from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
     UnitOfArea,
+    UnitOfTemperature,
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant, callback
@@ -69,9 +72,10 @@ from homeassistant.helpers.typing import StateType
 
 from . import EcovacsMowerConfigEntry
 from .const import SUPPORTED_LIFESPANS
-from .deebot_patch import SUPPORTED_CLASSES
+from .deebot_patch import SUPPORTED_CLASSES, profile_for_class
 from .deebot_patch.messages import (
     MowerBeaconsEvent,
+    MowerCoreTemperatureEvent,
     MowerJobEdgeEvent,
     MowerStatsEvent,
     MowerTriggerEvent,
@@ -351,6 +355,18 @@ async def async_setup_entry(
         and device.device_info["class"] in SUPPORTED_CLASSES
     )
 
+    entities.extend(
+        EcovacsCoreTemperatureSensor(device)
+        for device in controller.devices
+        if device.capabilities.device_type is DeviceType.MOWER
+        # A profile flag, not membership in SUPPORTED_CLASSES: the reading is a
+        # bury point whose shape was only validated on the classes that set
+        # core_temperature (issue #76). There is no refresh command to patch in
+        # either, so a class without the flag would just sit at unknown.
+        and (profile := profile_for_class(device.device_info["class"])) is not None
+        and profile.core_temperature
+    )
+
     for device in controller.devices:
         if device.capabilities.device_type is not DeviceType.MOWER:
             continue
@@ -516,6 +532,84 @@ class EcovacsBeaconSensor(
             ),
             None,
         )
+        self.async_write_ha_state()
+
+
+class EcovacsCoreTemperatureSensor(
+    EcovacsEntity[None],
+    RestoreSensor,
+):
+    """The mower's core temperature, as it last reported it.
+
+    Issue #76. There is no library capability behind it and nothing to ask for:
+    the mower pushes a ``bd_coreinfo`` bury point when the reading moves by a
+    degree and at no other time, minutes apart. The entity therefore keeps the
+    last value it was given instead of going unknown between pushes.
+
+    It is a ``RestoreSensor`` for the same reason, and the only entity here that
+    is: the value is change-driven, so after a restart a stable temperature
+    would leave it unknown for as long as it stays stable, which can be an hour
+    or more. Every other sensor is either refreshed by a command at startup or
+    has a state the mower re-announces. The event bus replays its last event
+    only to a subscriber that comes after it within one run, so it cannot fill
+    the gap.
+
+    A restored value is a stand-in and never competes with a reading:
+
+    - it is applied only while nothing has been pushed, so a push that landed
+      before the restore finished, or the one the bus replays to a late
+      subscriber, stands, and the first push replaces it like any other value;
+    - only a finite number is taken, so a stored ``unknown``, ``unavailable``
+      or anything else that is not a reading is ignored and the sensor starts
+      unknown, exactly as it would without restoring;
+    - the mower being unavailable changes nothing here. The entity reads
+      unavailable through the base class and keeps its value underneath, and
+      what is stored is the value, never the ``unavailable`` state, so a
+      restart while the mower is offline restores the last reading rather than
+      the outage.
+    """
+
+    entity_description: SensorEntityDescription = SensorEntityDescription(
+        key="core_temperature",
+        translation_key="core_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        # The mower reports whole degrees; a decimal place would only be noise.
+        suggested_display_precision=0,
+    )
+
+    def __init__(self, device: Device) -> None:
+        """Initialize entity."""
+        # No capability: the reading is not one of the library's.
+        super().__init__(device, None)
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listeners now that hass is ready, then restore."""
+        await super().async_added_to_hass()
+
+        # Subscribe before restoring: the restore awaits storage, and a push
+        # that arrives meanwhile must be seen by the guard below.
+        self._subscribe(MowerCoreTemperatureEvent, self._on_temperature)
+
+        last = await self.async_get_last_sensor_data()
+        value = None if last is None else last.native_value
+        if (
+            self._attr_native_value is None
+            # bool is an int, and NaN or infinity would survive a JSON round
+            # trip as a "number" that is no reading.
+            and isinstance(value, int | float)
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+        ):
+            self._attr_native_value = value
+            self.async_write_ha_state()
+
+    async def _on_temperature(self, event: MowerCoreTemperatureEvent) -> None:
+        """Publish the reading. The parser has already refused anything unreal."""
+        self._attr_native_value = event.celsius
         self.async_write_ha_state()
 
 

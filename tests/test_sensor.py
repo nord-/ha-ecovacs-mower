@@ -1,5 +1,7 @@
 """The sensor set must mirror what a GOAT actually has."""
 
+import pytest
+
 from tests import requires_ha
 
 pytestmark = requires_ha
@@ -37,6 +39,7 @@ def test_expected_sensor_keys() -> None:
     from custom_components.ecovacs_mower.sensor import (
         ENTITY_DESCRIPTIONS,
         EcovacsActivitySensor,
+        EcovacsCoreTemperatureSensor,
         EcovacsErrorSensor,
         EcovacsMowingProgressSensor,
     )
@@ -45,6 +48,7 @@ def test_expected_sensor_keys() -> None:
         EcovacsErrorSensor.entity_description.key,
         EcovacsActivitySensor.entity_description.key,
         EcovacsMowingProgressSensor.entity_description.key,
+        EcovacsCoreTemperatureSensor.entity_description.key,
     }
     assert keys == {
         "stats_area",
@@ -59,6 +63,7 @@ def test_expected_sensor_keys() -> None:
         "error",
         "activity",
         "mowing_progress",
+        "core_temperature",
     }
 
 
@@ -87,6 +92,7 @@ def test_every_description_has_a_translation() -> None:
         ENTITY_DESCRIPTIONS,
         LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsActivitySensor,
+        EcovacsCoreTemperatureSensor,
         EcovacsErrorSensor,
         EcovacsMowingProgressSensor,
         beacon_entity_description,
@@ -102,6 +108,7 @@ def test_every_description_has_a_translation() -> None:
         EcovacsErrorSensor.entity_description,
         EcovacsActivitySensor.entity_description,
         EcovacsMowingProgressSensor.entity_description,
+        EcovacsCoreTemperatureSensor.entity_description,
         # Built per beacon at runtime, so there is no tuple to splat. Every
         # serial yields the same translation key, which is what these three
         # tests check.
@@ -127,6 +134,7 @@ def test_every_sensor_has_an_icon() -> None:
         ENTITY_DESCRIPTIONS,
         LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsActivitySensor,
+        EcovacsCoreTemperatureSensor,
         EcovacsErrorSensor,
         EcovacsMowingProgressSensor,
         beacon_entity_description,
@@ -142,6 +150,7 @@ def test_every_sensor_has_an_icon() -> None:
         EcovacsErrorSensor.entity_description,
         EcovacsActivitySensor.entity_description,
         EcovacsMowingProgressSensor.entity_description,
+        EcovacsCoreTemperatureSensor.entity_description,
         # Built per beacon at runtime, so there is no tuple to splat. Every
         # serial yields the same translation key, which is what these three
         # tests check.
@@ -166,6 +175,7 @@ def test_no_stale_sensor_translations_or_icons() -> None:
         ENTITY_DESCRIPTIONS,
         LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsActivitySensor,
+        EcovacsCoreTemperatureSensor,
         EcovacsErrorSensor,
         EcovacsMowingProgressSensor,
         beacon_entity_description,
@@ -181,6 +191,7 @@ def test_no_stale_sensor_translations_or_icons() -> None:
         EcovacsErrorSensor.entity_description,
         EcovacsActivitySensor.entity_description,
         EcovacsMowingProgressSensor.entity_description,
+        EcovacsCoreTemperatureSensor.entity_description,
         # Built per beacon at runtime, so there is no tuple to splat. Every
         # serial yields the same translation key, which is what these three
         # tests check.
@@ -1468,3 +1479,315 @@ async def test_a_charge_break_resume_is_not_a_new_job() -> None:
     await sensor._on_state(_state_event(State.CLEANING))
 
     assert sensor._attr_native_value == 55
+
+
+def _core_mower(class_: str, did: str):
+    """A mocked mower of *class_*, built the way the beacon tests build one."""
+    return _beacon_mower(class_=class_, did=did)
+
+
+async def _core_sensors_for(*devices) -> list:
+    from unittest.mock import MagicMock, patch
+
+    from custom_components.ecovacs_mower.sensor import (
+        EcovacsCoreTemperatureSensor,
+        async_setup_entry,
+    )
+
+    config_entry = MagicMock()
+    config_entry.runtime_data.devices = list(devices)
+
+    added: list = []
+    with patch(
+        "custom_components.ecovacs_mower.sensor.get_supported_entities",
+        return_value=[],
+    ):
+        await async_setup_entry(MagicMock(), config_entry, added.extend)
+
+    return [e for e in added if isinstance(e, EcovacsCoreTemperatureSensor)]
+
+
+async def test_core_temperature_sensor_exists_for_a_class_with_the_flag() -> None:
+    mower = _core_mower("77atlz", "did-core")
+
+    sensors = await _core_sensors_for(mower)
+
+    assert [s._device for s in sensors] == [mower]
+    assert sensors[0].unique_id == "did-core_core_temperature"
+
+
+async def test_core_temperature_sensor_is_absent_without_the_flag() -> None:
+    """Supported is not validated: 2i0fns is patched but has no owner for this."""
+    from custom_components.ecovacs_mower.deebot_patch import SUPPORTED_CLASSES
+
+    assert not SUPPORTED_CLASSES["2i0fns"].core_temperature
+    without_flag = _core_mower("2i0fns", "did-o1200")
+    unsupported = _core_mower("not-a-real-class", "did-unsupported")
+
+    assert await _core_sensors_for(without_flag, unsupported) == []
+
+
+async def test_core_temperature_sensor_is_per_device() -> None:
+    with_flag = _core_mower("77atlz", "did-a")
+    without_flag = _core_mower("2i0fns", "did-b")
+
+    sensors = await _core_sensors_for(with_flag, without_flag)
+
+    assert [s._device for s in sensors] == [with_flag]
+
+
+def _bare_core_sensor():
+    """A core-temperature sensor without HA, like the other bare sensors here."""
+    from unittest.mock import AsyncMock, Mock
+
+    from custom_components.ecovacs_mower.sensor import EcovacsCoreTemperatureSensor
+
+    sensor = EcovacsCoreTemperatureSensor.__new__(EcovacsCoreTemperatureSensor)
+    sensor._device = Mock()
+    sensor._subscribed_events = set()
+    sensor.async_write_ha_state = lambda: None
+    # Nothing stored, unless a test says otherwise; the real call needs hass.
+    sensor.async_get_last_sensor_data = AsyncMock(return_value=None)
+    return sensor
+
+
+async def test_core_temperature_sensor_takes_the_reading() -> None:
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerCoreTemperatureEvent,
+    )
+
+    sensor = _bare_core_sensor()
+
+    await sensor._on_temperature(MowerCoreTemperatureEvent(36))
+
+    assert sensor._attr_native_value == 36
+
+
+async def test_core_temperature_sensor_keeps_its_last_value() -> None:
+    """The mower speaks only when the reading moves, minutes apart.
+
+    A reading that arrives while the entity does not exist yet — the entity is
+    added after setup, the mower pushes whenever it likes — must still reach
+    it: the bus holds the last event and hands it to a late subscriber. And a
+    later push with nothing usable never reaches the entity, so the value stands.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, Mock, patch
+
+    from deebot_client.event_bus import EventBus
+
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerCoreTemperatureEvent,
+        OnCoreInfo,
+    )
+    from custom_components.ecovacs_mower.entity import EcovacsEntity
+
+    bus = EventBus(AsyncMock(), Mock(get_refresh_commands=lambda _event: []))
+    OnCoreInfo.handle(bus, {"body": {"coreTemp": 36}})
+    await asyncio.sleep(0)
+
+    sensor = _bare_core_sensor()
+    sensor._device.events = bus
+    sensor.async_on_remove = lambda _unsubscribe: None
+    with patch.object(EcovacsEntity, "async_added_to_hass", AsyncMock()):
+        await sensor.async_added_to_hass()
+    await asyncio.sleep(0)
+    assert sensor._attr_native_value == 36
+
+    OnCoreInfo.handle(bus, {"body": {"coreTemp": None}})
+    OnCoreInfo.handle(bus, {"body": [{"isvalid": 1}]})
+    await asyncio.sleep(0)
+    assert sensor._attr_native_value == 36
+
+
+async def test_core_temperature_sensor_subscribes_to_its_event() -> None:
+    from unittest.mock import AsyncMock, patch
+
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerCoreTemperatureEvent,
+    )
+    from custom_components.ecovacs_mower.entity import EcovacsEntity
+
+    sensor = _bare_core_sensor()
+    subscribed: list = []
+    sensor._subscribe = lambda event_type, callback: subscribed.append(event_type)
+
+    with patch.object(EcovacsEntity, "async_added_to_hass", AsyncMock()):
+        await sensor.async_added_to_hass()
+
+    assert subscribed == [MowerCoreTemperatureEvent]
+
+
+def test_core_temperature_sensor_is_a_diagnostic_celsius_measurement() -> None:
+    from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
+    from homeassistant.const import EntityCategory, UnitOfTemperature
+
+    from custom_components.ecovacs_mower.sensor import EcovacsCoreTemperatureSensor
+
+    description = EcovacsCoreTemperatureSensor.entity_description
+    assert description.key == "core_temperature"
+    assert description.translation_key == "core_temperature"
+    assert description.device_class is SensorDeviceClass.TEMPERATURE
+    assert description.native_unit_of_measurement == UnitOfTemperature.CELSIUS
+    assert description.state_class is SensorStateClass.MEASUREMENT
+    assert description.entity_category is EntityCategory.DIAGNOSTIC
+    assert description.suggested_display_precision == 0
+
+
+def _stored(value, unit="°C"):
+    from homeassistant.components.sensor import SensorExtraStoredData
+
+    return SensorExtraStoredData(value, unit)
+
+
+async def _added_with_stored(stored, bus=None):
+    """Add a bare core sensor whose last stored data is *stored*; return it."""
+    import asyncio
+    from unittest.mock import AsyncMock, Mock, patch
+
+    from deebot_client.event_bus import EventBus
+
+    from custom_components.ecovacs_mower.entity import EcovacsEntity
+
+    sensor = _bare_core_sensor()
+    sensor.async_get_last_sensor_data = AsyncMock(return_value=stored)
+    sensor._device.events = bus or EventBus(
+        AsyncMock(), Mock(get_refresh_commands=lambda _event: [])
+    )
+    sensor.async_on_remove = lambda _unsubscribe: None
+    with patch.object(EcovacsEntity, "async_added_to_hass", AsyncMock()):
+        await sensor.async_added_to_hass()
+    await asyncio.sleep(0)
+    return sensor
+
+
+def test_core_temperature_sensor_is_a_restore_sensor() -> None:
+    from homeassistant.components.sensor import RestoreSensor
+
+    from custom_components.ecovacs_mower.sensor import EcovacsCoreTemperatureSensor
+
+    assert issubclass(EcovacsCoreTemperatureSensor, RestoreSensor)
+
+
+async def test_core_temperature_sensor_shows_the_restored_value_after_setup() -> None:
+    """A restart must not blank a temperature that has not moved since."""
+    sensor = await _added_with_stored(_stored(35.0))
+
+    assert sensor._attr_native_value == 35.0
+
+
+@pytest.mark.parametrize(
+    "garbage",
+    [
+        None,
+        "unknown",
+        "unavailable",
+        "hot",
+        "36",
+        True,
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        [36],
+    ],
+)
+async def test_core_temperature_sensor_ignores_a_stored_non_reading(garbage) -> None:
+    sensor = await _added_with_stored(_stored(garbage))
+
+    assert sensor._attr_native_value is None
+
+
+async def test_core_temperature_sensor_ignores_missing_stored_data() -> None:
+    sensor = await _added_with_stored(None)
+
+    assert sensor._attr_native_value is None
+
+
+async def test_a_push_replayed_by_the_bus_wins_over_the_restored_value() -> None:
+    """Push before the entity exists: the bus replays it to the late subscriber."""
+    import asyncio
+    from unittest.mock import AsyncMock, Mock
+
+    from deebot_client.event_bus import EventBus
+
+    from custom_components.ecovacs_mower.deebot_patch.messages import OnCoreInfo
+
+    bus = EventBus(AsyncMock(), Mock(get_refresh_commands=lambda _event: []))
+    OnCoreInfo.handle(bus, {"body": {"coreTemp": 36}})
+    await asyncio.sleep(0)
+
+    sensor = await _added_with_stored(_stored(30.0), bus)
+
+    assert sensor._attr_native_value == 36
+
+
+async def test_a_push_during_the_restore_wins_over_the_restored_value() -> None:
+    """Push after subscribing but before the storage read comes back."""
+    import asyncio
+    from unittest.mock import AsyncMock, Mock, patch
+
+    from deebot_client.event_bus import EventBus
+
+    from custom_components.ecovacs_mower.deebot_patch.messages import OnCoreInfo
+    from custom_components.ecovacs_mower.entity import EcovacsEntity
+
+    bus = EventBus(AsyncMock(), Mock(get_refresh_commands=lambda _event: []))
+    sensor = _bare_core_sensor()
+    sensor._device.events = bus
+    sensor.async_on_remove = lambda _unsubscribe: None
+
+    async def slow_read():
+        OnCoreInfo.handle(bus, {"body": {"coreTemp": 36}})
+        await asyncio.sleep(0.01)
+        return _stored(30.0)
+
+    sensor.async_get_last_sensor_data = slow_read
+    with patch.object(EcovacsEntity, "async_added_to_hass", AsyncMock()):
+        await sensor.async_added_to_hass()
+    await asyncio.sleep(0)
+
+    assert sensor._attr_native_value == 36
+
+
+async def test_a_push_after_the_restore_replaces_the_restored_value() -> None:
+    import asyncio
+    from unittest.mock import AsyncMock, Mock
+
+    from deebot_client.event_bus import EventBus
+
+    from custom_components.ecovacs_mower.deebot_patch.messages import OnCoreInfo
+
+    bus = EventBus(AsyncMock(), Mock(get_refresh_commands=lambda _event: []))
+    sensor = await _added_with_stored(_stored(30.0), bus)
+    assert sensor._attr_native_value == 30.0
+
+    OnCoreInfo.handle(bus, {"body": {"coreTemp": 36}})
+    await asyncio.sleep(0)
+
+    assert sensor._attr_native_value == 36
+
+
+async def test_each_core_sensor_restores_only_its_own_stored_value() -> None:
+    first = await _added_with_stored(_stored(31.0))
+    second = await _added_with_stored(_stored(37.0))
+    third = await _added_with_stored(None)
+
+    assert (first._attr_native_value, second._attr_native_value) == (31.0, 37.0)
+    assert third._attr_native_value is None
+
+
+def test_no_other_sensor_restores_state() -> None:
+    """Restoring is the core temperature's reason alone, not a habit."""
+    from homeassistant.helpers.restore_state import RestoreEntity
+
+    from custom_components.ecovacs_mower import sensor as sensor_module
+
+    restoring = {
+        name
+        for name, cls in vars(sensor_module).items()
+        if isinstance(cls, type)
+        and cls.__module__ == sensor_module.__name__
+        and issubclass(cls, RestoreEntity)
+    }
+
+    assert restoring == {"EcovacsCoreTemperatureSensor"}
