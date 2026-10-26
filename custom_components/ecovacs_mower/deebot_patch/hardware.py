@@ -142,6 +142,10 @@ class MowerProfile:
 #            (2i0fns). Upstream's docstring calls it "GOAT G1"; its module
 #            is byte-identical to 9bts2s.py apart from that docstring, so the
 #            O800 RTK's patch applies unchanged.
+#   300lc5 — GOAT O500 Panorama (issue #152 — start, pause, resume and dock
+#            user-verified after adding the class locally). Upstream's module
+#            is byte-identical to 9bts2s.py apart from the docstring, so the
+#            O800 RTK's patch applies unchanged.
 #
 # Presence in this mapping means the class is supported by the integration.
 # Capability flags are deliberately narrower: they are enabled only where the
@@ -273,6 +277,7 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
         "51rcxt", area_parameters=True, zone_mowing=True, border_mowing=True
     ),
     "qhq6i0": MowerProfile("qhq6i0", zone_mowing=True),
+    "300lc5": MowerProfile("300lc5"),
 }
 
 

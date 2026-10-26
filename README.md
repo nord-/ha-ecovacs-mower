@@ -117,6 +117,7 @@ merely that the class string was seen:
 | **Ecovacs GOAT O1000 LiDAR Pro** | `0jbd6s` | reported, patch not yet confirmed — firmware 2.13.10 ([#102](https://github.com/nord-/ha-ecovacs-mower/issues/102)). Ecovacs identifies it internally as an O1200 LiDAR Plus, and it gets the O1200's capabilities |
 | **Ecovacs GOAT A3000 LiDAR Pro** | `51rcxt` | a user, firmware 1.13.10 — controls, zone mowing and border mowing confirmed ([#135](https://github.com/nord-/ha-ecovacs-mower/issues/135)); per-area parameters match the A1600 LiDAR Pro's ([#131](https://github.com/nord-/ha-ecovacs-mower/issues/131)) |
 | **Ecovacs GOAT O1200 RTK** | `qhq6i0` | a user, firmware 1.17.11 — zone mowing confirmed ([#140](https://github.com/nord-/ha-ecovacs-mower/issues/140)). Not the O1200 LiDAR Pro above: the RTK and LiDAR Pro variants are different machines |
+| **Ecovacs GOAT O500 Panorama** | `300lc5` | a user — start, pause, resume and dock confirmed ([#152](https://github.com/nord-/ha-ecovacs-mower/issues/152)) |
 
 The A1600 ships as two machines, and they report different device classes:
 the LiDAR Pro is `e4gqia`, the RTK is `xmp9ds`. Both rows above are real, and
