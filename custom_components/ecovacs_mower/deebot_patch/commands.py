@@ -46,6 +46,11 @@ all Home Assistant value conversion in ``area_numbers.py``.
 ``GetAnimProtect`` and ``SetAnimProtect`` are the same pair for the
 animal-protection setting and its window (issue #45).
 
+``GetUWBOta`` is the same kind again for the beacons' firmware-update state. It
+is a getter only: the ``setUWBOta`` the app sends to start an update is not
+implemented, because starting a firmware update is not a read and nothing here
+has established what it does to a mower mid-job.
+
 ``GetPosMower`` is the answer-side twin of ``OnPos``: a pushed ``onPos`` is
 parsed by ``OnPos``, but the answer to a ``getPos`` is parsed by the command
 itself, so it needs the same fix or it keeps the library's ``invalid == 0``
@@ -105,6 +110,7 @@ from .messages import (
     OnPos,
     OnProtectState,
     OnRainDelay,
+    OnUwbOta,
     handle_clean_info,
     notify_mower_beacons,
     notify_mower_stats,
@@ -738,6 +744,24 @@ class GetAnimProtect(JsonCommandWithMessageHandling, OnAnimProtect):
     """
 
     NAME = "getAnimProtect"
+
+
+class GetUWBOta(JsonCommandWithMessageHandling, OnUwbOta):
+    """Ask for the beacons' firmware-update state instead of waiting for a push.
+
+    ``onUWBOta`` is pushed while an update runs and never otherwise, so without
+    this the entities would read "unknown" from startup until the next update.
+    The answer carries the same two fields as the push, which is why
+    ``OnUwbOta`` is inherited for its handler, as ``GetRainDelay`` inherits
+    ``OnRainDelay``.
+
+    Evidence that the command exists on the wire: the Ecovacs app sends it, and
+    a G1-800 (``77atlz``, fw 1.36.208) answers through ``devmanager.do`` and
+    inside ``getInfo`` with ``{"needUpdate": 0, "otaState": 0}``. It takes no
+    arguments and changes nothing on the mower.
+    """
+
+    NAME = "getUWBOta"
 
 
 class GetPosMower(GetPos):

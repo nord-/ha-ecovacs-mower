@@ -4,6 +4,9 @@
       "animal_protect": {
         "default": "mdi:paw"
       },
+      "beacon_update_available": {
+        "default": "mdi:update"
+      },
       "emergency_stop": {
         "default": "mdi:alert-octagon"
       },
@@ -97,6 +100,9 @@
       },
       "core_temperature": {
         "default": "mdi:thermometer"
+      },
+      "beacon_update_state": {
+        "default": "mdi:progress-download"
       },
       "error": {
         "default": "mdi:alert-circle"

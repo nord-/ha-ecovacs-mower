@@ -39,6 +39,7 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
     GetProtectState,
     GetRainDelay,
     GetStatsMower,
+    GetUWBOta,
     MowerStateRefresh,
     SetAnimProtect,
     SetRainDelay,
@@ -58,6 +59,7 @@ from custom_components.ecovacs_mower.deebot_patch.families import (
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     MowerAnimProtectEvent,
     MowerBeacon,
+    MowerBeaconOtaEvent,
     MowerBeaconsEvent,
     MowerProtectStateEvent,
     MowerRainDelayEvent,
@@ -65,6 +67,7 @@ from custom_components.ecovacs_mower.deebot_patch.messages import (
     OnAnimProtect,
     OnProtectState,
     OnRainDelay,
+    OnUwbOta,
 )
 from custom_components.ecovacs_mower.deebot_patch.state_precedence import register
 
@@ -1410,3 +1413,81 @@ async def test_start_stays_start_after_work_complete() -> None:
         await command._execute(AsyncMock(), _DEVICE_INFO, bus)
 
     assert command._delegate(Family.NON_V2)._args["act"] == "start"
+
+
+# The answer as getUWBOta gives it through devmanager.do on a GOAT G1-800
+# (77atlz, fw 1.36.208), idle.
+def _uwb_ota_answer(data: dict) -> dict:
+    return {
+        "ret": "ok",
+        "resp": {
+            "header": {"pri": 1, "ver": "0.0.1", "fwVer": "1.36.208"},
+            "body": {"code": 0, "msg": "ok", "data": data},
+        },
+    }
+
+
+def test_get_uwb_ota_names_and_arguments() -> None:
+    assert GetUWBOta.NAME == "getUWBOta"
+    assert OnUwbOta.NAME == "onUWBOta"
+    assert GetUWBOta()._args == {}
+
+
+def test_get_uwb_ota_parses_the_answer_with_the_message_handler() -> None:
+    assert (
+        GetUWBOta._handle_body_data_dict.__func__
+        is OnUwbOta._handle_body_data_dict.__func__
+    )
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ({"needUpdate": 0, "otaState": 0}, MowerBeaconOtaEvent(False, 0)),
+        ({"needUpdate": 1, "otaState": 0}, MowerBeaconOtaEvent(True, 0)),
+        ({"needUpdate": 1, "otaState": 4}, MowerBeaconOtaEvent(True, 4)),
+    ],
+)
+def test_get_uwb_ota_notifies_the_event_from_a_full_answer(data, expected) -> None:
+    event_bus = Mock()
+
+    result = GetUWBOta()._handle_response(event_bus, _uwb_ota_answer(data))
+
+    assert result.state is HandlingState.SUCCESS
+    assert [
+        c.args[0]
+        for c in event_bus.notify.call_args_list
+        if isinstance(c.args[0], MowerBeaconOtaEvent)
+    ] == [expected]
+
+
+def test_get_uwb_ota_survives_a_failed_answer() -> None:
+    event_bus = Mock()
+
+    result = GetUWBOta()._handle_response(event_bus, {"ret": "fail", "errno": 500})
+
+    assert result.state is not HandlingState.SUCCESS
+    event_bus.notify.assert_not_called()
+
+
+def test_get_uwb_ota_is_only_ever_a_getter() -> None:
+    # setUWBOta starts a firmware update on the beacons. It is a write, it was
+    # never sent from here, and the read command must not turn into it: no
+    # arguments, no ExecuteCommand (whose contract is "did it take"), and no
+    # setter by the same name anywhere in the module.
+    assert GetUWBOta.NAME.startswith("get")
+    assert not issubclass(GetUWBOta, ExecuteCommand)
+    assert GetUWBOta()._args == {}
+
+    import custom_components.ecovacs_mower.deebot_patch.commands as commands_module
+
+    assert not [
+        name
+        for name in vars(commands_module)
+        if "uwbota" in name.lower() and name.lower().startswith("set")
+    ]
+    assert not [
+        cls.NAME
+        for cls in vars(commands_module).values()
+        if isinstance(cls, type) and getattr(cls, "NAME", "") == "setUWBOta"
+    ]
