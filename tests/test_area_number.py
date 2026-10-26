@@ -707,6 +707,8 @@ def test_a_lookup_cannot_be_changed_after_validation() -> None:
         ("mowHeightLevel", 1, 8.0),
         # Written from Home Assistant in the hardware test on PR #151.
         ("mowHeightLevel", 6, 5.5),
+        # Read in the same test: every area started at raw 7.
+        ("mowHeightLevel", 7, 5.0),
         ("mowHeightLevel", 8, 4.5),
         ("mowHeightLevel", 9, 4.0),
         ("mowHeightLevel", 10, 3.5),
