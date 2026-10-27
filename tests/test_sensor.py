@@ -87,6 +87,7 @@ def test_every_description_has_a_translation() -> None:
         ENTITY_DESCRIPTIONS,
         LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsActivitySensor,
+        EcovacsBeaconUpdateStateSensor,
         EcovacsErrorSensor,
         EcovacsMowingProgressSensor,
         beacon_entity_description,
@@ -101,6 +102,7 @@ def test_every_description_has_a_translation() -> None:
         *LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsErrorSensor.entity_description,
         EcovacsActivitySensor.entity_description,
+        EcovacsBeaconUpdateStateSensor.entity_description,
         EcovacsMowingProgressSensor.entity_description,
         # Built per beacon at runtime, so there is no tuple to splat. Every
         # serial yields the same translation key, which is what these three
@@ -127,6 +129,7 @@ def test_every_sensor_has_an_icon() -> None:
         ENTITY_DESCRIPTIONS,
         LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsActivitySensor,
+        EcovacsBeaconUpdateStateSensor,
         EcovacsErrorSensor,
         EcovacsMowingProgressSensor,
         beacon_entity_description,
@@ -141,6 +144,7 @@ def test_every_sensor_has_an_icon() -> None:
         *LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsErrorSensor.entity_description,
         EcovacsActivitySensor.entity_description,
+        EcovacsBeaconUpdateStateSensor.entity_description,
         EcovacsMowingProgressSensor.entity_description,
         # Built per beacon at runtime, so there is no tuple to splat. Every
         # serial yields the same translation key, which is what these three
@@ -166,6 +170,7 @@ def test_no_stale_sensor_translations_or_icons() -> None:
         ENTITY_DESCRIPTIONS,
         LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsActivitySensor,
+        EcovacsBeaconUpdateStateSensor,
         EcovacsErrorSensor,
         EcovacsMowingProgressSensor,
         beacon_entity_description,
@@ -180,6 +185,7 @@ def test_no_stale_sensor_translations_or_icons() -> None:
         *LIFESPAN_ENTITY_DESCRIPTIONS,
         EcovacsErrorSensor.entity_description,
         EcovacsActivitySensor.entity_description,
+        EcovacsBeaconUpdateStateSensor.entity_description,
         EcovacsMowingProgressSensor.entity_description,
         # Built per beacon at runtime, so there is no tuple to splat. Every
         # serial yields the same translation key, which is what these three
@@ -1468,3 +1474,129 @@ async def test_a_charge_break_resume_is_not_a_new_job() -> None:
     await sensor._on_state(_state_event(State.CLEANING))
 
     assert sensor._attr_native_value == 55
+
+
+# --- beacon update state ----------------------------------------------------
+
+
+def _ota(need_update, ota_state):
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerBeaconOtaEvent,
+    )
+
+    return MowerBeaconOtaEvent(need_update=need_update, ota_state=ota_state)
+
+
+async def _set_up_platform(*devices):
+    """Run the sensor platform over *devices* and return what it added."""
+    from unittest.mock import MagicMock, patch
+
+    from custom_components.ecovacs_mower.sensor import async_setup_entry
+
+    config_entry = MagicMock()
+    config_entry.runtime_data.devices = list(devices)
+    added: list = []
+    with patch(
+        "custom_components.ecovacs_mower.sensor.get_supported_entities",
+        return_value=[],
+    ):
+        await async_setup_entry(MagicMock(), config_entry, added.extend)
+    return added
+
+
+def _update_state_sensors(added: list):
+    from custom_components.ecovacs_mower.sensor import EcovacsBeaconUpdateStateSensor
+
+    return [e for e in added if isinstance(e, EcovacsBeaconUpdateStateSensor)]
+
+
+async def test_the_update_state_sensor_exists_for_a_beacon_class() -> None:
+    added = await _set_up_platform(_beacon_mower("77atlz", did="did-g1"))
+
+    assert [s.unique_id for s in _update_state_sensors(added)] == [
+        "did-g1_beacon_update_state"
+    ]
+
+
+async def test_the_update_state_sensor_is_absent_without_the_beacon_flag() -> None:
+    # 2i0fns is patched but navigates without beacons: no flag, no refresh
+    # command behind the event, so an entity could never have a value.
+    added = await _set_up_platform(_beacon_mower("2i0fns", did="did-o1200"))
+
+    assert _update_state_sensors(added) == []
+
+
+async def test_the_update_state_sensor_is_absent_for_an_unsupported_class() -> None:
+    added = await _set_up_platform(_beacon_mower("not-a-real-class", did="did-x"))
+
+    assert _update_state_sensors(added) == []
+
+
+def _bare_update_state_sensor():
+    from unittest.mock import Mock
+
+    from custom_components.ecovacs_mower.sensor import EcovacsBeaconUpdateStateSensor
+
+    device = Mock()
+    device.device_info = {"did": "did-g1"}
+    return EcovacsBeaconUpdateStateSensor(device), device
+
+
+async def _update_state_callback(sensor, device):
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerBeaconOtaEvent,
+    )
+
+    sensor.async_write_ha_state = lambda: None
+    await sensor.async_added_to_hass()
+    for call in device.events.subscribe.call_args_list:
+        event_type, callback = call.args
+        if event_type is MowerBeaconOtaEvent:
+            return callback
+    raise AssertionError("the sensor never subscribed to MowerBeaconOtaEvent")
+
+
+def test_the_update_state_sensor_is_unknown_before_the_first_event() -> None:
+    sensor, _ = _bare_update_state_sensor()
+
+    assert sensor.native_value is None
+
+
+async def test_the_update_state_sensor_shows_the_raw_integer() -> None:
+    # 0 idle, 1 in progress and 4 after a failed attempt were observed; 7 never
+    # was and must come through as the number it is.
+    sensor, device = _bare_update_state_sensor()
+    callback = await _update_state_callback(sensor, device)
+
+    seen = []
+    for state in (0, 1, 4, 7):
+        await callback(_ota(True, state))
+        seen.append(sensor.native_value)
+
+    assert seen == [0, 1, 4, 7]
+
+
+async def test_the_update_state_sensor_goes_unknown_when_the_state_is_unknown() -> None:
+    sensor, device = _bare_update_state_sensor()
+    callback = await _update_state_callback(sensor, device)
+    await callback(_ota(True, 4))
+
+    await callback(_ota(True, None))
+
+    assert sensor.native_value is None
+
+
+def test_the_update_state_sensor_is_a_plain_diagnostic_number() -> None:
+    # Not a measurement, not an enum, no unit: the raw value of a state whose
+    # names nobody has seen.
+    from homeassistant.const import EntityCategory
+
+    from custom_components.ecovacs_mower.sensor import EcovacsBeaconUpdateStateSensor
+
+    description = EcovacsBeaconUpdateStateSensor.entity_description
+    assert description.entity_category is EntityCategory.DIAGNOSTIC
+    assert description.device_class is None
+    assert description.state_class is None
+    assert description.native_unit_of_measurement is None
+    assert description.options is None
+    assert description.entity_registry_enabled_default is True

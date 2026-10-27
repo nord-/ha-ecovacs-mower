@@ -136,13 +136,15 @@ def test_no_stale_binary_sensor_translations_or_icons() -> None:
     """Every key in strings.json/icons.json must belong to a real entity."""
     from custom_components.ecovacs_mower.binary_sensor import (
         ENTITY_DESCRIPTIONS,
+        EcovacsBeaconUpdateBinarySensor,
         EcovacsFaultBinarySensor,
     )
 
     strings = json.loads((ROOT / "strings.json").read_text(encoding="utf-8"))
     icons = json.loads((ROOT / "icons.json").read_text(encoding="utf-8"))
     keys = {d.translation_key for d in ENTITY_DESCRIPTIONS if d.translation_key} | {
-        EcovacsFaultBinarySensor.entity_description.translation_key
+        EcovacsFaultBinarySensor.entity_description.translation_key,
+        EcovacsBeaconUpdateBinarySensor.entity_description.translation_key,
     }
 
     assert set(strings["entity"]["binary_sensor"]) <= keys
@@ -257,6 +259,141 @@ async def test_the_fault_sensor_turns_off_on_release() -> None:
         ATTR_CODE: None,
         CONF_DESCRIPTION: None,
     }
+
+
+def test_the_beacon_update_sensor_has_a_translation_and_an_icon() -> None:
+    """Not in ENTITY_DESCRIPTIONS either, so the loops above never reach it."""
+    from custom_components.ecovacs_mower.binary_sensor import (
+        EcovacsBeaconUpdateBinarySensor,
+    )
+
+    key = EcovacsBeaconUpdateBinarySensor.entity_description.translation_key
+    strings = json.loads((ROOT / "strings.json").read_text(encoding="utf-8"))
+    icons = json.loads((ROOT / "icons.json").read_text(encoding="utf-8"))
+
+    assert key in strings["entity"]["binary_sensor"]
+    assert key in icons["entity"]["binary_sensor"]
+
+
+def test_the_beacon_update_sensor_is_an_update_diagnostic() -> None:
+    from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+    from homeassistant.const import EntityCategory
+
+    from custom_components.ecovacs_mower.binary_sensor import (
+        EcovacsBeaconUpdateBinarySensor,
+    )
+
+    description = EcovacsBeaconUpdateBinarySensor.entity_description
+    assert description.device_class is BinarySensorDeviceClass.UPDATE
+    assert description.entity_category is EntityCategory.DIAGNOSTIC
+    assert description.entity_registry_enabled_default is True
+
+
+def _ota_mower(class_: str, did: str):
+    from unittest.mock import MagicMock
+
+    from deebot_client.capabilities import DeviceType
+
+    device = MagicMock()
+    device.capabilities.device_type = DeviceType.MOWER
+    device.device_info = {"did": did, "class": class_}
+    return device
+
+
+async def _added_by_platform(*devices):
+    from unittest.mock import MagicMock
+
+    from custom_components.ecovacs_mower.binary_sensor import async_setup_entry
+
+    config_entry = MagicMock()
+    config_entry.runtime_data.devices = list(devices)
+    added: list = []
+    await async_setup_entry(MagicMock(), config_entry, added.extend)
+    return added
+
+
+def _update_sensors(added: list):
+    from custom_components.ecovacs_mower.binary_sensor import (
+        EcovacsBeaconUpdateBinarySensor,
+    )
+
+    return [e for e in added if isinstance(e, EcovacsBeaconUpdateBinarySensor)]
+
+
+async def test_the_beacon_update_sensor_exists_for_a_beacon_class() -> None:
+    added = await _added_by_platform(_ota_mower("77atlz", "did-g1"))
+
+    assert [s.unique_id for s in _update_sensors(added)] == [
+        "did-g1_beacon_update_available"
+    ]
+
+
+async def test_the_beacon_update_sensor_is_absent_for_other_classes() -> None:
+    # 2i0fns is patched but has no beacons; the other class is not patched at
+    # all. Neither has a refresh command behind the event.
+    added = await _added_by_platform(
+        _ota_mower("2i0fns", "did-o1200"), _ota_mower("not-a-real-class", "did-x")
+    )
+
+    assert _update_sensors(added) == []
+
+
+def _bare_update_sensor():
+    from unittest.mock import Mock
+
+    from custom_components.ecovacs_mower.binary_sensor import (
+        EcovacsBeaconUpdateBinarySensor,
+    )
+
+    device = Mock()
+    device.device_info = {"did": "did-g1"}
+    return EcovacsBeaconUpdateBinarySensor(device), device
+
+
+async def _update_callback(entity, device):
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerBeaconOtaEvent,
+    )
+
+    entity.async_write_ha_state = lambda: None
+    await entity.async_added_to_hass()
+    for call in device.events.subscribe.call_args_list:
+        event_type, callback = call.args
+        if event_type is MowerBeaconOtaEvent:
+            return callback
+    raise AssertionError("the sensor never subscribed to MowerBeaconOtaEvent")
+
+
+async def test_the_beacon_update_sensor_follows_need_update() -> None:
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerBeaconOtaEvent,
+    )
+
+    entity, device = _bare_update_sensor()
+    callback = await _update_callback(entity, device)
+    assert entity.is_on is None
+
+    seen = []
+    for need_update in (False, True, False):
+        await callback(MowerBeaconOtaEvent(need_update=need_update, ota_state=0))
+        seen.append(entity.is_on)
+
+    assert seen == [False, True, False]
+
+
+async def test_the_beacon_update_sensor_stays_unknown_for_an_unknown_flag() -> None:
+    # A push that carried only the state, before any answer: nothing is known
+    # about needUpdate, and "no update" would be a claim.
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerBeaconOtaEvent,
+    )
+
+    entity, device = _bare_update_sensor()
+    callback = await _update_callback(entity, device)
+
+    await callback(MowerBeaconOtaEvent(need_update=None, ota_state=1))
+
+    assert entity.is_on is None
 
 
 def test_platform_is_forwarded() -> None:

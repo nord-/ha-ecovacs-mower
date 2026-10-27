@@ -42,7 +42,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EcovacsMowerConfigEntry
-from .deebot_patch.messages import MowerProtectStateEvent
+from .deebot_patch.hardware import profile_for_class
+from .deebot_patch.messages import MowerBeaconOtaEvent, MowerProtectStateEvent
 from .entity import EcovacsDescriptionEntity, EcovacsEntity
 from .fault import MowerFaultEvent
 
@@ -129,6 +130,16 @@ async def async_setup_entry(
         for device in controller.devices
         if device.capabilities.device_type is DeviceType.MOWER
     )
+    entities.extend(
+        EcovacsBeaconUpdateBinarySensor(device)
+        for device in controller.devices
+        if device.capabilities.device_type is DeviceType.MOWER
+        # beacon_ota is a profile flag of its own: the refresh command behind
+        # MowerBeaconOtaEvent is only wired for a class that has it, so any
+        # other would get an entity that can never have a value.
+        and (profile := profile_for_class(device.device_info["class"])) is not None
+        and profile.beacon_ota
+    )
     async_add_entities(entities)
 
 
@@ -207,3 +218,43 @@ class EcovacsFaultBinarySensor(
             self.async_write_ha_state()
 
         self._subscribe(MowerFaultEvent, on_event)
+
+
+class EcovacsBeaconUpdateBinarySensor(
+    EcovacsEntity[Capabilities],
+    BinarySensorEntity,
+):
+    """Whether the mower reports a firmware update for its navigation beacons.
+
+    ``needUpdate`` from ``getUWBOta``, read at setup and on a reconnect, and
+    from ``onUWBOta`` when the mower pushes it. On a G1-800 it read 0 when
+    idle and 1 after a power cycle, and stayed 1 after an update attempt that
+    ended in ``otaState`` 4, so on says an update is offered, not that one is
+    running: ``sensor.<device>_beacon_update_state`` is the progress.
+    Read-only: starting the update is not something this integration does.
+
+    Unknown until the mower has said it, which is also what a push carrying
+    only ``otaState`` leaves it at if no answer has arrived yet.
+    """
+
+    entity_description = BinarySensorEntityDescription(
+        key="beacon_update_available",
+        translation_key="beacon_update_available",
+        device_class=BinarySensorDeviceClass.UPDATE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    )
+
+    def __init__(self, device: Device) -> None:
+        """Initialize entity."""
+        super().__init__(device, device.capabilities)
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listeners now that hass is ready."""
+        await super().async_added_to_hass()
+
+        async def on_event(event: MowerBeaconOtaEvent) -> None:
+            self._attr_is_on = event.need_update
+            self.async_write_ha_state()
+
+        self._subscribe(MowerBeaconOtaEvent, on_event)

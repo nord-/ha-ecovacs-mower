@@ -19,7 +19,9 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
 )
 from custom_components.ecovacs_mower.deebot_patch.hardware import (
     SUPPORTED_CLASSES,
+    MowerProfile,
     patch_device_info,
+    profile_for_class,
 )
 from custom_components.ecovacs_mower.deebot_patch.map_messages import (
     MowerMapInfoEvent,
@@ -27,6 +29,7 @@ from custom_components.ecovacs_mower.deebot_patch.map_messages import (
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     BEACON_COMPONENT,
     MowerAnimProtectEvent,
+    MowerBeaconOtaEvent,
     MowerBeaconsEvent,
     MowerProtectStateEvent,
     MowerRainDelayEvent,
@@ -645,3 +648,37 @@ def test_border_mowing_is_flagged_on_the_classes_where_it_was_confirmed() -> Non
         for class_, profile in hardware.SUPPORTED_CLASSES.items()
         if profile.border_mowing
     } == {G1_800, A3000_LIDAR_PRO}
+
+
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_the_beacon_update_read_is_wired_for_beacon_ota_classes_only(
+    class_: str,
+) -> None:
+    # onUWBOta is pushed while an update runs and never otherwise, so a class
+    # with beacon_ota needs the read to have a value from startup. A class
+    # without it has not been checked and must get no entry at all.
+    from custom_components.ecovacs_mower.deebot_patch.commands import GetUWBOta
+
+    await patch_device_info(class_)
+    info = await get_static_device_info(class_)
+    commands = info.capabilities.get_refresh_commands(MowerBeaconOtaEvent)
+
+    if profile_for_class(class_).beacon_ota:
+        assert [type(c) for c in commands] == [GetUWBOta]
+    else:
+        assert commands == []
+
+
+async def test_only_the_g1_800_has_the_beacon_update_read() -> None:
+    # Pins the premise of the parametrised test above: if the profile flag
+    # moves, this is the line that says so.
+    assert [c for c in SUPPORTED_CLASSES if profile_for_class(c).beacon_ota] == [
+        G1_800
+    ]
+
+
+def test_beacon_ota_is_its_own_flag_not_a_side_effect_of_uwb_beacons() -> None:
+    # The getUWBOta capture is separate from the lifespan one behind
+    # uwb_beacons: a class that gets one must not get the other for free.
+    assert MowerProfile("x", uwb_beacons=True).beacon_ota is False
+    assert MowerProfile("x", beacon_ota=True).uwb_beacons is False

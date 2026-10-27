@@ -81,6 +81,11 @@ class for the samples that establish the disagreement, and
 from ``onAnimProtect``, a seventh. It is the setting ``isAnimProtect`` was long
 mistaken for (issue #45), and like the rain setting it has a refresh command,
 ``GetAnimProtect``, and a write side, ``SetAnimProtect``, in ``commands.py``.
+
+``MowerBeaconOtaEvent`` carries the navigation beacons' firmware-update state
+from ``onUWBOta``, an eighth unhandled message. It is read-only here: its
+refresh command, ``GetUWBOta``, is a getter, and the ``setUWBOta`` the app
+sends to start an update is deliberately not implemented.
 """
 
 from __future__ import annotations
@@ -92,7 +97,7 @@ from dataclasses import dataclass, field
 from datetime import time
 from time import monotonic
 from typing import TYPE_CHECKING, Any, ClassVar
-from weakref import WeakKeyDictionary
+from weakref import WeakKeyDictionary, WeakSet
 
 from deebot_client.commands.json.clean import GetCleanInfo
 from deebot_client.commands.json.error import GetError
@@ -1381,6 +1386,139 @@ class OnAnimProtect(MessageBodyDataDict):
                 end=_as_clock(data.get("end")),
             )
         )
+        return HandlingResult.success()
+
+
+# What the last ``onUWBOta`` push or ``getUWBOta`` answer said, per device, as
+# ``(need_update, ota_state)`` with ``None`` for a field never heard. Written by
+# the handler and not derived from a subscription, for the reason
+# ``_LIFE_SPAN_READINGS`` gives: the bus drops a repeat before any subscriber
+# runs. It exists because the push has only been observed to carry
+# ``otaState``: publishing that alone would blank the ``needUpdate`` the last
+# answer delivered, so each field keeps its last known value until the mower
+# says another.
+_UWB_OTA_READINGS: WeakKeyDictionary[EventBus, tuple[bool | None, int | None]] = (
+    WeakKeyDictionary()
+)
+
+
+# Buses with a ``getUWBOta`` already asked for because a payload came without
+# ``needUpdate``. Cleared by the next payload that carries it, so an answer that
+# also leaves it out cannot make the handler ask again and again.
+_UWB_OTA_REFRESHING: WeakSet[EventBus] = WeakSet()
+
+
+def reset_beacon_ota_readings() -> None:
+    """Forget every recorded beacon-update reading. Tests only."""
+    _UWB_OTA_READINGS.clear()
+    _UWB_OTA_REFRESHING.clear()
+
+
+@dataclass(frozen=True)
+class MowerBeaconOtaEvent(Event):
+    """The navigation beacons' firmware-update state.
+
+    From ``getUWBOta`` and ``onUWBOta`` on a GOAT G1-800 (``77atlz``, fw
+    1.36.208), the whole of what has been captured:
+
+        getUWBOta answer   {"needUpdate": 0, "otaState": 0}   idle
+        getUWBOta answer   {"needUpdate": 1, "otaState": 0}   after a power cycle
+        onUWBOta push      otaState 1, then otaState 4 about 45 s later;
+                           afterwards needUpdate 1 / otaState 4 persisted
+
+    The second and third rows followed an update the app started with
+    ``setUWBOta``. ``otaState`` is therefore known to be ``0`` when idle and
+    ``1`` shortly after an update was started; ``4`` was *observed* once, at the
+    moment ``onUWB`` carried ``otaResult 1`` on two beacons and a bury point
+    reported ``{"act": 4, "result": 0}``, which fits a failed attempt but does
+    not establish it. No other value has been seen, so ``ota_state`` stays the
+    raw integer and is not mapped to names.
+
+    Either field is ``None`` until the mower has said it. ``need_update`` is
+    ``None`` when only a push without it has arrived; ``ota_state`` is ``None``
+    when a payload carried a ``needUpdate`` and no usable ``otaState``.
+    """
+
+    need_update: bool | None
+    ota_state: int | None
+
+
+def _as_ota_state(value: Any) -> int | None:
+    """Read ``otaState``: a whole number, or ``None``.
+
+    ``bool`` is an ``int`` subclass in Python, and a ``True`` arriving here is a
+    firmware quirk to drop, not state 1 — the same refusal the rain delay makes.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _as_need_update(value: Any) -> bool | None:
+    """Read ``needUpdate``: a ``bool`` or the ints ``0``/``1``, else ``None``."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    return None
+
+
+class OnUwbOta(MessageBodyDataDict):
+    """The beacons' firmware-update state, pushed on every change.
+
+    ``onUWBOta`` is the push the mower sent twice after an update was started,
+    and ``GetUWBOta`` in ``commands.py`` inherits this handler for its answer,
+    which carries the same two fields — one parser, two entry points, the same
+    arrangement as ``OnRainDelay``.
+
+    The push's own envelope has not been captured beyond ``otaState``, so this
+    reads ``needUpdate`` and ``otaState`` from ``body.data`` the way its
+    neighbours read theirs and publishes whichever of the two it finds usable.
+    A field that is missing or of the wrong type is ignored and the last known
+    value stays, so a short push never blanks what an earlier answer said.
+
+    A payload with ``otaState`` and no ``needUpdate`` also asks for a fresh
+    ``getUWBOta``: the pushes seen so far carry ``otaState`` alone, so after an
+    update that succeeded the last ``needUpdate: 1`` would otherwise stay until
+    the next reconnect. Those pushes come only while an update runs, so this is
+    one request per push and no poll. One request is outstanding at a time: if
+    the answer leaves ``needUpdate`` out as well, nothing asks again until a
+    payload has carried it.
+    """
+
+    NAME = "onUWBOta"
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data.
+
+        Nothing usable at all is not published and not an error: the payload is
+        logged at debug level and handed back for analysis, since a firmware
+        that words this push differently should leave a trace rather than a
+        guessed reading.
+        """
+        need_update = sent_need = _as_need_update(data.get("needUpdate"))
+        ota_state = _as_ota_state(data.get("otaState"))
+
+        if need_update is None and ota_state is None:
+            _LOGGER.debug("onUWBOta without a usable field, ignored: %s", data)
+            return HandlingResult.analyse()
+
+        known_need, known_state = _UWB_OTA_READINGS.get(event_bus, (None, None))
+        need_update = known_need if need_update is None else need_update
+        ota_state = known_state if ota_state is None else ota_state
+        _UWB_OTA_READINGS[event_bus] = (need_update, ota_state)
+
+        event_bus.notify(
+            MowerBeaconOtaEvent(need_update=need_update, ota_state=ota_state)
+        )
+        if sent_need is not None:
+            _UWB_OTA_REFRESHING.discard(event_bus)
+        elif event_bus not in _UWB_OTA_REFRESHING:
+            _UWB_OTA_REFRESHING.add(event_bus)
+            event_bus.request_refresh(MowerBeaconOtaEvent)
         return HandlingResult.success()
 
 
