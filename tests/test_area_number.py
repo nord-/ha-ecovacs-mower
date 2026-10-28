@@ -1109,3 +1109,90 @@ def test_an_auto_direction_replaces_the_raw_device_wide_one(
 
     assert _replaced_by_auto(by_key["cut_direction"], device) is replaced
     assert _replaced_by_auto(by_key["volume"], device) is False
+
+
+# The A1600 RTK's Auto mode values from issue #163: every value its app
+# offers, read back with the Log area parameters button.
+@pytest.mark.parametrize(
+    ("parameter", "raw", "native"),
+    [
+        ("mowHeightLevel", 1, 9),
+        ("mowHeightLevel", 2, 8),
+        ("mowHeightLevel", 3, 7),
+        ("mowHeightLevel", 4, 6),
+        ("mowHeightLevel", 5, 5),
+        ("mowHeightLevel", 6, 4),
+        ("mowHeightLevel", 7, 3),
+        # Quick and Delicate.
+        ("cutMode", 1, 0.70),
+        ("cutMode", 2, 0.40),
+        ("obstacleHeight", 1, 10),
+        ("obstacleHeight", 2, 15),
+        ("obstacleHeight", 3, 20),
+        # Left, straight and right in the app.
+        ("angle", 270, 0),
+        ("angle", 180, 90),
+        ("angle", 90, 180),
+    ],
+)
+def test_the_a1600_rtk_auto_maps_its_readings(parameter, raw, native) -> None:
+    from custom_components.ecovacs_mower.area_numbers import (
+        AREA_PARAMETER_VALUE_MAPPINGS,
+    )
+
+    value_mapping = AREA_PARAMETER_VALUE_MAPPINGS["xmp9ds"].auto[parameter]
+
+    assert value_mapping.to_native(raw) == native
+    assert value_mapping.to_raw(native) == raw
+
+
+def test_the_a1600_rtk_has_a_direction_for_the_whole_mower_only() -> None:
+    from custom_components.ecovacs_mower.area_numbers import (
+        AREA_PARAMETER_VALUE_MAPPINGS,
+    )
+
+    mappings = AREA_PARAMETER_VALUE_MAPPINGS["xmp9ds"]
+
+    assert list(mappings.areas) == ["mowHeightLevel", "cutMode", "obstacleHeight"]
+    assert list(mappings.auto) == [
+        "mowHeightLevel",
+        "cutMode",
+        "obstacleHeight",
+        "angle",
+    ]
+    speed = mappings.auto["cutMode"]
+    assert [raw for raw in range(1, 8) if speed.to_native(raw) is not None] == [1, 2]
+
+
+async def test_the_a1600_rtk_gets_its_auto_entities() -> None:
+    from deebot_client.capabilities import DeviceType
+
+    from custom_components.ecovacs_mower.area_numbers import async_setup_area_numbers
+
+    device = _device()
+    device.device_info["class"] = "xmp9ds"
+    device.capabilities.device_type = DeviceType.MOWER
+    add_entities = MagicMock()
+
+    await async_setup_area_numbers(_entry_with(device), add_entities)
+
+    [entities] = add_entities.call_args[0]
+    assert [entity.unique_id for entity in entities] == [
+        "did_area_auto_cutting_height",
+        "did_area_auto_mowing_speed",
+        "did_area_auto_obstacle_height",
+        "did_area_auto_cut_direction",
+    ]
+
+
+def test_the_a1600_rtk_auto_direction_replaces_the_device_wide_one() -> None:
+    from custom_components.ecovacs_mower.number import (
+        ENTITY_DESCRIPTIONS,
+        _replaced_by_auto,
+    )
+
+    device = _device()
+    device.device_info["class"] = "xmp9ds"
+    [cut_direction] = [d for d in ENTITY_DESCRIPTIONS if d.key == "cut_direction"]
+
+    assert _replaced_by_auto(cut_direction, device)

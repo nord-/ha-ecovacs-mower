@@ -111,7 +111,7 @@ merely that the class string was seen:
 | **Ecovacs GOAT O800 RTK** | `2px96q` | a user, controls and state confirmed — start/pause in [#24](https://github.com/nord-/ha-ecovacs-mower/issues/24), state on firmware 1.17.11 in [#56](https://github.com/nord-/ha-ecovacs-mower/issues/56). Firmware 1.17 speaks a second map dialect, decoded from two users' logs but not yet confirmed on hardware ([#41](https://github.com/nord-/ha-ecovacs-mower/issues/41)) |
 | **Ecovacs GOAT G1-800** | `77atlz` | a user, firmware 1.36.208 — the protection-flag sensors in [#30](https://github.com/nord-/ha-ecovacs-mower/issues/30), start/pause/resume/dock from the `lawn_mower` entity in [#74](https://github.com/nord-/ha-ecovacs-mower/issues/74). That firmware branch answers the `V2` command family instead of the one every other confirmed mower uses, and the integration detects and switches to it automatically, so no manual configuration is needed ([#42](https://github.com/nord-/ha-ecovacs-mower/issues/42)); zone mowing is confirmed ([#114](https://github.com/nord-/ha-ecovacs-mower/pull/114)); border mowing is built for this class from the request captured in [#12](https://github.com/nord-/ha-ecovacs-mower/issues/12) and awaits confirmation on hardware |
 | **Ecovacs GOAT A1600 LiDAR Pro** | `e4gqia` | a user, firmware 1.11.31 ([#29](https://github.com/nord-/ha-ecovacs-mower/pull/29)) — zone mowing confirmed ([#78](https://github.com/nord-/ha-ecovacs-mower/pull/78)) |
-| **Ecovacs GOAT A1600 RTK** | `xmp9ds` | two users, firmware 1.17.11 — controls confirmed (start, dock, and start again from the dock) in [#104](https://github.com/nord-/ha-ecovacs-mower/issues/104); first reported on firmware 1.17.9 in [#43](https://github.com/nord-/ha-ecovacs-mower/issues/43); per-area parameters ([#23](https://github.com/nord-/ha-ecovacs-mower/issues/23)) |
+| **Ecovacs GOAT A1600 RTK** | `xmp9ds` | two users, firmware 1.17.11 — controls confirmed (start, dock, and start again from the dock) in [#104](https://github.com/nord-/ha-ecovacs-mower/issues/104); first reported on firmware 1.17.9 in [#43](https://github.com/nord-/ha-ecovacs-mower/issues/43); per-area parameters ([#23](https://github.com/nord-/ha-ecovacs-mower/issues/23), [#158](https://github.com/nord-/ha-ecovacs-mower/issues/158)); Auto mode settings ([#163](https://github.com/nord-/ha-ecovacs-mower/issues/163)) |
 | **Ecovacs GOAT A3000 LiDAR** | `o4kvvk` | reported working unpatched, patch not yet confirmed — firmware 1.13.31 ([#106](https://github.com/nord-/ha-ecovacs-mower/issues/106)) |
 | **Ecovacs GOAT O600 RTK** | `6n9pcz` | reported, patch not yet confirmed ([#103](https://github.com/nord-/ha-ecovacs-mower/issues/103)) |
 | **Ecovacs GOAT O1000 LiDAR Pro** | `0jbd6s` | reported, patch not yet confirmed — firmware 2.13.10 ([#102](https://github.com/nord-/ha-ecovacs-mower/issues/102)). Ecovacs identifies it internally as an O1200 LiDAR Plus, and it gets the O1200's capabilities |
@@ -269,7 +269,7 @@ the models that use them:
 | `sensor` | 16, 18 on the G1-800, + one per beacon | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowing progress (see below), job target area, job target duration, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name, on the G1-800 the mower's core temperature (see below), and on a beacon-guided mower one battery percentage per UWB beacon and the raw state of the beacons' firmware update (see below) |
 | `binary_sensor` | 6, 7 on the G1-800 | Fault — a latched problem that stays on until the mower recovers or you clear it (see below) — plus rain sensor, rain delay, emergency stop, locked, animal protection active: the mower's raw protection flags, from the `onProtectState` message the library drops (see below), and on a beacon-guided mower whether the beacons have a firmware update available (see below) |
 | `switch` | 9 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection, rain detection, animal protection (see below) |
-| `number` | 3 + one per setting per saved area (four on the A1600, A3000 and O1200 LiDAR Pro, three on the A1600 RTK) | Notification volume, cutting direction, rain delay duration, plus cutting height, mowing speed, obstacle height and, where the model has it per area, cutting direction for each saved area (see below) |
+| `number` | 3 + one per setting per saved area (four on the A1600, A3000 and O1200 LiDAR Pro, three on the A1600 RTK); on the A1600 RTK 2 + four Auto settings + three per saved area | Notification volume, cutting direction, rain delay duration, plus cutting height, mowing speed, obstacle height and, where the model has it per area, cutting direction for each saved area; on the A1600 RTK also the four Auto mode settings for the whole mower, whose cutting direction replaces the device-wide one (see below) |
 | `button` | 8, 9 on the G1-800 and A3000 LiDAR Pro | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), "Clear fault" (releases the latched fault; see below), "End mowing task" (ends the current job for good; see below), "Log area parameters" (diagnostic, disabled by default; shows the raw per-area values to help support another model, see below) and, on the G1-800 and A3000 LiDAR Pro, "Mow border" (starts a border job; see below) |
 | `event` | 2 | Last mowing job (finished / finished with warnings / manually stopped — see below) and Job started (what started or resumed the job — see below) |
 | `image` | 1 | The mower's map — lawn boundary, mowed coverage or, on the O800 RTK `9bts2s`, what is still to cut (see below), no-go zones, detected obstacles, the dock and the mower's position. A map that holds several lawns reports one outline per lawn and all of them are drawn, along with the passages between them, the stretches of edge the mower is told to mow flush against, and, on the O800 RTK `9bts2s`, each area's name where the mower itself puts it. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, `onMapTrace` on firmware 1.17, and `onMapInfo_V2` on 1.36 — that last one only ever arrives in answer to a `getMapInfo_V2` the integration now sends, as `onMI` does on a non-V2 mower in answer to `getMI`); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only. The mower's position, its heading, the dock and the path it has driven are also attributes of the entity (`position_x`, `position_y`, `heading`, `dock_x`, `dock_y`, `track`) — millimetres in the map's own frame, with the dock as the origin, `heading` in degrees as the mower reports it (counter-clockwise from the frame's +x axis, measured on the G1-800 at firmware 1.36.208 only), and `track` a list of `[x, y]` points thinned to at most about 250 — so a card can draw the mower on something other than the SVG. `position_x`, `position_y` and `heading` are `null` until the mower has reported a position since Home Assistant started |
@@ -497,15 +497,21 @@ starts over, with a fresh table and an empty list of changes.
 Some models keep the same settings for the whole mower too, in the app's
 Auto mode, each read and written with its own command. The integration treats
 them as one more area, `auto`, with the same kind of entities, named *Auto -
-Cutting height* and so on, validated per model in the same way. No model's
-Auto settings have been validated yet.
+Cutting height* and so on, validated per model in the same way.
+
+| Setting | A1600 RTK |
+|---|---|
+| Cutting height | 3–9 cm |
+| Mowing speed | 0.40 m/s (Delicate), 0.70 m/s (Quick) |
+| Obstacle height | 10, 15, 20 cm |
+| Cutting direction | 0–180°: the app's left is 0°, straight 90°, right 180° |
 
 The Auto cutting direction is the same setting as the device-wide *Cutting
 direction* number, which shows the raw angle the mower stores. Where a
 model's Auto direction is validated, *Auto - Cutting direction* takes its
-place, in the app's degrees, and the device-wide number is no longer created.
-A model gets no Auto entities until its values have been checked on that
-model.
+place, in the app's degrees, and the device-wide number is no longer created:
+on the A1600 RTK so far. Other models get no Auto entities until their values
+have been checked on that model.
 
 ### Border mowing
 

@@ -191,8 +191,8 @@ class MowerProfile:
 #                     two speeds do not, and its areas have no angle. The
 #                     app values of the per-area levels are taken from the
 #                     same settings read in Auto mode; height raw 2-5 are
-#                     inferred, and no write from Home Assistant has run on
-#                     this class yet.
+#                     inferred. Writes from Home Assistant landed as the app
+#                     shows them on a test version (issue #158).
 #   area_names      — 9bts2s: the ar response captured on a three-lawn O800
 #                     RTK, firmware 1.13.8 (issue #41), after renaming the
 #                     areas in the app:
