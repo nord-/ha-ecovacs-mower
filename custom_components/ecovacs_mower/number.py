@@ -15,6 +15,10 @@ features a lawn mower does not have). ``volume`` and ``cut_direction`` are both
 plain ``CapabilitySet``, not ``CapabilityNumber``, so that branch never triggers
 here and has been removed along with the import.
 
+On a class whose mower-wide (Auto mode) direction is validated, the
+``cut_direction`` entity is left out: ``area_numbers.py`` shows the same
+setting as *Auto - Cutting direction*, converted to the app's degrees.
+
 ``EcovacsRainDelayNumber`` is an addition rather than a fork: it is the second
 half of the rain sensor's setting, the minutes the mower waits before resuming
 after rain (issue #54). Like the switch that carries the first half, it sits
@@ -42,7 +46,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EcovacsMowerConfigEntry
-from .area_numbers import async_setup_area_numbers
+from .area_numbers import async_setup_area_numbers, auto_parameter_keys
 from .deebot_patch.commands import SetRainDelay
 from .deebot_patch.messages import MowerRainDelayEvent
 from .entity import (
@@ -50,7 +54,6 @@ from .entity import (
     EcovacsDescriptionEntity,
     EcovacsEntity,
 )
-from .util import get_supported_entities
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -99,9 +102,15 @@ async def async_setup_entry(
 ) -> None:
     """Add entities for passed config_entry in HA."""
     controller = config_entry.runtime_data
-    entities: list[EcovacsEntity] = get_supported_entities(
-        controller, EcovacsNumberEntity, ENTITY_DESCRIPTIONS
-    )
+    # get_supported_entities() as it is, one device at a time, so a
+    # description can be left out for a device whose Auto entity replaces it.
+    entities: list[EcovacsEntity] = [
+        EcovacsNumberEntity(device, capability, description)
+        for device in controller.devices
+        for description in ENTITY_DESCRIPTIONS
+        if (capability := description.capability_fn(device.capabilities))
+        and not _replaced_by_auto(description, device)
+    ]
     entities.extend(
         EcovacsRainDelayNumber(device)
         for device in controller.devices
@@ -110,6 +119,21 @@ async def async_setup_entry(
     if entities:
         async_add_entities(entities)
     await async_setup_area_numbers(config_entry, async_add_entities)
+
+
+def _replaced_by_auto(
+    description: EcovacsNumberEntityDescription, device: Device
+) -> bool:
+    """Whether the mower-wide Auto entity shows this setting instead.
+
+    The device-wide cutting direction is the Auto mode's direction: the same
+    getCutDirection and setCutDirection. This entity passes the wire angle
+    through as it is; on a class whose Auto direction is validated, the Auto
+    entity shows it as the app does, so this one is not created as well.
+    """
+    return description.key == "cut_direction" and (
+        "angle" in auto_parameter_keys(device.device_info["class"])
+    )
 
 
 class EcovacsNumberEntity[EventT: Event](

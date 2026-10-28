@@ -492,6 +492,21 @@ every mower, the models without area entities included. A model that does not
 support area parameters says so in the notification. Pressing the button again
 starts over, with a fresh table and an empty list of changes.
 
+#### Mower-wide (Auto mode) settings
+
+Some models keep the same settings for the whole mower too, in the app's
+Auto mode, each read and written with its own command. The integration treats
+them as one more area, `auto`, with the same kind of entities, named *Auto -
+Cutting height* and so on, validated per model in the same way. No model's
+Auto settings have been validated yet.
+
+The Auto cutting direction is the same setting as the device-wide *Cutting
+direction* number, which shows the raw angle the mower stores. Where a
+model's Auto direction is validated, *Auto - Cutting direction* takes its
+place, in the app's degrees, and the device-wide number is no longer created.
+A model gets no Auto entities until its values have been checked on that
+model.
+
 ### Border mowing
 
 The *Edge cutting* switch is a setting: it decides whether an ordinary job

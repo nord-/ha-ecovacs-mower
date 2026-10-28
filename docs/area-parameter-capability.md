@@ -29,7 +29,8 @@ These commands live in `deebot_patch/commands.py`, alongside the other patched p
 `area_numbers.py` turns the raw `MowerArea` state into one Home Assistant entity per parameter the model has. It holds two tables:
 
 - `AREA_PARAMETERS` describes each known parameter as Home Assistant shows it on every model: name, unit, icon, and the suffix in the entity's unique ID.
-- `AREA_PARAMETER_VALUE_MAPPINGS` has one self-contained entry per validated class: the parameters that model has, by wire key, each with its conversion between raw and HA values. A parameter the model does not have is left out and gets no entity.
+- `AREA_PARAMETER_VALUE_MAPPINGS` has one self-contained entry per validated class, a `ModelValueMappings`: under `areas`, the parameters that model has, by wire key, each with its conversion between raw and HA values. A parameter the model does not have is left out and gets no entity.
+- The same entry's `auto` holds the model's mower-wide (Auto mode) settings, keyed by the area wire key each corresponds to and read and written with their own commands, each publishing its own event (`AUTO_PARAMETERS` in `deebot_patch/commands.py`). It is validated separately from `areas`: a model may have either, both or neither. Its entities (`EcovacsAutoNumber`) use the same descriptions and conversions as an area's, as area `auto`, and need no profile flag: the entry is the record of what was validated. Where `auto` has `angle`, the Auto direction replaces the device-wide `cut_direction` number in `number.py`: both are `getCutDirection`/`setCutDirection`, and only the Auto entity converts the wire angle to the app's.
 
 The model-specific conversions are defined there because they are part of the validated behavior of each mower model, not generic Ecovacs protocol knowledge. Each entry is written out in full, also where two models' values are the same, as the A3000 LiDAR Pro's are the A1600's: a change made for one model never changes another.
 
