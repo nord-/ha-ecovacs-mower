@@ -742,6 +742,103 @@ async def test_start_polling_is_idempotent() -> None:
         track.assert_called_once()
 
 
+def _polling_controller():
+    from unittest.mock import MagicMock
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = MagicMock()
+    controller._unsub_polls = {}
+    return controller
+
+
+async def test_an_o800_out_on_the_lawn_is_told_the_app_is_open() -> None:
+    # The O800 RTK withholds onMapTrack from everyone while it believes the
+    # app is closed, so the plan on the map stays empty without the ping.
+    from unittest.mock import MagicMock, patch
+
+    from custom_components.ecovacs_mower.const import (
+        APP_PING_INTERVAL,
+        POLL_INTERVAL,
+    )
+
+    controller = _polling_controller()
+    device = MagicMock()
+    device.device_info = {"did": "did-1", "class": "9bts2s"}
+
+    with (
+        patch(
+            "custom_components.ecovacs_mower.controller.async_track_time_interval"
+        ) as track,
+        patch.object(controller, "_ping", MagicMock()) as ping,
+    ):
+        controller.start_polling(device)
+        controller.start_polling(device)
+
+    assert [call.args[2] for call in track.call_args_list] == [
+        POLL_INTERVAL,
+        APP_PING_INTERVAL,
+    ]
+    # Once right away, so the stream is open before the first tick.
+    ping.assert_called_once_with(device)
+    controller._hass.async_create_task.assert_called_once_with(ping.return_value)
+
+
+async def test_a_class_without_the_flag_gets_no_ping() -> None:
+    from unittest.mock import MagicMock, patch
+
+    controller = _polling_controller()
+    device = MagicMock()
+    device.device_info = {"did": "did-1", "class": "2i0fns"}
+
+    with patch(
+        "custom_components.ecovacs_mower.controller.async_track_time_interval"
+    ) as track:
+        controller.start_polling(device)
+
+    track.assert_called_once()
+    controller._hass.async_create_task.assert_not_called()
+
+
+async def test_docking_stops_the_ping_with_the_poll() -> None:
+    from unittest.mock import MagicMock, patch
+
+    controller = _polling_controller()
+    device = MagicMock()
+    device.device_info = {"did": "did-1", "class": "9bts2s"}
+    unsub_poll, unsub_ping = MagicMock(), MagicMock()
+
+    with (
+        patch(
+            "custom_components.ecovacs_mower.controller.async_track_time_interval",
+            side_effect=[unsub_poll, unsub_ping],
+        ),
+        patch.object(controller, "_ping", MagicMock()),
+    ):
+        controller.start_polling(device)
+    controller._stop_polling("did-1")
+
+    unsub_poll.assert_called_once()
+    unsub_ping.assert_called_once()
+    assert controller._unsub_polls == {}
+
+
+async def test_the_ping_sends_an_appping() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from custom_components.ecovacs_mower.deebot_patch.commands import AppPing
+
+    controller = _polling_controller()
+    device = MagicMock()
+    device.execute_command = AsyncMock(return_value={})
+
+    await controller._ping(device, None)
+
+    (command,) = [call.args[0] for call in device.execute_command.await_args_list]
+    assert isinstance(command, AppPing)
+
+
 async def test_poll_refreshes_state_stats_and_network() -> None:
     from unittest.mock import AsyncMock, MagicMock
 

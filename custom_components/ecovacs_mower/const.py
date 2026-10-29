@@ -64,3 +64,9 @@ SUPPORTED_LIFESPANS = (
 # and mowing_progress/stats can each be individually disabled in the entity
 # registry, and this has to keep running regardless of which of them are.
 POLL_INTERVAL = timedelta(minutes=5)
+
+# How often a mower whose profile has app_ping is told the app is open while
+# it is out. The mower streams onMapTrack only while it believes so, and how
+# long one appping holds was never measured; two minutes is what the Ecovacs
+# app's own vacuum screens repeat it at. See AppPing.
+APP_PING_INTERVAL = timedelta(minutes=2)

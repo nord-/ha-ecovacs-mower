@@ -72,6 +72,10 @@ class MowerProfile:
     still to mow rather than as coverage, which also means asking for the
     whole plan with ``getMapTrack`` and leaving the driven path undrawn;
     without it the class keeps the coverage reading and its drawn path.
+    ``app_ping`` sends ``appping`` while the mower is out, once on leaving the
+    dock and every two minutes after, because the class withholds
+    ``onMapTrack`` and its other batched transfers from everyone while it
+    believes the app is closed.
     ``uwb_beacons`` makes ``getLifeSpan`` ask for every component instead of
     naming the library's, because the class reports its beacons only in the
     answer to that request. Without it, the request names the library's
@@ -84,6 +88,7 @@ class MowerProfile:
     area_names: bool = False
     area_nogo: bool = False
     remaining_plan: bool = False
+    app_ping: bool = False
     zone_mowing: bool = False
     border_mowing: bool = False
     uwb_beacons: bool = False
@@ -203,7 +208,19 @@ class MowerProfile:
 #                     wants a getMapTrack_V2 is unanswered (PR #144
 #                     review). Firmware 1.17 is a separate case again — it
 #                     sends onMapTrace instead and never this message.
-#   zone_mowing     — e4gqia: the spotArea payload confirmed on the A1600
+#   app_ping        — 9bts2s: on the O800 RTK, firmware 1.13.8, the
+#                     remaining_plan layer stayed blank through every job
+#                     after v0.14.0 while the app was closed: no onMapTrack
+#                     row and no answer to getMapTrack, to any listener. A
+#                     controlled run, docked with the app closed for 17
+#                     minutes (2026-10-28): getMI alone was acked with no
+#                     push; appping, then getMI, brought onMI and onArI
+#                     within the second. That the ping also opens
+#                     onMapTrack while mowing, and that two minutes is often
+#                     enough, is the claim this flag is testing. Off
+#                     everywhere else: no other class has the
+#                     remaining_plan reading that needs it.
+#   zone_mowing    — e4gqia: the spotArea payload confirmed on the A1600
 #                     LiDAR Pro, firmware 1.11.31 (PR #78); see zonal.py.
 #                     77atlz: two zone runs on the G1-800, firmware 1.36.208,
 #                     each with a single area id; the target area and the
@@ -258,6 +275,7 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
         area_names=True,
         area_nogo=True,
         remaining_plan=True,
+        app_ping=True,
         zone_mowing=True,
     ),
     "2px96q": MowerProfile("2px96q"),

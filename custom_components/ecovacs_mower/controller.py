@@ -48,6 +48,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util.ssl import get_default_no_verify_context
 
 from .const import (
+    APP_PING_INTERVAL,
     CONF_CREDENTIALS,
     CONF_OVERRIDE_MQTT_URL,
     CONF_OVERRIDE_REST_URL,
@@ -64,7 +65,7 @@ from .deebot_patch import (
     verify_capabilities,
 )
 from .deebot_patch.areas import MowerAreaEvent
-from .deebot_patch.commands import GetMapTrack, GetPosMower
+from .deebot_patch.commands import AppPing, GetMapTrack, GetPosMower
 from .deebot_patch.hardware import (
     SUPPORTED_CLASSES,
     patch_device_info,
@@ -447,12 +448,39 @@ class EcovacsController:
         command sent from HA never produces a StateEvent by itself — only a
         confirmed push does — so nothing else would restart the tick if that
         push never lands.
+
+        A class with ``app_ping`` is also told the app is open, once now and
+        every ``APP_PING_INTERVAL`` after, for as long as the tick runs: it
+        streams ``onMapTrack`` to nobody otherwise, and the plan on the map
+        stays empty (see ``AppPing``). Only while the mower is out, because
+        that stream is the only thing that needs it; at the dock ``GetMI``
+        pings for itself. Both timers share one entry in ``_unsub_polls``,
+        so docking and teardown stop the ping with the tick.
         """
         did = device.device_info["did"]
-        if did not in self._unsub_polls:
-            self._unsub_polls[did] = async_track_time_interval(
-                self._hass, partial(self._poll, device), POLL_INTERVAL
-            )
+        if did in self._unsub_polls:
+            return
+        unsub_poll = async_track_time_interval(
+            self._hass, partial(self._poll, device), POLL_INTERVAL
+        )
+        profile = profile_for_class(device.device_info.get("class"))
+        if profile is None or not profile.app_ping:
+            self._unsub_polls[did] = unsub_poll
+            return
+        unsub_ping = async_track_time_interval(
+            self._hass, partial(self._ping, device), APP_PING_INTERVAL
+        )
+
+        def unsub_both() -> None:
+            unsub_poll()
+            unsub_ping()
+
+        self._unsub_polls[did] = unsub_both
+        self._hass.async_create_task(self._ping(device))
+
+    async def _ping(self, device: Device, now: datetime | None = None) -> None:
+        """Tell the mower the app is open; it never answers."""
+        await device.execute_command(AppPing())
 
     def _stop_polling(self, did: str) -> None:
         """Stop asking. Idempotent, so removal after a docking is harmless."""

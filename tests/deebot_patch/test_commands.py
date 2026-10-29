@@ -27,6 +27,7 @@ from deebot_client.models import CleanAction, State
 from deebot_client.rs.map import PositionType
 
 from custom_components.ecovacs_mower.deebot_patch.commands import (
+    AppPing,
     CleanMower,
     GetAnimProtect,
     GetChargeStateMower,
@@ -42,7 +43,6 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
     MowerStateRefresh,
     SetAnimProtect,
     SetRainDelay,
-    _AppPing,
     _CleanNonV2,
     _CleanV2Mower,
     _GetCleanInfoNonV2,
@@ -1160,8 +1160,8 @@ def test_get_mi_is_the_non_v2_name_with_the_same_body() -> None:
 def test_app_ping_goes_out_with_the_apps_empty_body() -> None:
     # JsonCommand leaves the body out of a command without arguments; the app
     # sends {"data": {}}, the form confirmed to wake the mower.
-    payload = _AppPing()._get_payload()
-    assert _AppPing.NAME == "appping"
+    payload = AppPing()._get_payload()
+    assert AppPing.NAME == "appping"
     assert payload["body"] == {"data": {}}
     assert "header" in payload
 
@@ -1180,7 +1180,7 @@ def _pinging(sent: list[str], ping=None):
         sent.append(self.NAME)
         return {}
 
-    return patch.object(_AppPing, "_execute_api_request", ping or record)
+    return patch.object(AppPing, "_execute_api_request", ping or record)
 
 
 async def test_a_v2_mower_is_asked_with_v2_and_its_family_committed() -> None:
@@ -1235,6 +1235,29 @@ async def test_a_failed_ping_does_not_keep_get_mi_from_going_out() -> None:
         await GetMapInfoMower()._execute(AsyncMock(), _DEVICE_INFO, _bus())
 
     assert sent == ["getMapInfo_V2", "getMI"]
+
+
+async def test_a_ping_on_its_own_is_quietly_done_after_its_head_start(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Sent every two minutes while mowing, and never answered: the library's
+    # own path would wait out the API timeout and warn on every one.
+    async def unanswered(self, authenticator, device_info):
+        await asyncio.Event().wait()
+
+    with (
+        caplog.at_level(logging.WARNING),
+        _pinging([], unanswered),
+        patch(
+            "custom_components.ecovacs_mower.deebot_patch.commands."
+            "_APP_PING_HEAD_START",
+            0.01,
+        ),
+    ):
+        result = await AppPing().execute(AsyncMock(), _DEVICE_INFO, _bus())
+
+    assert result.device_reached is True
+    assert not caplog.records
 
 
 async def test_the_clean_commands_still_start_on_the_selected_family() -> None:

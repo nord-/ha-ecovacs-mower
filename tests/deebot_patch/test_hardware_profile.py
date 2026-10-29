@@ -72,6 +72,18 @@ def test_remaining_plan_is_enabled_only_for_the_validated_class() -> None:
     } == {"9bts2s"}
 
 
+def test_app_ping_is_enabled_only_for_the_validated_class() -> None:
+    """The gate the ping opens was measured on the O800 RTK alone.
+
+    It is also the only class whose remaining_plan reading starves without
+    onMapTrack, so no other mower would gain anything from a ping every two
+    minutes it has not been shown to need.
+    """
+    assert {
+        class_ for class_, profile in SUPPORTED_CLASSES.items() if profile.app_ping
+    } == {"9bts2s"}
+
+
 def test_profile_flags_default_to_off() -> None:
     """A newly supported class is patched without claiming any capability."""
     profile = MowerProfile("new000")
@@ -80,5 +92,6 @@ def test_profile_flags_default_to_off() -> None:
     assert profile.area_names is False
     assert profile.area_nogo is False
     assert profile.remaining_plan is False
+    assert profile.app_ping is False
     assert profile.zone_mowing is False
     assert profile.border_mowing is False
