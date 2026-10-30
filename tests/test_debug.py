@@ -14,6 +14,9 @@ pytestmark = requires_ha
 
 _NOTIFY = "custom_components.ecovacs_mower.debug.persistent_notification.async_create"
 
+# The mower-wide reads every press sends after the area reads.
+_AUTO_READS = ["getCutHeight", "getCutEfficiency", "getObstacleHeight", "getCutDirection"]
+
 
 def _device():
     from deebot_client.event_bus import EventBus
@@ -90,7 +93,7 @@ async def test_a_press_shows_every_area_as_a_table(hass) -> None:
         "| Area 2 | 3 | 7 | 1 | 90 |"
     )
     assert "Changes" not in message
-    assert [command.NAME for command in sent] == ["getAreaParameter"]
+    assert [command.NAME for command in sent] == ["getAreaParameter", *_AUTO_READS]
     log.async_shutdown()
 
 
@@ -193,7 +196,11 @@ async def test_the_names_are_asked_for_once_the_map_is_known(hass) -> None:
     with patch(_NOTIFY):
         await log.async_start()
 
-    assert [command.NAME for command in sent] == ["getAreaParameter", "getAreaSet"]
+    assert [command.NAME for command in sent] == [
+        "getAreaParameter",
+        "getAreaSet",
+        *_AUTO_READS,
+    ]
     assert sent[1]._args["mid"] == "1"
     log.async_shutdown()
 
@@ -321,7 +328,7 @@ async def test_the_areas_are_asked_again_for_a_mower_that_does_not_push(hass) ->
         await hass.async_block_till_done()
         await _settle()
 
-    assert sent == ["getAreaParameter", "getAreaParameter"]
+    assert sent == ["getAreaParameter", *_AUTO_READS] * 2
     assert "Area 1 (Front): cutMode 7 → 6" in _shown(notify)
     log.async_shutdown()
 
@@ -346,4 +353,137 @@ async def test_removing_the_button_mid_window_says_it_stopped(hass) -> None:
 
     assert _shown(notify).startswith("Stopped.")
     assert notify.call_count == written
-    assert [c.NAME for c in sent] == ["getAreaParameter"]
+    assert [c.NAME for c in sent] == ["getAreaParameter", *_AUTO_READS]
+
+
+def _answering_auto(device, event, auto):
+    """An execute that answers getAreaParameter with *event*, and each read in *auto*.
+
+    *auto* maps a mower-wide read's name to the data it answers with; a read
+    not in it goes unanswered, as on a model without that setting.
+    """
+    sent = []
+
+    async def execute(command):
+        sent.append(command)
+        if command.NAME == "getAreaParameter":
+            device.events.notify(event)
+            return True
+        if command.NAME in auto:
+            # What the library does with an answer: hand its data to the handler.
+            command.handle_set_args(device.events, auto[command.NAME])
+            return True
+        return False
+
+    return execute, sent
+
+
+async def test_the_mower_wide_settings_are_one_more_row(hass) -> None:
+    from custom_components.ecovacs_mower.debug import AreaParameterLog
+
+    device = _device()
+    execute, _ = _answering_auto(
+        device,
+        _event(_FRONT),
+        {
+            "getCutHeight": {"level": 6},
+            "getCutEfficiency": {"level": 2},
+            "getObstacleHeight": {"level": 1},
+            "getCutDirection": {"angle": 179},
+        },
+    )
+    log = AreaParameterLog(hass, device, execute)
+
+    with patch(_NOTIFY) as notify:
+        await log.async_start()
+        await _settle()
+
+    message = _shown(notify)
+    assert message.index("| Area 1 (Front) | 6 | 7 | 1 | 227 |") < message.index(
+        "| Auto | 6 | 2 | 1 | 179 |"
+    )
+    assert "read with getCutHeight, getCutEfficiency, getObstacleHeight, getCutDirection" in message
+    # The first answers are the table, not changes.
+    assert "Changes" not in message
+    assert "did not answer" not in message
+    log.async_shutdown()
+
+
+async def test_an_unanswered_mower_wide_read_shows_as_unknown(hass) -> None:
+    # The A1600 LiDAR Pro has a cutting direction for the whole mower, but no
+    # Auto mode settings.
+    from custom_components.ecovacs_mower.debug import POLL_INTERVAL, AreaParameterLog
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    device = _device()
+    execute, sent = _answering_auto(
+        device, _event(_FRONT), {"getCutDirection": {"angle": 227}}
+    )
+    log = AreaParameterLog(hass, device, execute)
+
+    with patch(_NOTIFY) as notify:
+        await log.async_start()
+        await _settle()
+        sent.clear()
+        async_fire_time_changed(hass, dt_util.utcnow() + POLL_INTERVAL)
+        await hass.async_block_till_done()
+
+    message = _shown(notify)
+    assert "| Auto | ? | ? | ? | 227 |" in message
+    assert (
+        "The mower did not answer getCutHeight, getCutEfficiency, getObstacleHeight"
+        in message
+    )
+    # Only what was answered is asked again.
+    assert [command.NAME for command in sent] == ["getAreaParameter", "getCutDirection"]
+    log.async_shutdown()
+
+
+async def test_a_mower_without_mower_wide_settings_says_so(hass) -> None:
+    from custom_components.ecovacs_mower.debug import AreaParameterLog
+
+    device = _device()
+    execute, _ = _answering_auto(device, _event(_FRONT), {})
+    log = AreaParameterLog(hass, device, execute)
+
+    with patch(_NOTIFY) as notify:
+        await log.async_start()
+        await _settle()
+
+    message = _shown(notify)
+    assert "| Auto | ? | ? | ? | ? |" in message
+    assert "This model may have no mower-wide (Auto) settings." in message
+    log.async_shutdown()
+
+
+async def test_a_mower_wide_change_is_listed(hass) -> None:
+    from custom_components.ecovacs_mower.debug import AreaParameterLog
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        GetCutEfficiency,
+        GetCutHeight,
+    )
+
+    device = _device()
+    execute, _ = _answering_auto(
+        device, _event(_FRONT), {"getCutHeight": {"level": 6}}
+    )
+    log = AreaParameterLog(hass, device, execute)
+
+    with patch(_NOTIFY) as notify:
+        await log.async_start()
+        await _settle()
+        # What a followed app write ends in: the read's handler, with its data.
+        GetCutHeight.handle_set_args(device.events, {"level": 5})
+        await _settle()
+        GetCutEfficiency.handle_set_args(device.events, {"level": 2})
+        await _settle()
+
+    message = _shown(notify)
+    # A setting's first value is shown, not listed: only a difference is.
+    assert "| Auto | 5 | 2 | ? | ? |" in message
+    changes = [line for line in message.splitlines() if line.startswith("- ")]
+    assert [line.split(" ", 2)[2] for line in changes] == [
+        "Auto: mowHeightLevel 6 → 5",
+    ]
+    log.async_shutdown()

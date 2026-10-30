@@ -470,7 +470,9 @@ setting in the Ecovacs app. The **Log area parameters** button collects that:
    open the entities that are not shown, select **Log area parameters** and
    turn on *Enabled* in its settings.
 2. Press **Log area parameters**. A notification (the bell in the sidebar)
-   opens with a table of every area's raw values.
+   opens with a table of every area's raw values, and one more row, *Auto*:
+   the settings your model may keep for the whole mower, in the app's Auto
+   mode. A `?` there means the mower did not answer for that setting.
 3. Within the next 15 minutes, change each setting the app offers per area
    (cutting height, speed, obstacle height, cutting direction — your model may
    have fewer) through the values the app offers, its minimum and maximum
@@ -478,7 +480,9 @@ setting in the Ecovacs app. The **Log area parameters** button collects that:
    reports each change, and lists every change with its time, for example
    `18:07:06 Area 1 (Front lawn): mowHeightLevel 6 → 7`. A mower that reports
    changes on its own shows them within a second; for any other the integration
-   asks every 15 seconds, so wait that long between steps.
+   asks every 15 seconds, so wait that long between steps. If your app has
+   Auto mode settings for the whole mower, step through those as well; they
+   show as `Auto: …` in the list of changes.
 4. Copy the notification into a new issue, together with your notes and your
    mower's model. The device class the integration needs is in the
    notification's title, in brackets.
