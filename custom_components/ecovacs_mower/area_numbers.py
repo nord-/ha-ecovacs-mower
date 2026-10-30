@@ -11,14 +11,22 @@ parameter or a model:
 - ``AREA_PARAMETERS`` says what each known parameter is in Home Assistant
   on every model: its name, unit, icon and entity key.
 - ``AREA_PARAMETER_VALUE_MAPPINGS`` has one self-contained entry per validated
-  mower class. It names the parameters that model has and the conversion of
-  each between raw values and Home Assistant values. A model without a
-  parameter leaves it out, and gets no entity for it.
+  mower class, a ``ModelValueMappings``. It names the parameters that model
+  has and the conversion of each between raw values and Home Assistant
+  values. A model without a parameter leaves it out, and gets no entity for
+  it.
 
 Model- and firmware-specific conversion from raw device values to
 human-sensible Home Assistant values lives exclusively in this HA layer. Each
 class's entry is scoped to that class: its values have not been verified on
 any other mower class supported by this integration.
+
+A model may also keep the same settings for the whole mower, in the app's
+Auto mode, each read and written with its own command
+(``deebot_patch/commands.py``). Those are treated as one more area,
+``auto``, with its own entities (``EcovacsAutoNumber``) from the same
+parameter descriptions and value conversions, and validated per model in the
+same entry, under ``auto``.
 
 The parameter views are writable. Each write is converted back to a raw
 value and merged with the area's other raw values — from the area's last
@@ -41,6 +49,7 @@ from typing import override
 
 from deebot_client.capabilities import DeviceType
 from deebot_client.device import Device
+from deebot_client.events.base import Event
 
 from homeassistant.components.number import (
     NumberEntity,
@@ -59,7 +68,7 @@ from .deebot_patch.areas import (
     area_for,
     parameter_answers,
 )
-from .deebot_patch.commands import SetAreaParameter
+from .deebot_patch.commands import AUTO_PARAMETERS, AutoParameter, SetAreaParameter
 from .deebot_patch.hardware import profile_for_class
 from .entity import EcovacsDescriptionEntity
 
@@ -240,6 +249,36 @@ AREA_PARAMETERS: tuple[AreaParameter, ...] = (
 )
 
 
+@dataclass(frozen=True, kw_only=True)
+class ModelValueMappings:
+    """The value mappings of one validated mower class.
+
+    ``areas`` maps the parameters the model has per saved area, by wire key,
+    to their conversion. A parameter the model does not have is left out, and
+    an empty ``areas`` gives the model no area entities.
+
+    ``auto`` does the same for the mower-wide settings of the app's Auto
+    mode, by the area wire key each corresponds to. It is validated on its
+    own: the commands that read and write it differ from the area ones, so a
+    model's ``areas`` says nothing about its ``auto``, and the other way
+    round. An empty ``auto`` gives the model no Auto entities.
+    """
+
+    # Excluded from the hash: a mapping is not hashable, and the frozen
+    # dataclass would otherwise generate a __hash__ that fails on first use.
+    areas: Mapping[str, AreaParameterValueMapping] = field(
+        default_factory=dict, hash=False
+    )
+    auto: Mapping[str, AreaParameterValueMapping] = field(
+        default_factory=dict, hash=False
+    )
+
+    def __post_init__(self) -> None:
+        """Freeze the tables: they are validated data, shared by every entity."""
+        object.__setattr__(self, "areas", MappingProxyType(dict(self.areas)))
+        object.__setattr__(self, "auto", MappingProxyType(dict(self.auto)))
+
+
 # One entry per validated mower class, complete in itself: the parameters
 # that model has, by wire key, and each one's conversion. Each entry is
 # written out in full, also where two models' values are the same, so a
@@ -253,67 +292,123 @@ AREA_PARAMETERS: tuple[AreaParameter, ...] = (
 # because its protocol fields have the same names. The generic entity code
 # below derives conversion and number limits from these entries; no
 # model-specific values belong anywhere else.
-AREA_PARAMETER_VALUE_MAPPINGS: dict[
-    str, Mapping[str, AreaParameterValueMapping]
-] = {
+AREA_PARAMETER_VALUE_MAPPINGS: dict[str, ModelValueMappings] = {
     # GOAT A1600 LiDAR Pro.
-    "e4gqia": {
-        # Cutting height, cm.
-        "mowHeightLevel": AreaParameterLookup(
-            {1: 9, 2: 8, 3: 7, 4: 6, 5: 5, 6: 4, 7: 3}
-        ),
-        # Mowing speed, m/s.
-        "cutMode": AreaParameterLookup(
-            {1: 0.70, 2: 0.65, 3: 0.60, 4: 0.55, 5: 0.50, 6: 0.45, 7: 0.40}
-        ),
-        # Obstacle height, cm.
-        "obstacleHeight": AreaParameterLookup({1: 10, 2: 15, 3: 20}),
-        # Cutting direction. The mower accepts an app value above 180 written
-        # from Home Assistant, and the app then shows it, but the app never
-        # sends one and what the mower does with it is untested.
-        "angle": AreaParameterAngle(wire_at_zero=270, native_max_value=180),
-    },
+    "e4gqia": ModelValueMappings(
+        areas={
+            # Cutting height, cm.
+            "mowHeightLevel": AreaParameterLookup(
+                {1: 9, 2: 8, 3: 7, 4: 6, 5: 5, 6: 4, 7: 3}
+            ),
+            # Mowing speed, m/s.
+            "cutMode": AreaParameterLookup(
+                {1: 0.70, 2: 0.65, 3: 0.60, 4: 0.55, 5: 0.50, 6: 0.45, 7: 0.40}
+            ),
+            # Obstacle height, cm.
+            "obstacleHeight": AreaParameterLookup({1: 10, 2: 15, 3: 20}),
+            # Cutting direction. The mower accepts an app value above 180 written
+            # from Home Assistant, and the app then shows it, but the app never
+            # sends one and what the mower does with it is untested.
+            "angle": AreaParameterAngle(wire_at_zero=270, native_max_value=180),
+        },
+    ),
     # GOAT A3000 LiDAR Pro. Its own readings (issue #131) matched the A1600's
     # at every raw value, and writes from Home Assistant landed as the app
     # shows them (PR #137).
-    "51rcxt": {
-        # Cutting height, cm.
-        "mowHeightLevel": AreaParameterLookup(
-            {1: 9, 2: 8, 3: 7, 4: 6, 5: 5, 6: 4, 7: 3}
-        ),
-        # Mowing speed, m/s.
-        "cutMode": AreaParameterLookup(
-            {1: 0.70, 2: 0.65, 3: 0.60, 4: 0.55, 5: 0.50, 6: 0.45, 7: 0.40}
-        ),
-        # Obstacle height, cm.
-        "obstacleHeight": AreaParameterLookup({1: 10, 2: 15, 3: 20}),
-        # Cutting direction. Every angle the app sent lay within 0-180
-        # (issue #131).
-        "angle": AreaParameterAngle(wire_at_zero=270, native_max_value=180),
-    },
+    "51rcxt": ModelValueMappings(
+        areas={
+            # Cutting height, cm.
+            "mowHeightLevel": AreaParameterLookup(
+                {1: 9, 2: 8, 3: 7, 4: 6, 5: 5, 6: 4, 7: 3}
+            ),
+            # Mowing speed, m/s.
+            "cutMode": AreaParameterLookup(
+                {1: 0.70, 2: 0.65, 3: 0.60, 4: 0.55, 5: 0.50, 6: 0.45, 7: 0.40}
+            ),
+            # Obstacle height, cm.
+            "obstacleHeight": AreaParameterLookup({1: 10, 2: 15, 3: 20}),
+            # Cutting direction. Every angle the app sent lay within 0-180
+            # (issue #131).
+            "angle": AreaParameterAngle(wire_at_zero=270, native_max_value=180),
+        },
+    ),
     # GOAT O1200 LiDAR Pro, read with the app (issue #23).
-    "2i0fns": {
-        # Cutting height, cm, in half centimetres from raw 1 = 8 cm down to
-        # raw 11 = 3 cm. Raw 1 and 7-11 were read, 5.5 cm = raw 6 was written
-        # from Home Assistant and confirmed (PR #151); raw 2-5 follow the
-        # steps.
-        "mowHeightLevel": AreaParameterLookup(
-            {
-                1: 8.0, 2: 7.5, 3: 7.0, 4: 6.5, 5: 6.0, 6: 5.5,
-                7: 5.0, 8: 4.5, 9: 4.0, 10: 3.5, 11: 3.0,
-            }
-        ),
-        # Mowing speed, m/s. The app offers only Fine (raw 7) and Efficient
-        # (raw 4); raw 5 and 6, in between, are never written.
-        "cutMode": AreaParameterLookup({4: 0.50, 7: 0.35}),
-        # Obstacle height, cm.
-        "obstacleHeight": AreaParameterLookup({1: 10, 2: 15, 3: 20}),
-        # Cutting direction. The app labels it left, straight and right, as
-        # seen from the mower leaving the dock: raw 270, 180 and 90, so 0, 90
-        # and 180 here. The in-between raw values set in the app (141, 177)
-        # land inside 0-180 too.
-        "angle": AreaParameterAngle(wire_at_zero=270, native_max_value=180),
-    },
+    "2i0fns": ModelValueMappings(
+        areas={
+            # Cutting height, cm, in half centimetres from raw 1 = 8 cm down to
+            # raw 11 = 3 cm. Raw 1 and 7-11 were read, 5.5 cm = raw 6 was written
+            # from Home Assistant and confirmed (PR #151); raw 2-5 follow the
+            # steps.
+            "mowHeightLevel": AreaParameterLookup(
+                {
+                    1: 8.0, 2: 7.5, 3: 7.0, 4: 6.5, 5: 6.0, 6: 5.5,
+                    7: 5.0, 8: 4.5, 9: 4.0, 10: 3.5, 11: 3.0,
+                }
+            ),
+            # Mowing speed, m/s. The app offers only Fine (raw 7) and Efficient
+            # (raw 4); raw 5 and 6, in between, are never written.
+            "cutMode": AreaParameterLookup({4: 0.50, 7: 0.35}),
+            # Obstacle height, cm.
+            "obstacleHeight": AreaParameterLookup({1: 10, 2: 15, 3: 20}),
+            # Cutting direction. The app labels it left, straight and right, as
+            # seen from the mower leaving the dock: raw 270, 180 and 90, so 0, 90
+            # and 180 here. The in-between raw values set in the app (141, 177)
+            # land inside 0-180 too.
+            "angle": AreaParameterAngle(wire_at_zero=270, native_max_value=180),
+        },
+    ),
+    # GOAT A1600 RTK, read with the app (issue #23, firmware 1.17.11). Its
+    # areas have no cutting direction: they report no angle, the app's own
+    # setAreaParameter carries none, and the direction is set for the whole
+    # mower instead. So it gets no per-area direction entity, and its writes
+    # carry no angle.
+    #
+    # The per-area values in the owner's log are height 1 and 6, speed 1 and
+    # 2, obstacle height 1 and 3. Their app values come from the same app
+    # settings read in Auto mode on this mower, whose levels run the same
+    # way: height 9 cm = 1, 4 cm = 6, 3 cm = 7; Quick = 1, Delicate = 2;
+    # 10, 15, 20 cm = 1, 2, 3.
+    #
+    # The Auto mode settings were read back with the Log area parameters
+    # button while the owner stepped through every value the app offers
+    # (#163): each one reached Home Assistant through the followed app write
+    # within a second, and the reads answered with the same raw values.
+    "xmp9ds": ModelValueMappings(
+        areas={
+            # Cutting height, cm. Raw 2-5 follow the one-centimetre steps.
+            "mowHeightLevel": AreaParameterLookup(
+                {1: 9, 2: 8, 3: 7, 4: 6, 5: 5, 6: 4, 7: 3}
+            ),
+            # Mowing speed, m/s. The app offers two only: Quick and Delicate.
+            "cutMode": AreaParameterLookup({1: 0.70, 2: 0.40}),
+            # Obstacle height, cm.
+            "obstacleHeight": AreaParameterLookup({1: 10, 2: 15, 3: 20}),
+        },
+        auto={
+            # Cutting height, cm, every value read.
+            "mowHeightLevel": AreaParameterLookup(
+                {1: 9, 2: 8, 3: 7, 4: 6, 5: 5, 6: 4, 7: 3}
+            ),
+            # Mowing speed, m/s. The app offers two only: Quick and Delicate.
+            "cutMode": AreaParameterLookup({1: 0.70, 2: 0.40}),
+            # Obstacle height, cm: the app's short grass, normal and high
+            # grass environments.
+            "obstacleHeight": AreaParameterLookup({1: 10, 2: 15, 3: 20}),
+            # Cutting direction. The app offers left, straight and right, raw
+            # 270, 180 and 90: 0, 90 and 180 here, as on the O1200 LiDAR Pro's
+            # areas. An angle in between is offered as there.
+            "angle": AreaParameterAngle(wire_at_zero=270, native_max_value=180),
+        },
+    ),
+}
+
+# The id the mower-wide (Auto mode) settings are shown under, as one more
+# area. Not numeric, so it can never be one of the mower's own area ids.
+AUTO_AREA_ID = "auto"
+
+# Each mower-wide parameter's commands and event, by wire key.
+_AUTO_PARAMETERS: dict[str, AutoParameter] = {
+    parameter.key: parameter for parameter in AUTO_PARAMETERS
 }
 
 
@@ -569,6 +664,75 @@ class EcovacsAreaNumber(EcovacsDescriptionEntity, NumberEntity):
         self._device.events.request_refresh(MowerAreaEvent)
 
 
+def auto_parameter_keys(device_class: str) -> frozenset[str]:
+    """The mower-wide parameters validated for one class, by wire key."""
+    mappings = AREA_PARAMETER_VALUE_MAPPINGS.get(device_class)
+    return frozenset(mappings.auto) if mappings is not None else frozenset()
+
+
+class EcovacsAutoNumber(EcovacsDescriptionEntity, NumberEntity):
+    """Expose one writable mower-wide (Auto mode) parameter.
+
+    The same description and value conversion as an area's entity, but none
+    of an area's machinery: the Auto settings always exist, have a fixed
+    name, and each is written with its own command, so there is no area to
+    disappear, no snapshot to merge into and nothing to serialise. Each
+    setting arrives as its own event, which only this entity reads.
+    """
+
+    entity_description: EcovacsAreaNumberEntityDescription
+
+    def __init__(
+        self, device: Device, description: EcovacsAreaNumberEntityDescription
+    ) -> None:
+        """Initialize the mower-wide entity."""
+        super().__init__(device, device.capabilities, description)
+        self._attr_name = f"Auto - {description.parameter_name}"
+        self._attr_icon = description.icon
+        self._parameter = _AUTO_PARAMETERS[description.parameter_key]
+
+    @property
+    @override
+    def suggested_object_id(self) -> str | None:
+        """Use the fixed ``auto`` id, as an area entity uses its numeric one."""
+        return self.entity_description.suggested_object_id
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Follow this setting's event, and ask for the setting once.
+
+        Asked here rather than through the device's refresh: the refresh is
+        wired per class in the patch layer, which cannot see this table.
+        """
+        await super().async_added_to_hass()
+        self._subscribe(self._parameter.event, self._on_value)
+        self.hass.async_create_task(self._execute_command(self._parameter.read()))
+
+    async def _on_value(self, event: Event) -> None:
+        raw_value = getattr(event, self._parameter.field)
+        self._attr_native_value = self.entity_description.value_mapping.to_native(
+            raw_value
+        )
+        self.async_write_ha_state()
+
+    @override
+    async def async_set_native_value(self, value: float) -> None:
+        """Write the setting, then read it back.
+
+        The state is not set here: it follows what the mower reports, through
+        the read that confirms the write, or the mower's own echo of it.
+        """
+        description = self.entity_description
+        raw_value = description.value_mapping.to_raw(value)
+        if raw_value is None:
+            raise HomeAssistantError(
+                f"{description.parameter_name} value {value} "
+                "cannot be represented by this mower"
+            )
+        if await self._execute_command(self._parameter.write(raw_value)):
+            await self._execute_command(self._parameter.read())
+
+
 async def async_setup_area_numbers(
     config_entry: EcovacsMowerConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
@@ -579,14 +743,22 @@ async def async_setup_area_numbers(
         if device.capabilities.device_type is not DeviceType.MOWER:
             continue
         profile = profile_for_class(device.device_info["class"])
-        if profile is None or not profile.area_parameters:
+        if profile is None:
             continue
-        value_mappings = AREA_PARAMETER_VALUE_MAPPINGS.get(profile.device_class)
-        if value_mappings is None:
+        mappings = AREA_PARAMETER_VALUE_MAPPINGS.get(profile.device_class)
+        if mappings is None:
             continue
-        _setup_device_area_numbers(
-            device, config_entry, async_add_entities, value_mappings
-        )
+        if profile.area_parameters and mappings.areas:
+            _setup_device_area_numbers(
+                device, config_entry, async_add_entities, mappings.areas
+            )
+        if mappings.auto:
+            async_add_entities(
+                EcovacsAutoNumber(device, description)
+                for description in area_number_descriptions(
+                    AUTO_AREA_ID, value_mappings=mappings.auto
+                )
+            )
 
 
 def _setup_device_area_numbers(

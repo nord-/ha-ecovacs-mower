@@ -630,3 +630,42 @@ def test_the_v2_trace_name_falls_back_to_our_handler() -> None:
     apply()
     assert "onMapTrace_V2" not in MESSAGES
     assert MESSAGES["onMapTrace"] is OnMapTrace
+
+
+def test_the_p2p_table_is_a_mutable_dict_shared_by_reference() -> None:
+    """apply() registers the followed mower-wide writes in it, in place."""
+    from deebot_client import mqtt_client
+    from deebot_client.commands import COMMANDS_WITH_MQTT_P2P_HANDLING
+    from deebot_client.const import DataType
+
+    assert isinstance(COMMANDS_WITH_MQTT_P2P_HANDLING[DataType.JSON], dict)
+    assert mqtt_client.COMMANDS_WITH_MQTT_P2P_HANDLING is COMMANDS_WITH_MQTT_P2P_HANDLING
+
+
+def test_the_library_does_not_follow_the_mower_wide_writes_itself() -> None:
+    """Documents why apply() registers them: none is in the library's table.
+
+    Once one is, its registration here overrides the library's; check then
+    whether the library's command records what the mower-wide settings need.
+    """
+    from deebot_client.commands import COMMANDS_WITH_MQTT_P2P_HANDLING
+    from deebot_client.const import DataType
+
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        AUTO_WRITE_COMMANDS,
+    )
+
+    library = COMMANDS_WITH_MQTT_P2P_HANDLING[DataType.JSON]
+    assert [
+        cmd.NAME for cmd in AUTO_WRITE_COMMANDS if library.get(cmd.NAME) not in (None, cmd)
+    ] == []
+
+
+def test_a_followed_set_hands_its_arguments_to_its_read() -> None:
+    """A followed app write is recorded through the read's handler."""
+    import inspect
+
+    from deebot_client.command import SetCommand
+
+    source = inspect.getsource(SetCommand._handle_mqtt_p2p)
+    assert "self.get_command.handle_set_args(event_bus, self._args)" in source
