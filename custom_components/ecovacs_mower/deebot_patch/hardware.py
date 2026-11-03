@@ -142,6 +142,12 @@ class MowerProfile:
 #            (2i0fns). Upstream's docstring calls it "GOAT G1"; its module
 #            is byte-identical to 9bts2s.py apart from that docstring, so the
 #            O800 RTK's patch applies unchanged.
+#   cr0e4u — GOAT A3000 LiDAR (issue #168 — start, pause and state
+#            user-verified with this line added locally). A second class
+#            reported as the A3000 LiDAR, besides o4kvvk, and not the A3000
+#            LiDAR Pro (51rcxt). Upstream's docstring calls it "GOAT G1"; its
+#            module is byte-identical to 9bts2s.py apart from that docstring,
+#            so the O800 RTK's patch applies unchanged.
 #
 # Presence in this mapping means the class is supported by the integration.
 # Capability flags are deliberately narrower: they are enabled only where the
@@ -273,6 +279,7 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
         "51rcxt", area_parameters=True, zone_mowing=True, border_mowing=True
     ),
     "qhq6i0": MowerProfile("qhq6i0", zone_mowing=True),
+    "cr0e4u": MowerProfile("cr0e4u"),
 }
 
 
