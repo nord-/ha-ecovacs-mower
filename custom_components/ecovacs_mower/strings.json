@@ -118,6 +118,7 @@
         }
       },
       "mowing_progress": { "name": "Mowing progress" },
+      "core_temperature": { "name": "Core temperature" },
       "stats_area": { "name": "Job target area" },
       "stats_time": { "name": "Job target duration" },
       "total_stats_area": { "name": "Total mowed area" },
