@@ -16,12 +16,15 @@ from deebot_client.device import Device
 from deebot_client.events import AvailabilityEvent
 from deebot_client.events.base import Event
 
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity, EntityDescription
 
 from .const import DOMAIN
 from .deebot_patch import attempted_family_name, has_family
+from .deebot_patch.messages import MowerProtectStateEvent
+from .deebot_patch.state_precedence import is_locked
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -120,7 +123,24 @@ class EcovacsEntity[CapabilityEntityT](Entity):
         Returns whether the command was confirmed, for the caller that has to
         know: an area write must not become the base of the next one when
         the mower never took it.
+
+        Raises ``HomeAssistantError`` for a command that would go to a mower
+        whose panel is locked (issue #99). That mower does nothing with a
+        command and says nothing about it, so the call would return as if it
+        had worked and the log would blame the network. Only an action is
+        refused; a ``get*`` command is a read and goes out as before. The
+        lock cannot be released from Home Assistant, which the message says,
+        and a refusal asks the mower for its protection state again: a
+        released lock whose push was lost would otherwise refuse every command
+        until the next one arrived.
         """
+        if not command.NAME.startswith("get") and is_locked(self._device.events):
+            self._device.events.request_refresh(MowerProtectStateEvent)
+            raise HomeAssistantError(
+                "The mower's panel is locked, so it ignores commands. Unlock it "
+                "with the PIN on the mower's own panel; this cannot be done "
+                "from Home Assistant."
+            )
         if not await self._device.execute_command(command):
             family_suffix = (
                 f" ({attempted_family_name(self._device.device_info['did'])} family)"

@@ -1216,6 +1216,10 @@ class OnProtectState(MessageBodyDataDict):
             )
             return HandlingResult.analyse()
 
+        # Written before the event goes out, like every fact held in the
+        # record: a command sent in the next instant must see it (issue #99).
+        if (record := record_for(event_bus)) is not None:
+            record.locked = bool(data["isLocked"])
         event_bus.notify(
             MowerProtectStateEvent(
                 **{field: bool(data[key]) for key, field in cls._FLAGS.items()}
