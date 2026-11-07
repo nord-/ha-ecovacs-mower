@@ -67,6 +67,7 @@ from .messages import (
     OnScheduleTaskInfo,
     OnStatsMower,
     OnUwb,
+    OnUwbOta,
 )
 from .state_precedence import register as register_mower_bus
 from .zonal import MowArea
@@ -143,6 +144,7 @@ def apply() -> None:
         OnScheduleTaskInfo,
         OnStatsMower,
         OnUwb,
+        OnUwbOta,
         OnArI,
         # Registered under the full onMapInfo_V2, which the library already
         # claims: get_message() matches that exactly before it strips the

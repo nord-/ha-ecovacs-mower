@@ -51,6 +51,7 @@
   "entity": {
     "binary_sensor": {
       "animal_protect": { "name": "Animal protection active" },
+      "beacon_update_available": { "name": "Beacon update available" },
       "emergency_stop": { "name": "Emergency stop" },
       "fault": { "name": "Fault" },
       "locked": { "name": "Locked" },
@@ -131,7 +132,8 @@
       "lifespan_lens_brush": { "name": "Lens brush remaining" },
       "lifespan_trimmer_brush": { "name": "Trimmer brush remaining" },
       "lifespan_weed_rope": { "name": "Weed rope remaining" },
-      "beacon": { "name": "Beacon {serial}" }
+      "beacon": { "name": "Beacon {serial}" },
+      "beacon_update_state": { "name": "Beacon update state" }
     },
     "switch": {
       "advanced_mode": { "name": "Advanced mode" },

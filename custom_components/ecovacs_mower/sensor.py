@@ -34,7 +34,12 @@ from dataclasses import dataclass
 import logging
 from typing import Any, override
 
-from deebot_client.capabilities import CapabilityEvent, CapabilityLifeSpan, DeviceType
+from deebot_client.capabilities import (
+    Capabilities,
+    CapabilityEvent,
+    CapabilityLifeSpan,
+    DeviceType,
+)
 from deebot_client.device import Device
 from deebot_client.events import (
     BatteryEvent,
@@ -70,7 +75,9 @@ from homeassistant.helpers.typing import StateType
 from . import EcovacsMowerConfigEntry
 from .const import SUPPORTED_LIFESPANS
 from .deebot_patch import SUPPORTED_CLASSES
+from .deebot_patch.hardware import profile_for_class
 from .deebot_patch.messages import (
+    MowerBeaconOtaEvent,
     MowerBeaconsEvent,
     MowerJobEdgeEvent,
     MowerStatsEvent,
@@ -351,6 +358,16 @@ async def async_setup_entry(
         and device.device_info["class"] in SUPPORTED_CLASSES
     )
 
+    entities.extend(
+        EcovacsBeaconUpdateStateSensor(device)
+        for device in controller.devices
+        if device.capabilities.device_type is DeviceType.MOWER
+        # The refresh command behind MowerBeaconOtaEvent is only wired for a
+        # class with beacon_ota (deebot_patch/hardware.py).
+        and (profile := profile_for_class(device.device_info["class"])) is not None
+        and profile.beacon_ota
+    )
+
     for device in controller.devices:
         if device.capabilities.device_type is not DeviceType.MOWER:
             continue
@@ -517,6 +534,44 @@ class EcovacsBeaconSensor(
             None,
         )
         self.async_write_ha_state()
+
+
+class EcovacsBeaconUpdateStateSensor(
+    EcovacsEntity[Capabilities],
+    SensorEntity,
+):
+    """The raw ``otaState`` of the navigation beacons' firmware update.
+
+    A bare integer on purpose. On a G1-800 (``77atlz``, fw 1.36.208) it read 0
+    when idle, 1 seconds after an update was started and 4 about 45 s later,
+    at the moment the beacons reported a failed result. Those are the only
+    values anybody has seen, and 4 is *observed* after a failed attempt, not
+    known to mean one. Naming states nobody has met would be guessing, so an
+    automation triggers on the number changing.
+
+    Not a measurement and not an enum: no state class, no device class.
+    """
+
+    entity_description = SensorEntityDescription(
+        key="beacon_update_state",
+        translation_key="beacon_update_state",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    )
+
+    def __init__(self, device: Device) -> None:
+        """Initialize entity."""
+        super().__init__(device, device.capabilities)
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listeners now that hass is ready."""
+        await super().async_added_to_hass()
+
+        async def on_event(event: MowerBeaconOtaEvent) -> None:
+            self._attr_native_value = event.ota_state
+            self.async_write_ha_state()
+
+        self._subscribe(MowerBeaconOtaEvent, on_event)
 
 
 class EcovacsErrorSensor(

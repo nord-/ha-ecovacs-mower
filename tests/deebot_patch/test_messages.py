@@ -29,6 +29,7 @@ from custom_components.ecovacs_mower.deebot_patch.map_messages import (
 )
 from custom_components.ecovacs_mower.deebot_patch.messages import (
     MowerAnimProtectEvent,
+    MowerBeaconOtaEvent,
     MowerBeaconsEvent,
     MowerJobEdgeEvent,
     MowerProtectStateEvent,
@@ -58,6 +59,7 @@ from custom_components.ecovacs_mower.deebot_patch.messages import (
     OnScheduleTaskInfo,
     OnStatsMower,
     OnUwb,
+    OnUwbOta,
     handle_clean_info,
     notify_mower_beacons,
 )
@@ -2711,3 +2713,267 @@ async def test_the_issue_120_scheduled_run_replays_to_mowing_returning_and_docke
         State.CLEANING,
         State.RETURNING,
     ]
+
+
+# --- onUWBOta ---------------------------------------------------------------
+#
+# The beacons' firmware-update state on a GOAT G1-800 (77atlz, fw 1.36.208).
+# The push's envelope beyond otaState was never captured, so the layouts below
+# are the shape its neighbours use (body.data), not a recording. The values are
+# from the captures: otaState 1 seconds after the app started an update, 4
+# about 45 s later, needUpdate 1 throughout.
+
+
+def _ota_bus() -> Mock:
+    return Mock()
+
+
+def _ota_events(bus: Mock) -> list[MowerBeaconOtaEvent]:
+    return [
+        call_.args[0]
+        for call_ in bus.notify.call_args_list
+        if isinstance(call_.args[0], MowerBeaconOtaEvent)
+    ]
+
+
+def _ota_push(bus: Mock, data: Any, **header: Any) -> HandlingResult:
+    envelope = _wrap(data)
+    envelope["header"].update(header)
+    return OnUwbOta.handle(bus, envelope)
+
+
+def test_on_uwb_ota_notifies_both_fields() -> None:
+    bus = _ota_bus()
+
+    _ota_push(bus, {"needUpdate": 1, "otaState": 4})
+
+    assert _ota_events(bus) == [MowerBeaconOtaEvent(need_update=True, ota_state=4)]
+
+
+@pytest.mark.parametrize("ota_state", [0, 1, 4, 7, 255])
+def test_on_uwb_ota_keeps_the_state_raw(ota_state: int) -> None:
+    # 0, 1 and 4 were seen; 7 never was. An unseen value is passed through as
+    # the number it is rather than dropped or renamed — nobody has said what
+    # it means, and an automation can still trigger on the change.
+    bus = _ota_bus()
+
+    _ota_push(bus, {"needUpdate": 1, "otaState": ota_state})
+
+    assert _ota_events(bus) == [
+        MowerBeaconOtaEvent(need_update=True, ota_state=ota_state)
+    ]
+
+
+@pytest.mark.parametrize(("raw", "expected"), [(0, False), (1, True), (False, False), (True, True)])
+def test_on_uwb_ota_reads_need_update_as_a_flag(raw: object, expected: bool) -> None:
+    bus = _ota_bus()
+
+    _ota_push(bus, {"needUpdate": raw, "otaState": 0})
+
+    assert _ota_events(bus) == [
+        MowerBeaconOtaEvent(need_update=expected, ota_state=0)
+    ]
+
+
+@pytest.mark.parametrize("header", [{}, {"wkVer": "0.1.54"}])
+def test_on_uwb_ota_does_not_depend_on_the_header_fields(header: dict) -> None:
+    # The mower's envelope carries wkVer and the test envelope does not; the
+    # payload is all this handler reads.
+    bus = _ota_bus()
+
+    _ota_push(bus, {"needUpdate": 0, "otaState": 0}, **header)
+
+    assert _ota_events(bus) == [MowerBeaconOtaEvent(need_update=False, ota_state=0)]
+
+
+async def test_a_repeated_push_goes_through_a_real_bus_once() -> None:
+    # The bus drops an event equal to the previous one before any subscriber
+    # runs, so the repeat is not seen and the state after it must still be the
+    # one the handler recorded.
+    bus = _bus()
+    received = _collect(bus, MowerBeaconOtaEvent)
+
+    for data in (
+        {"needUpdate": 1, "otaState": 0},
+        {"otaState": 1},
+        {"otaState": 4},
+        {"otaState": 4},
+    ):
+        OnUwbOta.handle(bus, _wrap(data))
+    await asyncio.sleep(0)
+
+    assert received == [
+        MowerBeaconOtaEvent(need_update=True, ota_state=0),
+        MowerBeaconOtaEvent(need_update=True, ota_state=1),
+        MowerBeaconOtaEvent(need_update=True, ota_state=4),
+    ]
+
+
+def test_a_push_with_only_the_state_keeps_the_known_need_update() -> None:
+    # The push was only ever seen to carry otaState. Publishing it alone would
+    # blank the needUpdate the last answer delivered.
+    bus = _ota_bus()
+
+    _ota_push(bus, {"needUpdate": 1, "otaState": 0})
+    _ota_push(bus, {"otaState": 1})
+
+    assert _ota_events(bus)[-1] == MowerBeaconOtaEvent(need_update=True, ota_state=1)
+
+
+def test_a_push_with_only_the_state_before_any_answer_leaves_need_update_unknown() -> None:
+    bus = _ota_bus()
+
+    _ota_push(bus, {"otaState": 1})
+
+    assert _ota_events(bus) == [MowerBeaconOtaEvent(need_update=None, ota_state=1)]
+
+
+def test_a_push_with_only_need_update_leaves_the_state_unknown() -> None:
+    bus = _ota_bus()
+
+    _ota_push(bus, {"needUpdate": 1})
+
+    assert _ota_events(bus) == [MowerBeaconOtaEvent(need_update=True, ota_state=None)]
+
+
+def test_a_push_without_need_update_asks_for_a_fresh_read() -> None:
+    # After a successful update the push may omit needUpdate, and the last
+    # answer's 1 would otherwise stay until the next reconnect.
+    bus = _ota_bus()
+
+    _ota_push(bus, {"needUpdate": 1, "otaState": 0})
+    bus.request_refresh.assert_not_called()
+    _ota_push(bus, {"otaState": 1})
+
+    bus.request_refresh.assert_called_once_with(MowerBeaconOtaEvent)
+
+
+def test_a_payload_carrying_need_update_asks_for_nothing() -> None:
+    bus = _ota_bus()
+
+    _ota_push(bus, {"needUpdate": 0, "otaState": 0})
+    _ota_push(bus, {"needUpdate": 1})
+
+    bus.request_refresh.assert_not_called()
+
+
+def test_only_one_read_is_outstanding_until_need_update_arrives() -> None:
+    # If the answer leaves needUpdate out as well, asking again on every
+    # payload would turn each push into a request. A payload that carries it
+    # lifts the guard.
+    bus = _ota_bus()
+
+    _ota_push(bus, {"otaState": 1})
+    _ota_push(bus, {"otaState": 4})
+    _ota_push(bus, {"otaState": 4})
+    assert bus.request_refresh.call_count == 1
+
+    _ota_push(bus, {"needUpdate": 0, "otaState": 0})
+    _ota_push(bus, {"otaState": 1})
+    assert bus.request_refresh.call_count == 2
+
+
+def test_the_read_is_asked_per_bus() -> None:
+    first, second = _ota_bus(), _ota_bus()
+
+    _ota_push(first, {"otaState": 1})
+    _ota_push(second, {"otaState": 1})
+
+    first.request_refresh.assert_called_once_with(MowerBeaconOtaEvent)
+    second.request_refresh.assert_called_once_with(MowerBeaconOtaEvent)
+
+
+def test_a_payload_with_nothing_usable_asks_for_nothing() -> None:
+    bus = _ota_bus()
+
+    _ota_push(bus, {"other": 1})
+
+    bus.request_refresh.assert_not_called()
+
+
+def test_the_record_is_per_bus() -> None:
+    # One device's last answer must not leak into another's push.
+    first, second = _ota_bus(), _ota_bus()
+
+    _ota_push(first, {"needUpdate": 1, "otaState": 0})
+    _ota_push(second, {"otaState": 1})
+
+    assert _ota_events(second) == [MowerBeaconOtaEvent(need_update=None, ota_state=1)]
+
+
+@pytest.mark.parametrize("data", [{}, {"other": 1}, {"needUpdate": None, "otaState": None}])
+def test_on_uwb_ota_without_usable_fields_publishes_nothing(data: dict) -> None:
+    bus = _ota_bus()
+
+    result = _ota_push(bus, data)
+
+    assert _ota_events(bus) == []
+    assert result.state is not HandlingState.ERROR
+
+
+@pytest.mark.parametrize("bad", [True, False, "4", "", None, 4.0, 1.5, [4], {"v": 4}])
+def test_on_uwb_ota_ignores_a_state_of_the_wrong_type(bad: object) -> None:
+    # bool is an int subclass: True would otherwise read as state 1. The
+    # need_update half is still worth publishing.
+    bus = _ota_bus()
+
+    _ota_push(bus, {"needUpdate": 1, "otaState": bad})
+
+    assert _ota_events(bus) == [MowerBeaconOtaEvent(need_update=True, ota_state=None)]
+
+
+@pytest.mark.parametrize("bad", ["1", "", None, 2, -1, 1.0, [1], {"v": 1}])
+def test_on_uwb_ota_ignores_a_need_update_it_cannot_read_as_a_flag(bad: object) -> None:
+    bus = _ota_bus()
+
+    _ota_push(bus, {"needUpdate": bad, "otaState": 4})
+
+    assert _ota_events(bus) == [MowerBeaconOtaEvent(need_update=None, ota_state=4)]
+
+
+def test_a_garbage_push_does_not_disturb_what_is_known() -> None:
+    bus = _ota_bus()
+    _ota_push(bus, {"needUpdate": 1, "otaState": 4})
+
+    _ota_push(bus, {"needUpdate": "yes", "otaState": "four"})
+
+    assert _ota_events(bus) == [MowerBeaconOtaEvent(need_update=True, ota_state=4)]
+
+
+@pytest.mark.parametrize("data", [[], [{"otaState": 4}], "otaState", 4, None])
+def test_on_uwb_ota_survives_a_body_data_that_is_not_a_dict(data: object) -> None:
+    bus = _ota_bus()
+
+    result = _ota_push(bus, data)
+
+    assert _ota_events(bus) == []
+    assert result.state is not HandlingState.SUCCESS
+
+
+def test_on_uwb_ota_survives_a_body_without_data() -> None:
+    bus = _ota_bus()
+
+    result = OnUwbOta.handle(bus, {"header": {}, "body": {"code": 0}})
+
+    assert _ota_events(bus) == []
+    assert result.state is not HandlingState.SUCCESS
+
+
+def test_on_uwb_ota_logs_a_debug_line_for_a_payload_it_ignores(caplog) -> None:
+    import logging
+
+    with caplog.at_level(logging.DEBUG, logger=messages_module.__name__):
+        _ota_push(_ota_bus(), {"unexpected": 1})
+
+    assert any("onUWBOta" in r.getMessage() for r in caplog.records)
+
+
+def test_on_uwb_ota_message_name() -> None:
+    assert OnUwbOta.NAME == "onUWBOta"
+
+
+def test_on_uwb_ota_is_registered_by_apply() -> None:
+    # The library has no handler at all, so without this the push is logged as
+    # 'Unknown message "onUWBOta"' and dropped.
+    apply()
+    assert MESSAGES["onUWBOta"] is OnUwbOta

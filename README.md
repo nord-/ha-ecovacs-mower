@@ -254,16 +254,17 @@ above), that loop returns for the vacuum.
 ## What you get
 
 Forty-six fixed entities on the mower's device page, across eight platforms —
-forty-seven on the G1-800 and A3000 LiDAR Pro, which also get the "Mow border"
-button — plus one writable entity per setting of each saved mowing area on the
+forty-seven on the A3000 LiDAR Pro, which also gets the "Mow border" button, and
+forty-nine on the G1-800, which gets that button and the two beacon-update
+entities as well — plus one writable entity per setting of each saved mowing area on the
 A1600 LiDAR Pro (`e4gqia`), A3000 LiDAR Pro (`51rcxt`) and O1200 LiDAR Pro
 (`2i0fns`), and one per UWB beacon on the models that use them:
 
 | Platform | Count | What |
 |---|---|---|
 | `lawn_mower` | 1 | Real state (`mowing`, `paused`, `returning`, `docked`, `error`) that updates within seconds, plus working `start_mowing`, `pause`, and `dock` |
-| `sensor` | 16 + one per beacon | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowing progress (see below), job target area, job target duration, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name, and on a beacon-guided mower one battery percentage per UWB beacon (see below) |
-| `binary_sensor` | 6 | Fault — a latched problem that stays on until the mower recovers or you clear it (see below) — plus rain sensor, rain delay, emergency stop, locked, animal protection active: the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
+| `sensor` | 16, 17 on the G1-800, + one per beacon | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowing progress (see below), job target area, job target duration, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name, and on a beacon-guided mower one battery percentage per UWB beacon and the raw state of the beacons' firmware update (see below) |
+| `binary_sensor` | 6, 7 on the G1-800 | Fault — a latched problem that stays on until the mower recovers or you clear it (see below) — plus rain sensor, rain delay, emergency stop, locked, animal protection active: the mower's raw protection flags, from the `onProtectState` message the library drops (see below), and on a beacon-guided mower whether the beacons have a firmware update available (see below) |
 | `switch` | 9 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection, rain detection, animal protection (see below) |
 | `number` | 3 + one per setting per saved area (four on the A1600, A3000 and O1200 LiDAR Pro) | Notification volume, cutting direction, rain delay duration, plus cutting height, mowing speed, obstacle height and cutting direction for each saved area (see below) |
 | `button` | 8, 9 on the G1-800 and A3000 LiDAR Pro | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), "Clear fault" (releases the latched fault; see below), "End mowing task" (ends the current job for good; see below), "Log area parameters" (diagnostic, disabled by default; shows the raw per-area values to help support another model, see below) and, on the G1-800 and A3000 LiDAR Pro, "Mow border" (starts a border job; see below) |
@@ -900,6 +901,47 @@ capture that contained every command either of them sent. So unlike the blade
 and the lens brush, there is nothing for a reset button to do. Issue #63 is
 closed on that basis.
 
+### The beacons' firmware update
+
+A G1-800 reports whether its navigation beacons have a firmware update waiting,
+and how an update is going, in two read-only diagnostic entities:
+
+```
+binary_sensor.<device>_beacon_update_available    off / on
+sensor.<device>_beacon_update_state               0
+```
+
+They come from `getUWBOta`, which the mower answers with
+`{"needUpdate": 0, "otaState": 0}`, and from the `onUWBOta` push it sends while
+an update runs, which the library has no handler for. The integration reads
+`getUWBOta` once when the entities are added and again when the mower comes back
+after being unavailable, so they have a value from startup and no new poll runs
+for them. A push that carries only `otaState` leaves the other entity at what
+the last answer said.
+
+The sensor is the raw number on purpose. What a G1-800 on firmware 1.36.208 has
+been seen to do:
+
+| `otaState` | `needUpdate` | when |
+| --- | --- | --- |
+| `0` | `0` | idle |
+| `0` | `1` | after the mower and its beacons were power-cycled |
+| `1` | | seconds after the app started an update |
+| `4` | `1` | about 45 s later, and it stayed there |
+
+`4` was seen together with a failed result on two beacons and a bury point
+reporting `result: 0`, which fits a failed attempt, but nobody has confirmed
+that, and no other value has been seen. So the sensor shows the number and
+names no states. To be told when something changes, trigger an automation on
+the sensor's state changing, or on the binary sensor turning on.
+
+Starting an update, the `setUWBOta` the app sends, is deliberately not
+implemented here: it is a write, and nothing is known about what it does to a
+mower that is mowing.
+
+Only the G1-800 has them, because only its profile has `beacon_ota`. On any
+other model the entities do not exist.
+
 ### Entities disabled by default
 
 **17 of the 40 entities** ship with `entity_registry_enabled_default=False`,
@@ -914,7 +956,7 @@ a bug: if one of these looks blank or "unavailable," this is why.
 |---|---|---|
 | `switch` | 7 of 7 | all of them: advanced mode, TrueDetect, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
 | `number` | 2 of 2 | both: volume, cutting direction |
-| `sensor` | 4 of the 16 fixed ones | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code**. The per-beacon sensors are enabled |
+| `sensor` | 4 of the 16 fixed ones (17 on the G1-800) | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code**. The per-beacon sensors and the beacon update state are enabled |
 | `button` | 5 of 8 (5 of 9 on the G1-800 and A3000 LiDAR Pro) | the four consumable-lifespan resets (blade, lens brush, trimmer brush, weed rope) and "Log area parameters" — "Locate mower", "Clear fault", "End mowing task" and, on the G1-800 and A3000 LiDAR Pro, "Mow border" are enabled by default |
 
 **If you're planning anything on the error sensor** — an alarm, a
