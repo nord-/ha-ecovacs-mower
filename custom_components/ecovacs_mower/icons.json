@@ -180,6 +180,9 @@
   "services": {
     "mow_area": {
       "service": "mdi:map-marker-path"
+    },
+    "app_ping": {
+      "service": "mdi:cellphone-wireless"
     }
   }
 }

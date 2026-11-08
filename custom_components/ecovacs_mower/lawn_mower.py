@@ -21,6 +21,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EcovacsMowerConfigEntry
 from .controller import EcovacsController
+from .deebot_patch.commands import AppPing
 from .deebot_patch.zonal import MowArea
 from .entity import EcovacsEntity
 
@@ -135,6 +136,23 @@ class EcovacsMower(EcovacsEntity[Capabilities], LawnMowerEntity):
 
         self._controller.start_polling(self._device)
         await self._execute_command(area(CleanMode.SPOT_AREA, area_ids, 1))
+
+    async def async_app_ping(self) -> None:
+        """Tell the mower the app is open, so it streams its map to everyone.
+
+        Without it the mower sends ``onMapTrack`` only while the Ecovacs app
+        is open, and the map's plan of what is left to mow stays empty; see
+        ``AppPing``. One call holds for a while, not for good, so a caller
+        wanting live progress repeats it — the app itself pings every two
+        minutes. Nothing here repeats it on its own, on purpose: the traffic
+        is the user's to decide on, not every installation's on every run.
+
+        Gated on nothing, because the app pings whatever device it opens.
+        Sent past ``_execute_command``, whose warning is for a command the
+        mower should have confirmed: it never answers a ping, so every call
+        would log one.
+        """
+        await self._device.execute_command(AppPing())
 
     @override
     async def async_start_mowing(self) -> None:

@@ -833,11 +833,26 @@ class GetMapInfoV2(_MapInfoRequest):
     NAME = "getMapInfo_V2"
 
 
-class _AppPing(ExecuteCommand):
+class AppPing(ExecuteCommand):
     """``appping``: what the Ecovacs app sends to say it is open.
 
     The mower never answers it. The app sends it when it opens a mower and
     about every two minutes after, with an empty body.
+
+    It is what opens the mower's batched transfers — ``onMI``, ``onArI``,
+    ``onMapTrack`` — to every listener. Measured on an O800 RTK (``9bts2s``),
+    firmware 1.13.8, docked, the app closed for 17 minutes (2026-10-28):
+    ``getMI`` alone was acked and nothing followed for a minute; ``appping``
+    and then ``getMI`` brought ``onMI`` and ``onArI`` within the second.
+    Pinged every two minutes through a job with the app closed, the same
+    mower's ``onMapTrack`` kept arriving. How long one ping holds is not
+    measured; two minutes is the interval of the app's own vacuum screens.
+
+    Executed on its own it gets the same head start as before ``getMI`` and
+    then gives up quietly: the library's own path would wait out the API
+    timeout and log a failed command every time. Quietly is not
+    successfully, though — the library counts a success as the device
+    having been reached, so only an ack from the mower is reported as one.
     """
 
     NAME = "appping"
@@ -850,12 +865,45 @@ class _AppPing(ExecuteCommand):
         # sends {"data": {}}, and that is the form confirmed to work.
         return {**super()._get_payload(), "body": {"data": {}}}
 
+    async def _execute(
+        self,
+        authenticator: Authenticator,
+        device_info: ApiDeviceInfo,
+        event_bus: EventBus,
+    ) -> tuple[HandlingResult, dict[str, Any]]:
+        """Ping, and claim the mower was reached only if it said so."""
+        response = await _ping(authenticator, device_info)
+        if response is not None and response.get("ret") == "ok":
+            return HandlingResult.success(), response
+        return HandlingResult(HandlingState.FAILED), {}
+
 
 # How long the ping gets before getMI goes out. The mower never answers it,
 # so this is a head start rather than a wait for an answer: the cloud has the
 # request within milliseconds, and the HTTP call is abandoned when this runs
 # out rather than held open until the cloud gives up on the mower.
 _APP_PING_HEAD_START = 3  # seconds
+
+
+async def _ping(
+    authenticator: Authenticator, device_info: ApiDeviceInfo
+) -> dict[str, Any] | None:
+    """Send an ``appping`` and give it its head start, never raising.
+
+    Returns the cloud's answer, or ``None`` when there was none in time.
+    """
+    try:
+        return await asyncio.wait_for(
+            AppPing()._execute_api_request(authenticator, device_info),
+            _APP_PING_HEAD_START,
+        )
+    except TimeoutError:
+        pass  # the usual outcome: the mower does not answer a ping
+    except Exception:
+        # A ping that fails costs nothing more than skipping it would, so it
+        # must not keep whatever follows it from going out.
+        _LOGGER.debug("appping failed", exc_info=True)
+    return None
 
 
 class GetMI(_MapInfoRequest):
@@ -889,17 +937,7 @@ class GetMI(_MapInfoRequest):
         event_bus: EventBus,
     ) -> tuple[HandlingResult, dict[str, Any]]:
         """Ping as the app does, then ask."""
-        try:
-            await asyncio.wait_for(
-                _AppPing()._execute_api_request(authenticator, device_info),
-                _APP_PING_HEAD_START,
-            )
-        except TimeoutError:
-            pass  # the usual outcome: the mower does not answer a ping
-        except Exception:
-            # A ping that fails costs the map nothing more than skipping it
-            # would, so it must not keep getMI from going out.
-            _LOGGER.debug("appping before getMI failed", exc_info=True)
+        await _ping(authenticator, device_info)
         return await super()._execute(authenticator, device_info, event_bus)
 
 

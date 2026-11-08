@@ -15,8 +15,8 @@ from . import requires_ha
 pytestmark = requires_ha
 
 
-async def test_async_setup_registers_mow_area_entity_service() -> None:
-    """Register the action before any config entry is loaded."""
+async def test_async_setup_registers_the_entity_services() -> None:
+    """Register the actions before any config entry is loaded."""
     from custom_components.ecovacs_mower import async_setup
 
     hass = MagicMock()
@@ -25,14 +25,51 @@ async def test_async_setup_registers_mow_area_entity_service() -> None:
     ) as register:
         assert await async_setup(hass, {})
 
-    register.assert_called_once()
-    kwargs = register.call_args.kwargs
-    assert kwargs["entity_domain"] == "lawn_mower"
-    assert kwargs["func"] == "async_mow_area"
+    registered = {call.args[2]: call.kwargs for call in register.call_args_list}
+    assert set(registered) == {"mow_area", "app_ping"}
+    assert registered["mow_area"]["func"] == "async_mow_area"
+    assert registered["app_ping"]["func"] == "async_app_ping"
 
     from custom_components.ecovacs_mower.lawn_mower import EcovacsMower
 
-    assert hasattr(EcovacsMower, kwargs["func"])
+    for kwargs in registered.values():
+        assert kwargs["entity_domain"] == "lawn_mower"
+        assert hasattr(EcovacsMower, kwargs["func"])
+
+
+async def test_app_ping_service_reaches_registered_entity(hass) -> None:
+    """The ping takes no data; a target alone is a valid call."""
+    from homeassistant.helpers.entity import Entity
+    from homeassistant.helpers.entity_platform import DATA_DOMAIN_PLATFORM_ENTITIES
+
+    from custom_components.ecovacs_mower import async_setup
+
+    class TestMowerEntity(Entity):
+        """Minimal real entity for exercising HA's entity-service dispatch."""
+
+        _attr_should_poll = False
+
+        def __init__(self) -> None:
+            self.pinged = False
+
+        async def async_app_ping(self) -> None:
+            self.pinged = True
+
+    entity = TestMowerEntity()
+    entity.entity_id = "lawn_mower.goat"
+    hass.data.setdefault(DATA_DOMAIN_PLATFORM_ENTITIES, {})[
+        ("lawn_mower", "ecovacs_mower")
+    ] = {entity.entity_id: entity}
+
+    await async_setup(hass, {})
+    await hass.services.async_call(
+        "ecovacs_mower",
+        "app_ping",
+        {"entity_id": entity.entity_id},
+        blocking=True,
+    )
+
+    assert entity.pinged
 
 
 async def test_mow_area_service_reaches_registered_entity(hass) -> None:

@@ -173,3 +173,30 @@ async def test_mow_area_rejects_mowers_without_spot_area() -> None:
     device.capabilities.clean.action.area = None
     with pytest.raises(HomeAssistantError, match="does not support zone mowing"):
         await mower.async_mow_area([1])
+
+
+async def test_app_ping_goes_to_any_mower_without_a_warning() -> None:
+    """The app pings whatever it opens, and the mower never answers a ping.
+
+    So no class is turned away, and the entity's command wrapper, which
+    warns about every unconfirmed command, is not in the way.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from custom_components.ecovacs_mower.deebot_patch.commands import AppPing
+    from custom_components.ecovacs_mower.lawn_mower import EcovacsMower
+
+    controller = MagicMock()
+    device = MagicMock()
+    device.device_info = {"did": "did-1", "class": "new000"}
+    device.execute_command = AsyncMock(return_value={})
+    mower = EcovacsMower(device, controller)
+    mower._execute_command = AsyncMock()
+
+    await mower.async_app_ping()
+
+    (command,) = [call.args[0] for call in device.execute_command.await_args_list]
+    assert isinstance(command, AppPing)
+    mower._execute_command.assert_not_awaited()
+    # Nor is it a job start: nothing about the poll changes.
+    controller.start_polling.assert_not_called()
