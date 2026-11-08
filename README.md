@@ -497,7 +497,9 @@ starts over, with a fresh table and an empty list of changes.
 Some models keep the same settings for the whole mower too, in the app's
 Auto mode, each read and written with its own command. The integration treats
 them as one more area, `auto`, with the same kind of entities, named *Auto -
-Cutting height* and so on, validated per model in the same way.
+Cutting height* and so on, validated per model in the same way. Each setting
+is read when Home Assistant starts and again whenever the mower reconnects,
+and a change made in the app shows up as soon as the mower accepts it.
 
 | Setting | A1600 RTK |
 |---|---|
@@ -510,8 +512,12 @@ The Auto cutting direction is the same setting as the device-wide *Cutting
 direction* number, which shows the raw angle the mower stores. Where a
 model's Auto direction is validated, *Auto - Cutting direction* takes its
 place, in the app's degrees, and the device-wide number is no longer created:
-on the A1600 RTK so far. Other models get no Auto entities until their values
-have been checked on that model.
+on the A1600 RTK so far. On an install set up before that, the old *Cutting
+direction* entity is removed from Home Assistant at the next start; an
+automation or dashboard card that used it needs *Auto - Cutting direction*
+instead, which takes the app's degrees rather than the raw angle. Other
+models get no Auto entities until their values have been checked on that
+model.
 
 ### Border mowing
 
@@ -1005,7 +1011,7 @@ a bug: if one of these looks blank or "unavailable," this is why.
 | Platform | Disabled | Which |
 |---|---|---|
 | `switch` | 7 of 7 | all of them: advanced mode, TrueDetect, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
-| `number` | 2 of 2 | both: volume, cutting direction |
+| `number` | 3 of the 3 fixed ones (2 of 2 on the A1600 RTK) | all of them: volume, cutting direction and rain delay duration; the A1600 RTK has no device-wide cutting direction (see "Mower-wide (Auto mode) settings"). The per-area and Auto settings are enabled |
 | `sensor` | 4 of the 16 fixed ones (18 on the G1-800) | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code**. The per-beacon sensors and the beacon update state are enabled |
 | `button` | 5 of 8 (5 of 9 on the G1-800 and A3000 LiDAR Pro) | the four consumable-lifespan resets (blade, lens brush, trimmer brush, weed rope) and "Log area parameters" — "Locate mower", "Clear fault", "End mowing task" and, on the G1-800 and A3000 LiDAR Pro, "Mow border" are enabled by default |
 

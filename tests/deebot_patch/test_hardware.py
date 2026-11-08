@@ -691,3 +691,60 @@ def test_beacon_ota_is_its_own_flag_not_a_side_effect_of_uwb_beacons() -> None:
     # uwb_beacons: a class that gets one must not get the other for free.
     assert MowerProfile("x", uwb_beacons=True).beacon_ota is False
     assert MowerProfile("x", beacon_ota=True).uwb_beacons is False
+
+
+def test_auto_parameters_is_flagged_on_the_classes_where_it_was_confirmed() -> None:
+    # The A1600 RTK's Auto settings were read back for every value its app
+    # offers, and written from Home Assistant both ways (issue #163). The
+    # A1600 LiDAR Pro answers the same reads, but its app has no Auto mode to
+    # check the values against, so it stays without the flag.
+    assert {
+        class_ for class_, profile in SUPPORTED_CLASSES.items() if profile.auto_parameters
+    } == {A1600_RTK}
+
+
+@pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
+async def test_the_auto_reads_are_wired_for_auto_parameters_classes_only(
+    class_: str,
+) -> None:
+    # The level settings are pushed only when someone changes them, so each
+    # needs its read as a refresh command: asked on the first subscription and
+    # again on every reconnect. A class without the flag must get no entry.
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        CutEfficiencyEvent,
+        CutHeightEvent,
+        GetCutEfficiency,
+        GetCutHeight,
+        GetObstacleHeight,
+        ObstacleHeightEvent,
+    )
+
+    await patch_device_info(class_)
+    info = await get_static_device_info(class_)
+    refresh = info.capabilities.get_refresh_commands
+    wired = {
+        CutHeightEvent: GetCutHeight,
+        CutEfficiencyEvent: GetCutEfficiency,
+        ObstacleHeightEvent: GetObstacleHeight,
+    }
+
+    for event, read in wired.items():
+        if profile_for_class(class_).auto_parameters:
+            assert [type(c) for c in refresh(event)] == [read]
+        else:
+            assert refresh(event) == []
+
+
+async def test_the_auto_direction_keeps_a_refresh_command() -> None:
+    # The direction's event is the library's CutDirectionEvent. setdefault
+    # leaves an entry the library already has alone and adds the read where
+    # it has none, so the event refreshes either way.
+    from deebot_client.commands.json.cut_direction import GetCutDirection
+    from deebot_client.events import CutDirectionEvent
+
+    await patch_device_info(A1600_RTK)
+    info = await get_static_device_info(A1600_RTK)
+
+    assert [
+        type(c) for c in info.capabilities.get_refresh_commands(CutDirectionEvent)
+    ] == [GetCutDirection]

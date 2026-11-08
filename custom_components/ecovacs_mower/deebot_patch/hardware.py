@@ -23,6 +23,7 @@ from deebot_client.hardware import _DEVICES, get_static_device_info
 
 from .areas import MowerAreaEvent
 from .commands import (
+    AUTO_PARAMETERS,
     CleanMower,
     GetAnimProtect,
     GetAreaParameter,
@@ -86,6 +87,12 @@ class MowerProfile:
     ``onUWBOta``) and shows it as two read-only entities. It is its own flag
     because that shape and its ``needUpdate``/``otaState`` values come from a
     different capture than the lifespan request behind ``uwb_beacons``.
+    ``auto_parameters`` gives the class the refresh of the mower-wide (Auto
+    mode) settings, read with their own commands (``AUTO_PARAMETERS``), and,
+    together with the class's ``auto`` entry in ``area_numbers.py``, the
+    entities that show them. It is a flag of its own, apart from
+    ``area_parameters``, because those settings are read and written with
+    different commands, so one says nothing about the other.
     """
 
     device_class: str
@@ -98,6 +105,7 @@ class MowerProfile:
     uwb_beacons: bool = False
     core_temperature: bool = False
     beacon_ota: bool = False
+    auto_parameters: bool = False
 
 
 # Device classes this integration patches, and how each one was confirmed:
@@ -293,6 +301,17 @@ class MowerProfile:
 #                     otaState 1 and, about 45 s later, 4 after the app started
 #                     an update. Off everywhere else: no other class has been
 #                     asked.
+#   auto_parameters — xmp9ds: the app's Auto mode writes captured on the
+#                     A1600 RTK, firmware 1.17.11 (issue #23); every value
+#                     the app offers then read back with the Log area
+#                     parameters button, all four reads answering and each
+#                     change in the app arriving within a second (issue
+#                     #163). On firmware 1.17.21 the owner ran the entities
+#                     from Home Assistant: values match the app, and changes
+#                     land both ways (issue #163). Off everywhere else: the
+#                     A1600 LiDAR Pro (e4gqia) answers the four reads too,
+#                     but its app shows no Auto settings to check them
+#                     against.
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile("2i0fns", area_parameters=True, zone_mowing=True),
     "9bts2s": MowerProfile(
@@ -312,7 +331,7 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
         beacon_ota=True,
     ),
     "e4gqia": MowerProfile("e4gqia", area_parameters=True, zone_mowing=True),
-    "xmp9ds": MowerProfile("xmp9ds", area_parameters=True),
+    "xmp9ds": MowerProfile("xmp9ds", area_parameters=True, auto_parameters=True),
     "o4kvvk": MowerProfile("o4kvvk"),
     "6n9pcz": MowerProfile("6n9pcz"),
     "0jbd6s": MowerProfile("0jbd6s"),
@@ -364,6 +383,12 @@ async def patch_device_info(class_: str) -> None:
       given the refresh commands they had none of.
     * ``MowerBeaconOtaEvent``: given ``GetUWBOta`` on a class with
       ``beacon_ota`` only — no other class has been checked for it.
+    * ``CutHeightEvent``, ``CutEfficiencyEvent`` and ``ObstacleHeightEvent``:
+      given their reads on a class with ``auto_parameters`` only, and
+      ``CutDirectionEvent`` the library's ``GetCutDirection`` where the
+      library has not already given it one. The mower pushes none of these
+      settings, so without the refresh a change made while Home Assistant
+      was not listening would never arrive.
     * ``MowerMapInfoEvent``: given ``GetMapInfoMower``, without which a V2
       mower never sends the lawn boundary at all — it answers the request and
       pushes at no other time (issue #81) — and a non-V2 mower does not name
@@ -506,6 +531,15 @@ async def patch_device_info(class_: str) -> None:
         # Names and label points only: getAreaParameter has no validated
         # reading on this class, and nothing here needs one.
         events[MowerAreaEvent] = [GetAreaSet()]
+    if profile.auto_parameters:
+        # Each mower-wide setting is its own event with its own read, asked
+        # when its entity first subscribes and again on every reconnect, so a
+        # change made while Home Assistant was not listening is still picked
+        # up. setdefault, because the direction's event is the library's
+        # CutDirectionEvent, which the library already refreshes with its
+        # own getCutDirection.
+        for parameter in AUTO_PARAMETERS:
+            events.setdefault(parameter.event, [parameter.read()])
 
     object.__setattr__(patched, "_events", MappingProxyType(events))
 

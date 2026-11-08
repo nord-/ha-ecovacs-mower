@@ -26,7 +26,9 @@ Auto mode, each read and written with its own command
 (``deebot_patch/commands.py``). Those are treated as one more area,
 ``auto``, with its own entities (``EcovacsAutoNumber``) from the same
 parameter descriptions and value conversions, and validated per model in the
-same entry, under ``auto``.
+same entry, under ``auto``. As with the areas, a class needs both its entry
+and a profile flag, ``auto_parameters``, which also gives it the refresh of
+those settings.
 
 The parameter views are writable. Each write is converted back to a raw
 value and merged with the area's other raw values — from the area's last
@@ -261,7 +263,8 @@ class ModelValueMappings:
     mode, by the area wire key each corresponds to. It is validated on its
     own: the commands that read and write it differ from the area ones, so a
     model's ``areas`` says nothing about its ``auto``, and the other way
-    round. An empty ``auto`` gives the model no Auto entities.
+    round. An empty ``auto`` gives the model no Auto entities, and neither
+    does an ``auto`` without the class's ``auto_parameters`` profile flag.
     """
 
     # Excluded from the hash: a mapping is not hashable, and the frozen
@@ -372,7 +375,9 @@ AREA_PARAMETER_VALUE_MAPPINGS: dict[str, ModelValueMappings] = {
     # The Auto mode settings were read back with the Log area parameters
     # button while the owner stepped through every value the app offers
     # (#163): each one reached Home Assistant through the followed app write
-    # within a second, and the reads answered with the same raw values.
+    # within a second, and the reads answered with the same raw values. The
+    # Auto entities were then set from Home Assistant on firmware 1.17.21,
+    # and the app showed each value written, and the other way round (#163).
     "xmp9ds": ModelValueMappings(
         areas={
             # Cutting height, cm. Raw 2-5 follow the one-centimetre steps.
@@ -665,16 +670,23 @@ class EcovacsAreaNumber(EcovacsDescriptionEntity, NumberEntity):
 
 
 def auto_parameter_keys(device_class: str) -> frozenset[str]:
-    """The mower-wide parameters validated for one class, by wire key."""
+    """The mower-wide parameters validated for one class, by wire key.
+
+    Empty unless the class has both the ``auto_parameters`` profile flag and
+    an ``auto`` entry, the same pair the per-area entities need.
+    """
+    profile = profile_for_class(device_class)
     mappings = AREA_PARAMETER_VALUE_MAPPINGS.get(device_class)
-    return frozenset(mappings.auto) if mappings is not None else frozenset()
+    if profile is None or not profile.auto_parameters or mappings is None:
+        return frozenset()
+    return frozenset(mappings.auto)
 
 
 class EcovacsAutoNumber(EcovacsDescriptionEntity, NumberEntity):
     """Expose one writable mower-wide (Auto mode) parameter.
 
     The same description and value conversion as an area's entity, but none
-    of an area's machinery: the Auto settings always exist, have a fixed
+    of an area's machinery: the Auto settings do not come and go, have a fixed
     name, and each is written with its own command, so there is no area to
     disappear, no snapshot to merge into and nothing to serialise. Each
     setting arrives as its own event, which only this entity reads.
@@ -699,14 +711,15 @@ class EcovacsAutoNumber(EcovacsDescriptionEntity, NumberEntity):
 
     @override
     async def async_added_to_hass(self) -> None:
-        """Follow this setting's event, and ask for the setting once.
+        """Follow this setting's event.
 
-        Asked here rather than through the device's refresh: the refresh is
-        wired per class in the patch layer, which cannot see this table.
+        Subscribing is also what reads it: ``patch_device_info()`` gives a
+        class with the ``auto_parameters`` flag a refresh for each setting's
+        event, which the bus runs on the first subscription and again on
+        every reconnect.
         """
         await super().async_added_to_hass()
         self._subscribe(self._parameter.event, self._on_value)
-        self.hass.async_create_task(self._execute_command(self._parameter.read()))
 
     async def _on_value(self, event: Event) -> None:
         raw_value = getattr(event, self._parameter.field)
@@ -717,10 +730,10 @@ class EcovacsAutoNumber(EcovacsDescriptionEntity, NumberEntity):
 
     @override
     async def async_set_native_value(self, value: float) -> None:
-        """Write the setting, then read it back.
+        """Write the setting, then have it read back.
 
         The state is not set here: it follows what the mower reports, through
-        the read that confirms the write, or the mower's own echo of it.
+        the refresh that confirms the write, or the mower's own echo of it.
         """
         description = self.entity_description
         raw_value = description.value_mapping.to_raw(value)
@@ -730,7 +743,7 @@ class EcovacsAutoNumber(EcovacsDescriptionEntity, NumberEntity):
                 "cannot be represented by this mower"
             )
         if await self._execute_command(self._parameter.write(raw_value)):
-            await self._execute_command(self._parameter.read())
+            self._device.events.request_refresh(self._parameter.event)
 
 
 async def async_setup_area_numbers(
@@ -752,7 +765,7 @@ async def async_setup_area_numbers(
             _setup_device_area_numbers(
                 device, config_entry, async_add_entities, mappings.areas
             )
-        if mappings.auto:
+        if profile.auto_parameters and mappings.auto:
             async_add_entities(
                 EcovacsAutoNumber(device, description)
                 for description in area_number_descriptions(

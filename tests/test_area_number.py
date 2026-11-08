@@ -484,6 +484,28 @@ def test_every_area_parameters_class_has_a_mapping() -> None:
     }
 
 
+def test_every_auto_parameters_class_has_auto_values() -> None:
+    """The Auto flag and the Auto values are only ever enabled together.
+
+    The same pairing as the areas': a class with one and not the other gets no
+    Auto entity and no word about why.
+    """
+    from custom_components.ecovacs_mower.area_numbers import AREA_PARAMETER_VALUE_MAPPINGS
+    from custom_components.ecovacs_mower.deebot_patch.hardware import (
+        SUPPORTED_CLASSES,
+    )
+
+    assert {
+        class_
+        for class_, profile in SUPPORTED_CLASSES.items()
+        if profile.auto_parameters
+    } == {
+        class_
+        for class_, mappings in AREA_PARAMETER_VALUE_MAPPINGS.items()
+        if mappings.auto
+    }
+
+
 async def test_no_area_entities_for_a_vacuum() -> None:
     from deebot_client.capabilities import DeviceType
 
@@ -899,9 +921,15 @@ def _test_auto():
     }
 
 
-def _with_auto(monkeypatch, class_: str) -> None:
-    """Give *class_* the fixture's Auto values, next to whatever areas it has."""
+def _with_auto(monkeypatch, class_: str, *, flag: bool = True) -> None:
+    """Give *class_* the fixture's Auto values, next to whatever areas it has.
+
+    With *flag*, also the ``auto_parameters`` profile flag the values need.
+    """
+    import dataclasses
+
     from custom_components.ecovacs_mower import area_numbers
+    from custom_components.ecovacs_mower.deebot_patch import hardware
 
     current = area_numbers.AREA_PARAMETER_VALUE_MAPPINGS.get(class_)
     monkeypatch.setitem(
@@ -910,6 +938,11 @@ def _with_auto(monkeypatch, class_: str) -> None:
         area_numbers.ModelValueMappings(
             areas=current.areas if current else {}, auto=_test_auto()
         ),
+    )
+    monkeypatch.setitem(
+        hardware.SUPPORTED_CLASSES,
+        class_,
+        dataclasses.replace(hardware.SUPPORTED_CLASSES[class_], auto_parameters=flag),
     )
 
 
@@ -968,7 +1001,7 @@ async def test_auto_entities_come_next_to_area_discovery(monkeypatch) -> None:
 
 
 async def test_auto_values_need_no_area_parameters_flag(monkeypatch) -> None:
-    # The entry is the record of what was validated; the flag is the areas'.
+    # Auto has its own flag; the areas' flag says nothing about it.
     from deebot_client.capabilities import DeviceType
 
     from custom_components.ecovacs_mower.area_numbers import async_setup_area_numbers
@@ -984,6 +1017,30 @@ async def test_auto_values_need_no_area_parameters_flag(monkeypatch) -> None:
     device.events.subscribe.assert_not_called()
     [entities] = add_entities.call_args[0]
     assert len(list(entities)) == 4
+
+
+async def test_auto_values_without_the_flag_give_no_auto_entities(monkeypatch) -> None:
+    from deebot_client.capabilities import DeviceType
+
+    from custom_components.ecovacs_mower.area_numbers import (
+        EcovacsAutoNumber,
+        async_setup_area_numbers,
+        auto_parameter_keys,
+    )
+
+    _with_auto(monkeypatch, "e4gqia", flag=False)
+    device = _device()
+    device.capabilities.device_type = DeviceType.MOWER
+    add_entities = MagicMock()
+
+    await async_setup_area_numbers(_entry_with(device), add_entities)
+
+    assert not any(
+        isinstance(entity, EcovacsAutoNumber)
+        for call in add_entities.call_args_list
+        for entity in call.args[0]
+    )
+    assert auto_parameter_keys("e4gqia") == frozenset()
 
 
 @pytest.mark.parametrize("class_", ["e4gqia", "51rcxt", "2i0fns"])
@@ -1019,7 +1076,7 @@ async def test_an_auto_entity_shows_what_the_mower_reports() -> None:
 
 async def test_an_auto_write_sends_its_own_command_and_reads_it_back() -> None:
     from custom_components.ecovacs_mower.deebot_patch.commands import (
-        GetCutHeight,
+        CutHeightEvent,
         SetCutHeight,
     )
 
@@ -1028,10 +1085,10 @@ async def test_an_auto_write_sends_its_own_command_and_reads_it_back() -> None:
 
     await entity.async_set_native_value(5)
 
-    write, read = (call.args[0] for call in entity._execute_command.call_args_list)
-    assert isinstance(write, SetCutHeight)
-    assert write._args == {"level": 5}
-    assert isinstance(read, GetCutHeight)
+    [call] = entity._execute_command.call_args_list
+    assert isinstance(call.args[0], SetCutHeight)
+    assert call.args[0]._args == {"level": 5}
+    entity._device.events.request_refresh.assert_called_once_with(CutHeightEvent)
 
 
 async def test_an_unconfirmed_auto_write_is_not_read_back() -> None:
@@ -1042,6 +1099,7 @@ async def test_an_unconfirmed_auto_write_is_not_read_back() -> None:
 
     [call] = entity._execute_command.call_args_list
     assert call.args[0]._args == {"level": 2}
+    entity._device.events.request_refresh.assert_not_called()
 
 
 async def test_an_auto_write_refuses_an_unrepresentable_value() -> None:
@@ -1056,9 +1114,12 @@ async def test_an_auto_write_refuses_an_unrepresentable_value() -> None:
     entity._execute_command.assert_not_called()
 
 
-async def test_an_added_auto_entity_follows_the_snapshot_and_asks_once(hass) -> None:
+async def test_an_added_auto_entity_subscribes_and_leaves_the_read_to_the_bus(
+    hass,
+) -> None:
+    # The read is the event's refresh command (patch_device_info), which the
+    # bus sends on the first subscription and on every reconnect.
     from custom_components.ecovacs_mower.deebot_patch.commands import (
-        GetObstacleHeight,
         ObstacleHeightEvent,
     )
 
@@ -1072,30 +1133,30 @@ async def test_an_added_auto_entity_follows_the_snapshot_and_asks_once(hass) -> 
 
     subscribed = [call.args[0] for call in entity._subscribe.call_args_list]
     assert ObstacleHeightEvent in subscribed
-    [call] = entity._execute_command.call_args_list
-    assert isinstance(call.args[0], GetObstacleHeight)
+    entity._execute_command.assert_not_called()
 
 
 async def test_an_auto_direction_is_written_as_the_wire_angle() -> None:
-    from deebot_client.commands.json.cut_direction import (
-        GetCutDirection,
-        SetCutDirection,
-    )
+    from deebot_client.commands.json.cut_direction import SetCutDirection
+    from deebot_client.events import CutDirectionEvent
 
     entity = _auto_entity("angle")
     entity._execute_command = AsyncMock(return_value=True)
 
     await entity.async_set_native_value(90)
 
-    write, read = (call.args[0] for call in entity._execute_command.call_args_list)
-    assert isinstance(write, SetCutDirection)
-    assert write._args == {"angle": 180}
-    assert isinstance(read, GetCutDirection)
+    [call] = entity._execute_command.call_args_list
+    assert isinstance(call.args[0], SetCutDirection)
+    assert call.args[0]._args == {"angle": 180}
+    entity._device.events.request_refresh.assert_called_once_with(CutDirectionEvent)
 
 
-@pytest.mark.parametrize(("with_auto", "replaced"), [(True, True), (False, False)])
+@pytest.mark.parametrize(
+    ("with_auto", "flag", "replaced"),
+    [(True, True, True), (True, False, False), (False, False, False)],
+)
 def test_an_auto_direction_replaces_the_raw_device_wide_one(
-    monkeypatch, with_auto, replaced
+    monkeypatch, with_auto, flag, replaced
 ) -> None:
     from custom_components.ecovacs_mower.number import (
         ENTITY_DESCRIPTIONS,
@@ -1103,7 +1164,7 @@ def test_an_auto_direction_replaces_the_raw_device_wide_one(
     )
 
     if with_auto:
-        _with_auto(monkeypatch, "e4gqia")
+        _with_auto(monkeypatch, "e4gqia", flag=flag)
     device = _device()
     by_key = {description.key: description for description in ENTITY_DESCRIPTIONS}
 

@@ -1257,7 +1257,10 @@ class SetAreaParameter(ExecuteCommand):
 # changes to these settings, so ``apply()`` registers the write commands in
 # the library's p2p table: the library then hands a write another client
 # made, once the mower accepted it, to the matching read's handler, which
-# publishes it like an answer.
+# publishes it like an answer. For the same reason a class with the
+# ``auto_parameters`` profile flag gets each read as its event's refresh
+# command (``patch_device_info()``), so the bus reads the setting on the
+# first subscription and again after every reconnect.
 
 
 @dataclass(frozen=True)
