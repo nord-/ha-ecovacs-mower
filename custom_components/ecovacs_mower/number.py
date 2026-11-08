@@ -15,6 +15,12 @@ features a lawn mower does not have). ``volume`` and ``cut_direction`` are both
 plain ``CapabilitySet``, not ``CapabilityNumber``, so that branch never triggers
 here and has been removed along with the import.
 
+On a class whose mower-wide (Auto mode) direction is validated, the
+``cut_direction`` entity is left out: ``area_numbers.py`` shows the same
+setting as *Auto - Cutting direction*, converted to the app's degrees. Its
+leftover in the entity registry, from before the class had that, is removed
+at setup.
+
 ``EcovacsRainDelayNumber`` is an addition rather than a fork: it is the second
 half of the rain sensor's setting, the minutes the mower waits before resuming
 after rain (issue #54). Like the switch that carries the first half, it sits
@@ -32,6 +38,7 @@ from deebot_client.events import CutDirectionEvent, VolumeEvent
 from deebot_client.events.base import Event
 
 from homeassistant.components.number import (
+    DOMAIN as NUMBER_DOMAIN,
     NumberEntity,
     NumberEntityDescription,
     NumberMode,
@@ -39,10 +46,12 @@ from homeassistant.components.number import (
 from homeassistant.const import DEGREE, EntityCategory, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EcovacsMowerConfigEntry
-from .area_numbers import async_setup_area_numbers
+from .area_numbers import async_setup_area_numbers, auto_parameter_keys
+from .const import DOMAIN
 from .deebot_patch.commands import SetRainDelay
 from .deebot_patch.messages import MowerRainDelayEvent
 from .entity import (
@@ -99,8 +108,14 @@ async def async_setup_entry(
 ) -> None:
     """Add entities for passed config_entry in HA."""
     controller = config_entry.runtime_data
+    _remove_replaced_entities(hass, controller.devices)
     entities: list[EcovacsEntity] = get_supported_entities(
-        controller, EcovacsNumberEntity, ENTITY_DESCRIPTIONS
+        controller,
+        EcovacsNumberEntity,
+        ENTITY_DESCRIPTIONS,
+        include=lambda device, description: not _replaced_by_auto(
+            description, device
+        ),
     )
     entities.extend(
         EcovacsRainDelayNumber(device)
@@ -110,6 +125,41 @@ async def async_setup_entry(
     if entities:
         async_add_entities(entities)
     await async_setup_area_numbers(config_entry, async_add_entities)
+
+
+def _remove_replaced_entities(hass: HomeAssistant, devices: list[Device]) -> None:
+    """Remove the registry entry of a number an Auto entity now replaces.
+
+    An install that had the device-wide cutting direction before its class got
+    the Auto direction keeps the old entity in the entity registry, where it
+    would sit unavailable for good. Removed here, so the switch needs nothing
+    from the user. Only that one entity, and only on such a class.
+    """
+    registry = er.async_get(hass)
+    for device in devices:
+        for description in ENTITY_DESCRIPTIONS:
+            if not _replaced_by_auto(description, device):
+                continue
+            unique_id = f"{device.device_info['did']}_{description.key}"
+            if entity_id := registry.async_get_entity_id(
+                NUMBER_DOMAIN, DOMAIN, unique_id
+            ):
+                registry.async_remove(entity_id)
+
+
+def _replaced_by_auto(
+    description: EcovacsCapabilityEntityDescription, device: Device
+) -> bool:
+    """Whether the mower-wide Auto entity shows this setting instead.
+
+    The device-wide cutting direction is the Auto mode's direction: the same
+    getCutDirection and setCutDirection. This entity passes the wire angle
+    through as it is; on a class whose Auto direction is validated, the Auto
+    entity shows it as the app does, so this one is not created as well.
+    """
+    return description.key == "cut_direction" and (
+        "angle" in auto_parameter_keys(device.device_info["class"])
+    )
 
 
 class EcovacsNumberEntity[EventT: Event](
