@@ -264,3 +264,34 @@ async def test_a_replaced_cut_direction_leaves_the_entity_registry(
     assert (registry.async_get(direction.entity_id) is None) is removed
     assert registry.async_get(volume.entity_id) is not None
 
+
+async def test_setup_leaves_out_the_cut_direction_an_auto_entity_replaces(
+    monkeypatch,
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from custom_components.ecovacs_mower import number
+
+    rtk, lidar = _mower("xmp9ds"), _mower("e4gqia")
+    created = []
+
+    def fake_get_supported_entities(controller, entity_class, descriptions, include):
+        created.extend(
+            (device.device_info["class"], description.key)
+            for device in controller.devices
+            for description in descriptions
+            if include(device, description)
+        )
+        return []
+
+    monkeypatch.setattr(number, "get_supported_entities", fake_get_supported_entities)
+    monkeypatch.setattr(number, "_remove_replaced_entities", MagicMock())
+    monkeypatch.setattr(number, "async_setup_area_numbers", AsyncMock())
+    entry = MagicMock()
+    entry.runtime_data.devices = [rtk, lidar]
+
+    await number.async_setup_entry(MagicMock(), entry, MagicMock())
+
+    assert ("xmp9ds", "cut_direction") not in created
+    assert ("xmp9ds", "volume") in created
+    assert ("e4gqia", "cut_direction") in created

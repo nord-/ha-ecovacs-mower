@@ -59,6 +59,7 @@ from .entity import (
     EcovacsDescriptionEntity,
     EcovacsEntity,
 )
+from .util import get_supported_entities
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -108,15 +109,14 @@ async def async_setup_entry(
     """Add entities for passed config_entry in HA."""
     controller = config_entry.runtime_data
     _remove_replaced_entities(hass, controller.devices)
-    # get_supported_entities() as it is, one device at a time, so a
-    # description can be left out for a device whose Auto entity replaces it.
-    entities: list[EcovacsEntity] = [
-        EcovacsNumberEntity(device, capability, description)
-        for device in controller.devices
-        for description in ENTITY_DESCRIPTIONS
-        if (capability := description.capability_fn(device.capabilities))
-        and not _replaced_by_auto(description, device)
-    ]
+    entities: list[EcovacsEntity] = get_supported_entities(
+        controller,
+        EcovacsNumberEntity,
+        ENTITY_DESCRIPTIONS,
+        include=lambda device, description: not _replaced_by_auto(
+            description, device
+        ),
+    )
     entities.extend(
         EcovacsRainDelayNumber(device)
         for device in controller.devices
@@ -148,7 +148,7 @@ def _remove_replaced_entities(hass: HomeAssistant, devices: list[Device]) -> Non
 
 
 def _replaced_by_auto(
-    description: EcovacsNumberEntityDescription, device: Device
+    description: EcovacsCapabilityEntityDescription, device: Device
 ) -> bool:
     """Whether the mower-wide Auto entity shows this setting instead.
 
