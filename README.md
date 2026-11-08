@@ -117,6 +117,8 @@ merely that the class string was seen:
 | **Ecovacs GOAT O1000 LiDAR Pro** | `0jbd6s` | reported, patch not yet confirmed — firmware 2.13.10 ([#102](https://github.com/nord-/ha-ecovacs-mower/issues/102)). Ecovacs identifies it internally as an O1200 LiDAR Plus, and it gets the O1200's capabilities |
 | **Ecovacs GOAT A3000 LiDAR Pro** | `51rcxt` | a user, firmware 1.13.10 — controls, zone mowing and border mowing confirmed ([#135](https://github.com/nord-/ha-ecovacs-mower/issues/135)); per-area parameters match the A1600 LiDAR Pro's ([#131](https://github.com/nord-/ha-ecovacs-mower/issues/131)) |
 | **Ecovacs GOAT O1200 RTK** | `qhq6i0` | a user, firmware 1.17.11 — zone mowing confirmed ([#140](https://github.com/nord-/ha-ecovacs-mower/issues/140)). Not the O1200 LiDAR Pro above: the RTK and LiDAR Pro variants are different machines |
+| **Ecovacs GOAT O500 Panorama** | `300lc5` | a user — start, pause, resume and dock confirmed ([#152](https://github.com/nord-/ha-ecovacs-mower/issues/152)) |
+| **Ecovacs GOAT A3000 LiDAR** | `cr0e4u` | a user — start, pause and state confirmed ([#168](https://github.com/nord-/ha-ecovacs-mower/issues/168)). A second class reported as the A3000 LiDAR, besides `o4kvvk`; not the A3000 LiDAR Pro (`51rcxt`) |
 
 The A1600 ships as two machines, and they report different device classes:
 the LiDAR Pro is `e4gqia`, the RTK is `xmp9ds`. Both rows above are real, and
@@ -254,16 +256,17 @@ above), that loop returns for the vacuum.
 ## What you get
 
 Forty-six fixed entities on the mower's device page, across eight platforms —
-forty-seven on the G1-800 and A3000 LiDAR Pro, which also get the "Mow border"
-button — plus one writable entity per setting of each saved mowing area on the
-A1600 LiDAR Pro (`e4gqia`), A3000 LiDAR Pro (`51rcxt`) and O1200 LiDAR Pro
-(`2i0fns`), and one per UWB beacon on the models that use them:
+forty-seven on the A3000 LiDAR Pro, which also gets the "Mow border" button, and
+fifty on the G1-800, which gets that button, a core-temperature sensor and the
+two beacon-update entities — plus one writable entity per setting of each saved
+mowing area on the A1600 LiDAR Pro (`e4gqia`), A3000 LiDAR Pro (`51rcxt`) and
+O1200 LiDAR Pro (`2i0fns`), and one per UWB beacon on the models that use them:
 
 | Platform | Count | What |
 |---|---|---|
 | `lawn_mower` | 1 | Real state (`mowing`, `paused`, `returning`, `docked`, `error`) that updates within seconds, plus working `start_mowing`, `pause`, and `dock` |
-| `sensor` | 16 + one per beacon | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowing progress (see below), job target area, job target duration, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name, and on a beacon-guided mower one battery percentage per UWB beacon (see below) |
-| `binary_sensor` | 6 | Fault — a latched problem that stays on until the mower recovers or you clear it (see below) — plus rain sensor, rain delay, emergency stop, locked, animal protection active: the mower's raw protection flags, from the `onProtectState` message the library drops (see below) |
+| `sensor` | 16, 18 on the G1-800, + one per beacon | Activity (the mower's state with the reason folded in — `returning_rain`, `docked_rain_delay`; see below), battery, error code (disabled by default — see below), mowing progress (see below), job target area, job target duration, three lifetime totals (area, time, session count), four consumable-lifespan percentages (blade, lens brush, trimmer brush, weed rope), IP address, Wi-Fi signal strength, Wi-Fi network name, on the G1-800 the mower's core temperature (see below), and on a beacon-guided mower one battery percentage per UWB beacon and the raw state of the beacons' firmware update (see below) |
+| `binary_sensor` | 6, 7 on the G1-800 | Fault — a latched problem that stays on until the mower recovers or you clear it (see below) — plus rain sensor, rain delay, emergency stop, locked, animal protection active: the mower's raw protection flags, from the `onProtectState` message the library drops (see below), and on a beacon-guided mower whether the beacons have a firmware update available (see below) |
 | `switch` | 9 | Advanced mode, TrueDetect obstacle avoidance, edge cutting, child lock, lift warning, boundary crossing warning, safety protection, rain detection, animal protection (see below) |
 | `number` | 3 + one per setting per saved area (four on the A1600, A3000 and O1200 LiDAR Pro) | Notification volume, cutting direction, rain delay duration, plus cutting height, mowing speed, obstacle height and cutting direction for each saved area (see below) |
 | `button` | 8, 9 on the G1-800 and A3000 LiDAR Pro | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), "Clear fault" (releases the latched fault; see below), "End mowing task" (ends the current job for good; see below), "Log area parameters" (diagnostic, disabled by default; shows the raw per-area values to help support another model, see below) and, on the G1-800 and A3000 LiDAR Pro, "Mow border" (starts a border job; see below) |
@@ -561,6 +564,14 @@ the exact moment you want to read it.
 
 The five `binary_sensor` entities are the raw flags from `onProtectState`, one
 per flag, with no interpretation on top.
+
+`locked` is the one to look at when nothing happens. A mower whose panel is
+locked, as when it is turned onto its side, discards every command and does
+not say so. The integration therefore refuses a start, pause, dock or setting
+change while `locked` is on, with an error that names the panel; reads still go
+out. The lock can only be released with the PIN on the mower's own panel
+([#99](https://github.com/nord-/ha-ecovacs-mower/issues/99)). The entity is
+shown with the other sensors, not under diagnostics.
 
 `rain_protect` (`isRainProtect`) is the exception: it is presented as a live
 rain reading, named **Rain sensor** and given the `moisture` device class, so it
@@ -900,6 +911,66 @@ capture that contained every command either of them sent. So unlike the blade
 and the lens brush, there is nothing for a reset button to do. Issue #63 is
 closed on that basis.
 
+### The core temperature
+
+On the G1-800, `sensor.<device>_core_temperature` shows the mower's core
+temperature in °C, as a diagnostic sensor. It comes from the
+`onFwBuryPoint-bd_coreinfo` message the library has no handler for, which the
+mower sends only when the temperature moves by a degree, three to thirty-nine
+minutes apart in the captures behind issue #76. The sensor therefore holds the
+last value between messages, and restores it after a Home Assistant restart
+rather than reading unknown until the next message, which for a steady
+temperature could take an hour. The first message after the restart replaces
+the restored value. The restored value carries the restart time, not the time
+it was measured, so after a long downtime with the mower asleep it can be hours
+or days old until the next message arrives. A restart that finds nothing usable
+stored, as on the first run, still starts at unknown. Readings of 33 to 37 °C
+were seen.
+
+An O1200 sends the same message in the same shape, but no owner has run the
+sensor there yet, so it is off for every class but the G1-800 until one has.
+
+### The beacons' firmware update
+
+A G1-800 reports whether its navigation beacons have a firmware update waiting,
+and how an update is going, in two read-only diagnostic entities:
+
+```
+binary_sensor.<device>_beacon_update_available    off / on
+sensor.<device>_beacon_update_state               0
+```
+
+They come from `getUWBOta`, which the mower answers with
+`{"needUpdate": 0, "otaState": 0}`, and from the `onUWBOta` push it sends while
+an update runs, which the library has no handler for. The integration reads
+`getUWBOta` once when the entities are added and again when the mower comes back
+after being unavailable, so they have a value from startup and no new poll runs
+for them. A push that carries only `otaState` leaves the other entity at what
+the last answer said.
+
+The sensor is the raw number on purpose. What a G1-800 on firmware 1.36.208 has
+been seen to do:
+
+| `otaState` | `needUpdate` | when |
+| --- | --- | --- |
+| `0` | `0` | idle |
+| `0` | `1` | after the mower and its beacons were power-cycled |
+| `1` | | seconds after the app started an update |
+| `4` | `1` | about 45 s later, and it stayed there |
+
+`4` was seen together with a failed result on two beacons and a bury point
+reporting `result: 0`, which fits a failed attempt, but nobody has confirmed
+that, and no other value has been seen. So the sensor shows the number and
+names no states. To be told when something changes, trigger an automation on
+the sensor's state changing, or on the binary sensor turning on.
+
+Starting an update, the `setUWBOta` the app sends, is deliberately not
+implemented here: it is a write, and nothing is known about what it does to a
+mower that is mowing.
+
+Only the G1-800 has them, because only its profile has `beacon_ota`. On any
+other model the entities do not exist.
+
 ### Entities disabled by default
 
 **17 of the 40 entities** ship with `entity_registry_enabled_default=False`,
@@ -914,7 +985,7 @@ a bug: if one of these looks blank or "unavailable," this is why.
 |---|---|---|
 | `switch` | 7 of 7 | all of them: advanced mode, TrueDetect, edge cutting, child lock, lift warning, boundary crossing warning, safety protection |
 | `number` | 2 of 2 | both: volume, cutting direction |
-| `sensor` | 4 of the 16 fixed ones | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code**. The per-beacon sensors are enabled |
+| `sensor` | 4 of the 16 fixed ones (18 on the G1-800) | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code**. The per-beacon sensors and the beacon update state are enabled |
 | `button` | 5 of 8 (5 of 9 on the G1-800 and A3000 LiDAR Pro) | the four consumable-lifespan resets (blade, lens brush, trimmer brush, weed rope) and "Log area parameters" — "Locate mower", "Clear fault", "End mowing task" and, on the G1-800 and A3000 LiDAR Pro, "Mow border" are enabled by default |
 
 **If you're planning anything on the error sensor** — an alarm, a
@@ -1011,6 +1082,19 @@ code together with what the Ecovacs app shows for the same alarm in
 [#37](https://github.com/nord-/ha-ecovacs-mower/issues/37), and it can be
 added here. The app is the only authoritative source — Ecovacs publishes no
 code reference for GOAT.
+
+The app's wording is only readable while the alarm is on screen, and a log
+line is usually read afterwards. So the same code also raises a notification
+(the bell in the sidebar), one per mower, named after the mower and its class.
+**Open the Ecovacs app while it is showing.** Every following error push adds a
+line with its time and its whole code list in the order the mower sent it,
+known codes included: on an O1200 a tipped-over mower raised 622, then 627 on
+top of it, then 621 on top of both, and the order is part of what is worth
+reporting. A push that repeats the line above it is counted on that line. The
+notification stays until you dismiss it, and the next unknown code after that
+starts a fresh one. The zero a mower keeps sending as a heartbeat adds nothing.
+This is raised for the supported mower classes
+([#133](https://github.com/nord-/ha-ecovacs-mower/issues/133)).
 
 ## Collecting logs
 

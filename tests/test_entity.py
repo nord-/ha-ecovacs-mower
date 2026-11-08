@@ -156,3 +156,83 @@ async def test_the_family_is_not_named_for_a_command_without_one(
     records = [r for r in caplog.records if r.name.startswith("custom_components.ecovacs_mower")]
     assert len(records) == 1
     assert "family" not in records[0].getMessage()
+
+
+def _locked_entity(*, locked: bool):
+    """An entity on a real bus, registered as a mower, with the lock as given."""
+    from unittest.mock import AsyncMock, MagicMock, Mock
+
+    from deebot_client.event_bus import EventBus
+    from homeassistant.helpers.entity import EntityDescription
+
+    from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
+        register,
+    )
+    from custom_components.ecovacs_mower.entity import EcovacsEntity
+
+    class _Entity(EcovacsEntity[object]):
+        entity_description = EntityDescription(key="test")
+
+    bus = EventBus(AsyncMock(), Mock(get_refresh_commands=lambda _event: []))
+    register(bus).locked = locked
+    device = MagicMock()
+    device.device_info = {"did": "did"}
+    # The real bus, not a mock: the lock lookup is keyed by it.
+    device.events = bus
+    bus.request_refresh = Mock()
+    device.execute_command = AsyncMock(return_value={"ret": "ok"})
+    return _Entity(device, object()), device
+
+
+async def test_a_command_to_a_locked_mower_is_refused_with_the_reason() -> None:
+    """Issue #99. The mower discards it silently, so the call must not look fine."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    from custom_components.ecovacs_mower.deebot_patch.commands import CleanMower
+    from deebot_client.models import CleanAction
+
+    entity, device = _locked_entity(locked=True)
+
+    with pytest.raises(HomeAssistantError, match="panel is locked"):
+        await entity._execute_command(CleanMower(CleanAction.START))
+
+    device.execute_command.assert_not_called()
+
+
+async def test_a_refusal_asks_the_mower_for_its_protection_state_again() -> None:
+    """A released lock whose push was lost must not refuse commands forever."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    from custom_components.ecovacs_mower.deebot_patch.commands import CleanMower
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerProtectStateEvent,
+    )
+    from deebot_client.models import CleanAction
+
+    entity, device = _locked_entity(locked=True)
+
+    with pytest.raises(HomeAssistantError):
+        await entity._execute_command(CleanMower(CleanAction.START))
+
+    device.events.request_refresh.assert_called_once_with(MowerProtectStateEvent)
+
+
+async def test_a_read_still_goes_to_a_locked_mower() -> None:
+    from deebot_client.commands.json.charge_state import GetChargeState
+
+    entity, device = _locked_entity(locked=True)
+
+    assert await entity._execute_command(GetChargeState()) is True
+
+    device.execute_command.assert_awaited_once()
+
+
+async def test_an_unlocked_mower_gets_its_commands() -> None:
+    from custom_components.ecovacs_mower.deebot_patch.commands import CleanMower
+    from deebot_client.models import CleanAction
+
+    entity, device = _locked_entity(locked=False)
+
+    assert await entity._execute_command(CleanMower(CleanAction.START)) is True
+
+    device.execute_command.assert_awaited_once()

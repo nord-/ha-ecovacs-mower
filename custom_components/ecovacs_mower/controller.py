@@ -79,6 +79,7 @@ from .deebot_patch.map_messages import (
     MowerNoGoZonesEvent,
     MowerObstaclesEvent,
 )
+from .error_notification import UnknownErrorNotifier
 from .fault import FaultLatch
 from .map import MowerMap
 
@@ -118,6 +119,7 @@ class EcovacsController:
         self._devices: list[Device] = []
         self.maps: dict[str, MowerMap] = {}
         self.fault_latches: dict[str, FaultLatch] = {}
+        self._error_notifiers: dict[str, UnknownErrorNotifier] = {}
         self._map_stores: dict[str, Store[dict[str, Any]]] = {}
         self._unsub_polls: dict[str, CALLBACK_TYPE] = {}
         rest_url = config.get(CONF_OVERRIDE_REST_URL)
@@ -249,6 +251,7 @@ class EcovacsController:
                         if device.capabilities.device_type is DeviceType.MOWER:
                             self._setup_polling(device)
                             self._setup_fault_latch(device)
+                            self._setup_error_notifier(device)
                             # Map data is best effort; mower control is sacred.
                             # A failure here must not fail the TaskGroup and
                             # take mower control down with it.
@@ -410,6 +413,19 @@ class EcovacsController:
         latch.subscribe()
         self.fault_latches[device.device_info["did"]] = latch
 
+    def _setup_error_notifier(self, device: Device) -> None:
+        """Ask the owner for the app's wording when the mower sends an unknown code.
+
+        Controller-owned and eager for the same reasons as the fault latch above:
+        the notification is the one place the integration can ask while the
+        alarm is still on the app's screen (issue #133), and it must not depend
+        on an entity the owner may have disabled. See ``error_report.py`` for
+        when it opens and what it lists.
+        """
+        notifier = UnknownErrorNotifier(self._hass, device)
+        notifier.subscribe()
+        self._error_notifiers[device.device_info["did"]] = notifier
+
     def _setup_polling(self, device: Device) -> None:
         """Poll the mower's state and stats while it is out, not while docked.
 
@@ -537,6 +553,9 @@ class EcovacsController:
         for unsub in self._unsub_polls.values():
             unsub()
         self._unsub_polls.clear()
+        for notifier in self._error_notifiers.values():
+            notifier.shutdown()
+        self._error_notifiers.clear()
         for did, store in self._map_stores.items():
             # A failed save must never block device teardown or the MQTT
             # disconnect below: map is best effort, mower control is sacred.
