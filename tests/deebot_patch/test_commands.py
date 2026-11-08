@@ -1240,11 +1240,11 @@ async def test_a_failed_ping_does_not_keep_get_mi_from_going_out() -> None:
     assert sent == ["getMapInfo_V2", "getMI"]
 
 
-async def test_a_ping_on_its_own_is_quietly_done_after_its_head_start(
+async def test_an_unanswered_ping_is_quiet_and_claims_no_reach(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # Sent every two minutes while mowing, and never answered: the library's
-    # own path would wait out the API timeout and warn on every one.
+    # The library's own path would wait out the API timeout and warn on every
+    # ping; and a success would mark an offline mower as reached.
     async def unanswered(self, authenticator, device_info):
         await asyncio.Event().wait()
 
@@ -1259,8 +1259,28 @@ async def test_a_ping_on_its_own_is_quietly_done_after_its_head_start(
     ):
         result = await AppPing().execute(AsyncMock(), _DEVICE_INFO, _bus())
 
-    assert result.device_reached is True
+    assert result.device_reached is False
     assert not caplog.records
+
+
+async def test_a_failed_ping_claims_no_reach() -> None:
+    async def failing(self, authenticator, device_info):
+        raise RuntimeError("cloud unreachable")
+
+    with _pinging([], failing):
+        result = await AppPing().execute(AsyncMock(), _DEVICE_INFO, _bus())
+
+    assert result.device_reached is False
+
+
+async def test_an_acked_ping_counts_as_reaching_the_mower() -> None:
+    async def acked(self, authenticator, device_info):
+        return {"ret": "ok", "resp": {"body": {"code": 0}}}
+
+    with _pinging([], acked):
+        result = await AppPing().execute(AsyncMock(), _DEVICE_INFO, _bus())
+
+    assert result.device_reached is True
 
 
 async def test_the_clean_commands_still_start_on_the_selected_family() -> None:

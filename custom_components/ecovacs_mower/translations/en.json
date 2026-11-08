@@ -158,6 +158,10 @@
           "description": "Saved mower area IDs to mow."
         }
       }
+    },
+    "app_ping": {
+      "name": "App ping",
+      "description": "Tell the mower the Ecovacs app is open, so it sends its map updates for a while. Repeat about every two minutes for live progress."
     }
   }
 }

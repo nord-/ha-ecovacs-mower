@@ -302,6 +302,47 @@ end on the one mower — the second O800 RTK `2px96q` included, which on firmwar
 lawn is a darker green and its outline a lighter one than before on every
 model, which is what makes either reading legible over it.
 
+### Live progress on the map: the `app_ping` service
+
+The mower sends its map updates (`onMapTrack`, which feeds the lanes still to
+cut above, along with the outline and area messages) only while it believes
+the Ecovacs app is open. With the app closed nothing arrives, and the map's
+plan of what is left to mow stays empty for the whole job. It fills only while
+the app is open on a phone, or after the `ecovacs_mower.app_ping` service has
+been called.
+
+The service does what the app does when it opens: it sends one `appping`.
+The mower answers nothing, but streams its map updates for a while after
+each one. How long one ping holds has not been measured; the app repeats it
+every two minutes, and doing the same keeps the map live through a whole run.
+
+The integration does not send it on its own. Every ping is a request to
+Ecovacs' cloud, and the progress is only worth that while someone is looking
+at the map, so it is up to you when to pay for it. To follow every run live,
+ping while the mower is mowing:
+
+```yaml
+alias: Keep the mower's map live while mowing
+triggers:
+  - trigger: state
+    entity_id: lawn_mower.my_goat
+    to: mowing
+  - trigger: time_pattern
+    minutes: /2
+conditions:
+  - condition: state
+    entity_id: lawn_mower.my_goat
+    state: mowing
+actions:
+  - action: ecovacs_mower.app_ping
+    target:
+      entity_id: lawn_mower.my_goat
+mode: single
+```
+
+The service works on every model: the app pings whatever it opens. Only the
+O800 RTK `9bts2s` is confirmed so far to need it for the lanes still to cut.
+
 ### A live position while the mower is out
 
 While the mower is out, the integration asks for its position every five

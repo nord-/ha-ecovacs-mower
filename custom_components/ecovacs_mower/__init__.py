@@ -59,6 +59,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         schema={vol.Required("area_ids"): AREA_IDS_SCHEMA},
         func="async_mow_area",
     )
+    service.async_register_platform_entity_service(
+        hass,
+        DOMAIN,
+        "app_ping",
+        entity_domain="lawn_mower",
+        schema=None,
+        func="async_app_ping",
+    )
     return True
 
 

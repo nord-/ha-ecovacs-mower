@@ -843,15 +843,16 @@ class AppPing(ExecuteCommand):
     ``onMapTrack`` — to every listener. Measured on an O800 RTK (``9bts2s``),
     firmware 1.13.8, docked, the app closed for 17 minutes (2026-10-28):
     ``getMI`` alone was acked and nothing followed for a minute; ``appping``
-    and then ``getMI`` brought ``onMI`` and ``onArI`` within the second. How
-    long one ping holds is not measured. The two minutes the controller
-    repeats it at are the app's own vacuum screens' interval, read from the
-    app (``timer.schedule(…, 1000, 120000)``); the GOAT's screen is a
-    downloaded bundle and its interval could not be read.
+    and then ``getMI`` brought ``onMI`` and ``onArI`` within the second.
+    Pinged every two minutes through a job with the app closed, the same
+    mower's ``onMapTrack`` kept arriving. How long one ping holds is not
+    measured; two minutes is the interval of the app's own vacuum screens.
 
-    Executed on its own it gets the same head start as before ``getMI`` and is
-    then reported a success: the library's own path would wait out the API
-    timeout on every ping and log it as a failed command.
+    Executed on its own it gets the same head start as before ``getMI`` and
+    then gives up quietly: the library's own path would wait out the API
+    timeout and log a failed command every time. Quietly is not
+    successfully, though — the library counts a success as the device
+    having been reached, so only an ack from the mower is reported as one.
     """
 
     NAME = "appping"
@@ -870,9 +871,11 @@ class AppPing(ExecuteCommand):
         device_info: ApiDeviceInfo,
         event_bus: EventBus,
     ) -> tuple[HandlingResult, dict[str, Any]]:
-        """Ping, and claim nothing about an answer that never comes."""
-        await _ping(authenticator, device_info)
-        return HandlingResult.success(), {}
+        """Ping, and claim the mower was reached only if it said so."""
+        response = await _ping(authenticator, device_info)
+        if response is not None and response.get("ret") == "ok":
+            return HandlingResult.success(), response
+        return HandlingResult(HandlingState.FAILED), {}
 
 
 # How long the ping gets before getMI goes out. The mower never answers it,
@@ -882,10 +885,15 @@ class AppPing(ExecuteCommand):
 _APP_PING_HEAD_START = 3  # seconds
 
 
-async def _ping(authenticator: Authenticator, device_info: ApiDeviceInfo) -> None:
-    """Send an ``appping`` and give it its head start, never raising."""
+async def _ping(
+    authenticator: Authenticator, device_info: ApiDeviceInfo
+) -> dict[str, Any] | None:
+    """Send an ``appping`` and give it its head start, never raising.
+
+    Returns the cloud's answer, or ``None`` when there was none in time.
+    """
     try:
-        await asyncio.wait_for(
+        return await asyncio.wait_for(
             AppPing()._execute_api_request(authenticator, device_info),
             _APP_PING_HEAD_START,
         )
@@ -895,6 +903,7 @@ async def _ping(authenticator: Authenticator, device_info: ApiDeviceInfo) -> Non
         # A ping that fails costs nothing more than skipping it would, so it
         # must not keep whatever follows it from going out.
         _LOGGER.debug("appping failed", exc_info=True)
+    return None
 
 
 class GetMI(_MapInfoRequest):
