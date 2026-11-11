@@ -853,7 +853,8 @@ and `auto` for a plain start.
 Use `job_type` to recognise the schedule's job, not the event type. The same
 announcement carries different words on different firmware: a G1-800 says
 `schedule` when a schedule window opens, while an O1200 says `continue` when
-its schedule resumes after a charge break. A start from Home Assistant may
+its schedule resumes after a charge break. A job paused and resumed from the
+app fires `app` again, with `phase: resume`. A start from Home Assistant may
 fire nothing yet, because nobody has seen which word it carries.
 
 The event fires at the announcement: on a G1-800 about three seconds before

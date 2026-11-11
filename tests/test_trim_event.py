@@ -19,6 +19,14 @@ _STOP = {
     "workArea": 32.82,
     "workType": 31,
 }
+_PAUSE = {
+    "mowType": 1,
+    "mowedArea": 0.0375,
+    "trigger": "app",
+    "workArea": 3.81,
+    "workType": 31,
+}
+_RESUME = {"trigger": "app", "workType": 31}
 
 
 def _edge(message, body):
@@ -60,3 +68,36 @@ async def test_a_trim_started_from_the_app_fires_job_started() -> None:
 
     assert entity.state_attributes["event_type"] == "app"
     assert entity.state_attributes["job_type"] == "borderrotate"
+
+
+async def test_a_trim_resumed_from_the_app_fires_job_started_as_a_resume() -> None:
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        OnMowBorderRotateResume,
+    )
+    from tests.test_event import _bare_job_started_entity
+
+    entity = _bare_job_started_entity()
+
+    await entity._on_job_edge(_edge(OnMowBorderRotateResume, _RESUME))
+
+    assert entity.state_attributes["event_type"] == "app"
+    assert entity.state_attributes["phase"] == "resume"
+    assert entity.state_attributes["job_type"] == "borderrotate"
+
+
+async def test_a_paused_trim_fires_neither_event() -> None:
+    """``app`` is mapped for a stop and declared for a start: the phase decides."""
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        OnMowBorderRotatePause,
+    )
+    from tests.test_event import _bare_event_entity, _bare_job_started_entity
+
+    edge = _edge(OnMowBorderRotatePause, _PAUSE)
+    last_job = _bare_event_entity()
+    job_started = _bare_job_started_entity()
+
+    await last_job._on_job_edge(edge)
+    await job_started._on_job_edge(edge)
+
+    assert last_job.state_attributes["event_type"] is None
+    assert job_started.state_attributes["event_type"] is None
