@@ -46,6 +46,11 @@ all Home Assistant value conversion in ``area_numbers.py``.
 ``GetAnimProtect`` and ``SetAnimProtect`` are the same pair for the
 animal-protection setting and its window (issue #45).
 
+``GetBorderSwitchMower`` and ``SetBorderSwitchMower`` replace a pair the
+library does have: its ``getBorderSwitch`` and ``setBorderSwitch`` read and
+write ``enable`` alone, and the setting has a ``mode`` beside it that most
+mowers refuse a write without (issue #166).
+
 ``GetUWBOta`` is the same kind again for the beacons' firmware-update state. It
 is a getter only: the ``setUWBOta`` the app sends to start an update is not
 implemented, because starting a firmware update is not a read and nothing here
@@ -107,10 +112,12 @@ from .families import Family, commit, note_attempt, selected
 from .messages import (
     BEACON_COMPONENT,
     OnAnimProtect,
+    OnBorderSwitch,
     OnPos,
     OnProtectState,
     OnRainDelay,
     OnUwbOta,
+    border_switch_for,
     handle_clean_info,
     notify_mower_beacons,
     notify_mower_stats,
@@ -1192,6 +1199,66 @@ def _label_from(row: list[Any]) -> tuple[int, int] | None:
         return (int(row[4]), int(row[5]))
     except (TypeError, ValueError):
         return None
+
+
+class GetBorderSwitchMower(JsonCommandWithMessageHandling, OnBorderSwitch):
+    """Ask for the edge-mowing setting, and read ``mode`` as well as ``enable``.
+
+    The library's ``GetBorderSwitch`` keeps ``enable`` and drops ``mode``, and
+    a write needs both (issue #166). ``OnBorderSwitch`` is inherited for its
+    handler, for the reason ``GetRainDelay`` inherits ``OnRainDelay``.
+
+    A G1-800 (``77atlz``, firmware 1.36.208) answers
+    ``{"enable": 1, "mode": 0}``, so on that class the read at startup already
+    reports both fields. It takes no arguments.
+    """
+
+    NAME = "getBorderSwitch"
+
+
+class SetBorderSwitchMower(ExecuteCommand):
+    """Write the edge-mowing setting, ``enable`` and ``mode`` together.
+
+    The library's ``SetBorderSwitch`` sends ``enable`` alone. An A1600 LiDAR
+    Pro and an A1600 RTK refuse that with ``20011 "mode is null"``, and the
+    apps that have the setting write the pair (issue #166). A G1-800 takes
+    either shape, so the pair is the one write for every class.
+
+    Both values are the caller's: the one being changed, and for the other
+    the value the mower last reported, read from ``border_switch_for()``.
+    Nothing here supplies a default for either.
+
+    ``ExecuteCommand`` for the reason ``SetRainDelay`` gives.
+    """
+
+    NAME = "setBorderSwitch"
+
+    def __init__(self, *, enable: bool, mode: int) -> None:
+        # 0/1 rather than JSON booleans, as the app sends them.
+        super().__init__({"enable": 1 if enable else 0, "mode": mode})
+
+    @classmethod
+    def from_reported(
+        cls,
+        event_bus: EventBus,
+        *,
+        enable: bool | None = None,
+        mode: int | None = None,
+    ) -> SetBorderSwitchMower | None:
+        """Build the write that changes one field and resends the other.
+
+        Pass the field being changed; the other is what the mower last
+        reported. Returns ``None`` when the mower has not reported the field
+        that would be resent, so the caller refuses the write: a made-up
+        ``mode`` would replace the one the owner chose in the app, and a
+        made-up ``enable`` would switch edge mowing on or off unasked.
+        """
+        known_enable, known_mode = border_switch_for(event_bus)
+        enable = known_enable if enable is None else enable
+        mode = known_mode if mode is None else mode
+        if enable is None or mode is None:
+            return None
+        return cls(enable=enable, mode=mode)
 
 
 class SetAreaParameter(ExecuteCommand):

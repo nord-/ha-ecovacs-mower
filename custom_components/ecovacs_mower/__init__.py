@@ -19,6 +19,7 @@ PLATFORMS = [
     Platform.IMAGE,
     Platform.LAWN_MOWER,
     Platform.NUMBER,
+    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
 ]

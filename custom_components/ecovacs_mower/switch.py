@@ -6,7 +6,8 @@ The descriptions for ``continuous_cleaning``, ``carpet_auto_fan_boost`` and
 (2i0fns) does not declare, so ``get_supported_entities`` would have filtered them
 out anyway — but dead descriptions do not belong in a mower-specific fork.
 ``border_spin`` has also been removed: that is edge brushing on a vacuum, not
-edge mowing. ``border_switch`` is the mower's edge-mowing setting and is kept.
+edge mowing. ``border_switch`` has been removed from the table too, but not
+from the platform: see ``EcovacsEdgeCuttingSwitch``.
 
 ``EcovacsRainDetectionSwitch`` is an addition rather than a fork: the rain
 sensor is the one row of the app's Configuration page with no entity behind it
@@ -16,6 +17,14 @@ sensors are in.
 
 ``EcovacsAnimalProtectionSwitch`` is an addition of the same kind, for the
 animal-protection setting (issue #45).
+
+``EcovacsEdgeCuttingSwitch`` replaces the ``border_switch`` description this
+table used to have. The library's command behind that capability writes
+``enable`` alone, which most mowers refuse (issue #166), so the switch is now
+built here, on the patch layer's own command pair, and only for a class whose
+profile sets ``edge_cutting``. It keeps the key ``border_switch``, and with it
+the unique id of an entity somebody already enabled. On every other class the
+entry that switch left in the entity registry is removed at setup.
 """
 
 from dataclasses import dataclass
@@ -26,15 +35,30 @@ from deebot_client.capabilities import Capabilities, CapabilitySetEnable, Device
 from deebot_client.device import Device
 from deebot_client.events import EnableEvent
 
-from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
+from homeassistant.components.switch import (
+    DOMAIN as SWITCH_DOMAIN,
+    SwitchEntity,
+    SwitchEntityDescription,
+)
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EcovacsMowerConfigEntry
-from .deebot_patch.commands import SetAnimProtect, SetRainDelay
-from .deebot_patch.messages import MowerAnimProtectEvent, MowerRainDelayEvent
+from .const import DOMAIN
+from .deebot_patch.commands import (
+    SetAnimProtect,
+    SetBorderSwitchMower,
+    SetRainDelay,
+)
+from .deebot_patch.hardware import profile_for_class
+from .deebot_patch.messages import (
+    MowerAnimProtectEvent,
+    MowerBorderSwitchEvent,
+    MowerRainDelayEvent,
+)
 from .entity import (
     EcovacsCapabilityEntityDescription,
     EcovacsDescriptionEntity,
@@ -63,13 +87,6 @@ ENTITY_DESCRIPTIONS: tuple[EcovacsSwitchEntityDescription, ...] = (
         capability_fn=lambda c: c.settings.true_detect,
         key="true_detect",
         translation_key="true_detect",
-        entity_registry_enabled_default=False,
-        entity_category=EntityCategory.CONFIG,
-    ),
-    EcovacsSwitchEntityDescription(
-        capability_fn=lambda c: c.settings.border_switch,
-        key="border_switch",
-        translation_key="border_switch",
         entity_registry_enabled_default=False,
         entity_category=EntityCategory.CONFIG,
     ),
@@ -114,12 +131,35 @@ async def async_setup_entry(
     entities: list[EcovacsEntity] = get_supported_entities(
         controller, EcovacsSwitchEntity, ENTITY_DESCRIPTIONS
     )
+    registry = er.async_get(hass)
     for device in controller.devices:
         if device.capabilities.device_type is DeviceType.MOWER:
             entities.append(EcovacsRainDetectionSwitch(device))
             entities.append(EcovacsAnimalProtectionSwitch(device))
+            profile = profile_for_class(device.device_info["class"])
+            if profile is not None and profile.edge_cutting:
+                entities.append(EcovacsEdgeCuttingSwitch(device))
+            else:
+                _remove_stale_edge_switch(registry, device)
     if entities:
         async_add_entities(entities)
+
+
+def _remove_stale_edge_switch(registry: er.EntityRegistry, device: Device) -> None:
+    """Remove the registry entry of an *Edge cutting* switch the class lost.
+
+    Every mower had that switch while it came from the library's capability.
+    An install that enabled it on a class without ``edge_cutting`` keeps the
+    entry in the entity registry, where it would sit unavailable for good.
+    Removed here, so the change needs nothing from the user. Only that one
+    entity, and only on a mower that no longer gets it.
+    """
+    unique_id = (
+        f"{device.device_info['did']}_"
+        f"{EcovacsEdgeCuttingSwitch.entity_description.key}"
+    )
+    if entity_id := registry.async_get_entity_id(SWITCH_DOMAIN, DOMAIN, unique_id):
+        registry.async_remove(entity_id)
 
 
 class EcovacsSwitchEntity(
@@ -170,7 +210,7 @@ class EcovacsRainDetectionSwitch(
     ``capability_fn``, and ``Capabilities`` has no field for this setting. Same
     reason the protection-flag binary sensors have their own platform setup.
 
-    Disabled by default, like the seven capability-backed settings switches
+    Disabled by default, like the six capability-backed settings switches
     above.
     """
 
@@ -322,3 +362,78 @@ class EcovacsAnimalProtectionSwitch(
             SetAnimProtect(enable=enable, start=self._start, end=self._end)
         )
         self._device.events.request_refresh(MowerAnimProtectEvent)
+
+
+class EcovacsEdgeCuttingSwitch(
+    EcovacsEntity[Capabilities],
+    SwitchEntity,
+):
+    """Whether an ordinary job also cuts along the edge of the lawn.
+
+    The setting behind ``getBorderSwitch``/``setBorderSwitch``, for a class
+    whose app shows it as a plain on/off (issue #166). It is a setting, not
+    the border job the *Mow border* button starts.
+
+    The mower stores a ``mode`` beside the toggle and wants both in a write.
+    This switch changes ``enable`` and sends the ``mode`` the mower last
+    reported back unchanged, read from the patch layer and not from this
+    entity's own copy of the last event. The mode itself is not shown here: on
+    a class with this switch the app has no mode to choose.
+
+    Disabled by default, like every other settings switch here.
+    """
+
+    entity_description = SwitchEntityDescription(
+        # The key the library-backed switch had, so the unique id is the same.
+        key="border_switch",
+        translation_key="border_switch",
+        entity_registry_enabled_default=False,
+        entity_category=EntityCategory.CONFIG,
+    )
+
+    def __init__(self, device: Device) -> None:
+        """Initialize entity."""
+        super().__init__(device, device.capabilities)
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listeners now that hass is ready."""
+        await super().async_added_to_hass()
+
+        async def on_event(event: MowerBorderSwitchEvent) -> None:
+            self._attr_is_on = event.enabled
+            self.async_write_ha_state()
+
+        self._subscribe(MowerBorderSwitchEvent, on_event)
+
+    @override
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn the entity on."""
+        await self._set(True)
+
+    @override
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn the entity off."""
+        await self._set(False)
+
+    async def _set(self, enable: bool) -> None:
+        """Send the toggle, with the mode the mower last reported.
+
+        Refused while the mode is unknown, for the reason the rain switch
+        refuses without a delay. The state is not set here: it follows the
+        mower's own report, the ``onBorderSwitch`` push a G1-800 sends after
+        every write or, failing that, the read this asks for once the write
+        is confirmed. A write the mower did not confirm changes nothing.
+        """
+        command = SetBorderSwitchMower.from_reported(
+            self._device.events, enable=enable
+        )
+        if command is None:
+            raise HomeAssistantError(
+                "The mower has not reported its edge mode, so edge cutting "
+                "cannot be switched without overwriting it. Wait for the "
+                "mower to report it, or change the setting in the Ecovacs app"
+            )
+
+        if await self._execute_command(command):
+            self._device.events.request_refresh(MowerBorderSwitchEvent)
