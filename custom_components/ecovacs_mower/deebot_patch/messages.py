@@ -1621,6 +1621,118 @@ class OnUwbOta(MessageBodyDataDict):
         return HandlingResult.success()
 
 
+# What the last ``onBorderSwitch`` push or ``getBorderSwitch`` answer said, per
+# device, as ``(enabled, mode)`` with ``None`` for a field never heard. Written
+# by the handler and not derived from a subscription, for the reason
+# ``_UWB_OTA_READINGS`` gives: the bus drops a repeat before any subscriber
+# runs. ``setBorderSwitch`` carries both fields, so this pair is what the next
+# write resends for the field it is not changing (issue #166).
+_BORDER_SWITCH_READINGS: WeakKeyDictionary[
+    EventBus, tuple[bool | None, int | None]
+] = WeakKeyDictionary()
+
+
+def border_switch_for(event_bus: EventBus) -> tuple[bool | None, int | None]:
+    """Return the edge setting the mower last reported, as ``(enabled, mode)``.
+
+    Either half is ``None`` until the mower has said it. This is what a write
+    reads, not an entity's own copy of the last event: it is current even when
+    the report that set it was a repeat the bus dropped.
+    """
+    return _BORDER_SWITCH_READINGS.get(event_bus, (None, None))
+
+
+def reset_border_switch_readings() -> None:
+    """Forget every recorded edge setting. Tests only."""
+    _BORDER_SWITCH_READINGS.clear()
+
+
+@dataclass(frozen=True)
+class MowerBorderSwitchEvent(Event):
+    """The edge-mowing setting: whether it is on, and in which mode.
+
+    The library's ``BorderSwitchEvent`` carries ``enable`` alone, but the
+    setting has two fields on every mower it has been read from (issue #166):
+
+        G1-800 (77atlz)             {"enable": 1, "mode": 0}   app: on/off only
+        A1600 LiDAR Pro (e4gqia)    {"enable": 1, "mode": 1}   app: no setting
+        A1600 RTK (xmp9ds),         app writes {"enable": 1, "mode": n}
+        O800 RTK (2px96q)           n = 0, 1 or 2
+
+    ``mode`` stays the raw integer here. What 0, 1 and 2 are called is the
+    select entity's business, and only on a class whose app has the choice.
+
+    Either field is ``None`` until the mower has said it.
+    """
+
+    enabled: bool | None
+    mode: int | None
+
+
+def _as_enable(value: Any) -> bool | None:
+    """Read ``enable``: a ``bool`` or the ints ``0``/``1``, else ``None``.
+
+    A bare ``bool(value)`` would read the string ``"0"`` as on, and this
+    reading is written back to the mower by the next write.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    return None
+
+
+def _as_border_mode(value: Any) -> int | None:
+    """Read ``mode``: a whole number from 0 up, or ``None``.
+
+    ``bool`` is refused for the reason ``_as_ota_state`` gives. The value is
+    not checked against the three known modes: a mode nobody has seen yet is
+    still what the mower reported, and a write that changes only ``enable``
+    has to send it back unchanged.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+class OnBorderSwitch(MessageBodyDataDict):
+    """The edge-mowing setting, pushed after a change (issue #166).
+
+    A G1-800 (``77atlz``, firmware 1.36.208) pushes ``onBorderSwitch`` with
+    both fields after every ``setBorderSwitch``, and until this handler it
+    ended as an unknown message. ``GetBorderSwitchMower`` in ``commands.py``
+    inherits the handler for its answer, which carries the same two fields on
+    that mower: one parser, two entry points, as with ``OnRainDelay``.
+
+    A field that is missing or of the wrong type is ignored and the last
+    known value stays, as in ``OnUwbOta``: a short payload must not blank the
+    half a write needs to send back. The reading is stored before the event
+    is published, so a write that follows a repeat still reads it.
+    """
+
+    NAME = "onBorderSwitch"
+
+    @classmethod
+    def _handle_body_data_dict(
+        cls, event_bus: EventBus, data: dict[str, Any]
+    ) -> HandlingResult:
+        """Handle message->body->data."""
+        enabled = _as_enable(data.get("enable"))
+        mode = _as_border_mode(data.get("mode"))
+
+        if enabled is None and mode is None:
+            _LOGGER.debug("%s without a usable field, ignored: %s", cls.NAME, data)
+            return HandlingResult.analyse()
+
+        known_enabled, known_mode = border_switch_for(event_bus)
+        enabled = known_enabled if enabled is None else enabled
+        mode = known_mode if mode is None else mode
+        _BORDER_SWITCH_READINGS[event_bus] = (enabled, mode)
+
+        event_bus.notify(MowerBorderSwitchEvent(enabled=enabled, mode=mode))
+        return HandlingResult.success()
+
+
 class OnAreaParameter(MessageBodyDataDict):
     """The mower's broadcast of its current area parameters, unsolicited.
 

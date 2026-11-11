@@ -17,9 +17,10 @@ from custom_components.ecovacs_mower.deebot_patch.zonal import MowArea
 
 # A supported class whose profile has every flag off, so the tests below can
 # turn one on and watch the gate react — and so the device it patches carries
-# neither MowArea nor a MowerAreaEvent refresh to begin with. It is the O800
-# RTK's second class string, the same hardware as the zone-confirmed 9bts2s.
-NO_FLAGS = "2px96q"
+# neither MowArea nor a MowerAreaEvent refresh to begin with. It is the O500
+# Panorama, patched like the O800 RTK and validated for nothing beyond the
+# controls.
+NO_FLAGS = "300lc5"
 A1600_LIDAR = "e4gqia"
 
 

@@ -27,6 +27,7 @@ from .commands import (
     GetAnimProtect,
     GetAreaParameter,
     GetAreaSet,
+    GetBorderSwitchMower,
     GetLifeSpanMower,
     GetMapInfoMower,
     GetProtectState,
@@ -40,6 +41,7 @@ from .messages import (
     MowerAnimProtectEvent,
     MowerBeaconOtaEvent,
     MowerBeaconsEvent,
+    MowerBorderSwitchEvent,
     MowerProtectStateEvent,
     MowerRainDelayEvent,
     MowerStatsEvent,
@@ -86,6 +88,12 @@ class MowerProfile:
     ``onUWBOta``) and shows it as two read-only entities. It is its own flag
     because that shape and its ``needUpdate``/``otaState`` values come from a
     different capture than the lifespan request behind ``uwb_beacons``.
+    ``edge_cutting`` gives the class the *Edge cutting* switch, a plain on/off,
+    and ``edge_mode`` the *Edge mode* select. Both are the one setting behind
+    ``getBorderSwitch``/``setBorderSwitch``, and either flag wires its read.
+    They are two flags because what a class's app offers differs: an on/off
+    with no mode on one, a mode with no off on another (issue #166). A class
+    with neither gets no entity for the setting.
     """
 
     device_class: str
@@ -98,6 +106,8 @@ class MowerProfile:
     uwb_beacons: bool = False
     core_temperature: bool = False
     beacon_ota: bool = False
+    edge_cutting: bool = False
+    edge_mode: bool = False
 
 
 # Device classes this integration patches, and how each one was confirmed:
@@ -285,6 +295,30 @@ class MowerProfile:
 #                     otaState 1 and, about 45 s later, 4 after the app started
 #                     an update. Off everywhere else: no other class has been
 #                     asked.
+#   edge_cutting    — 77atlz: the G1-800's app has a plain on/off for edge
+#                     cutting and no mode. On firmware 1.36.208 (issue #166)
+#                     setBorderSwitch was answered code 0 with enable alone
+#                     and with enable and mode together, off and on, the app
+#                     followed enable each time, and the mower pushed
+#                     onBorderSwitch with both fields after every write;
+#                     getBorderSwitch answers {"enable": 1, "mode": 0}. Modes
+#                     1 and 2 were accepted and echoed too, but its app shows
+#                     no mode, so it gets the switch and not the select.
+#   edge_mode       — xmp9ds: the A1600 RTK's app writes
+#                     {"enable": 1, "mode": n} with n 0 along the map
+#                     boundary, 1 edge mowing, 2 cross-boundary (issue #23,
+#                     firmware 1.17.11), and the mower refuses enable alone
+#                     (issue #166).
+#                     2px96q: the O800 RTK's app writes the same shape with
+#                     the same three values (DeebotUniverse/client.py#1949,
+#                     firmware 1.17.19).
+#                     Neither app has a full off, and nobody has captured what
+#                     enable 0 does there, so they get the select and not the
+#                     switch. A write from Home Assistant has not been run on
+#                     either class yet: the payload is the app's.
+#                     Off for e4gqia on purpose: the A1600 LiDAR Pro reports
+#                     {"enable": 1, "mode": 1} but its app shows no edge
+#                     setting at all.
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile("2i0fns", area_parameters=True, zone_mowing=True),
     "9bts2s": MowerProfile(
@@ -294,7 +328,7 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
         remaining_plan=True,
         zone_mowing=True,
     ),
-    "2px96q": MowerProfile("2px96q"),
+    "2px96q": MowerProfile("2px96q", edge_mode=True),
     "77atlz": MowerProfile(
         "77atlz",
         zone_mowing=True,
@@ -302,9 +336,10 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
         uwb_beacons=True,
         core_temperature=True,
         beacon_ota=True,
+        edge_cutting=True,
     ),
     "e4gqia": MowerProfile("e4gqia", area_parameters=True, zone_mowing=True),
-    "xmp9ds": MowerProfile("xmp9ds"),
+    "xmp9ds": MowerProfile("xmp9ds", edge_mode=True),
     "o4kvvk": MowerProfile("o4kvvk"),
     "6n9pcz": MowerProfile("6n9pcz"),
     "0jbd6s": MowerProfile("0jbd6s"),
@@ -356,6 +391,9 @@ async def patch_device_info(class_: str) -> None:
       given the refresh commands they had none of.
     * ``MowerBeaconOtaEvent``: given ``GetUWBOta`` on a class with
       ``beacon_ota`` only — no other class has been checked for it.
+    * ``MowerBorderSwitchEvent``: given ``GetBorderSwitchMower`` on a class
+      with ``edge_cutting`` or ``edge_mode`` only. The library's own
+      ``getBorderSwitch`` drops ``mode``, which a write has to send back.
     * ``MowerMapInfoEvent``: given ``GetMapInfoMower``, without which a V2
       mower never sends the lawn boundary at all — it answers the request and
       pushes at no other time (issue #81) — and a non-V2 mower does not name
@@ -490,6 +528,12 @@ async def patch_device_info(class_: str) -> None:
         # sit at "unknown" until the next one. No poll rides on it — the
         # maintainer counts requests.
         events[MowerBeaconOtaEvent] = [GetUWBOta()]
+    if profile.edge_cutting or profile.edge_mode:
+        # Read when the entity subscribes and again on a reconnect. A write is
+        # refused until the mower has reported both fields, so without this
+        # read the entity could not be used before the first push, and only a
+        # G1-800 is known to push at all (issue #166).
+        events[MowerBorderSwitchEvent] = [GetBorderSwitchMower()]
     if profile.area_parameters:
         # One area event represents the whole area capability. The two protocol
         # reads populate one authoritative raw snapshot before notifying it.
