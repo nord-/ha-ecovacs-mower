@@ -85,6 +85,11 @@
         }
       }
     },
+    "select": {
+      "edge_mode": {
+        "default": "mdi:land-fields"
+      }
+    },
     "sensor": {
       "activity": {
         "default": "mdi:robot-mower-outline",

@@ -104,6 +104,16 @@
       "cut_direction": { "name": "Cutting direction" },
       "rain_delay": { "name": "Rain delay duration" }
     },
+    "select": {
+      "edge_mode": {
+        "name": "Edge mode",
+        "state": {
+          "along_boundary": "Along the boundary",
+          "edge_mowing": "Edge mowing",
+          "cross_boundary": "Cross-boundary"
+        }
+      }
+    },
     "sensor": {
       "activity": {
         "name": "Activity",

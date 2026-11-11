@@ -22,6 +22,7 @@ from .commands import (
     CleanMower,
     GetAreaParameter,
     GetAreaSet,
+    GetBorderSwitchMower,
     GetCleanInfoMower,
     MowerStateRefresh,
     SetAreaParameter,
@@ -43,7 +44,9 @@ from .map_messages import (
 )
 from .messages import (
     OnAnimProtect,
+    MowerBorderSwitchEvent,
     OnAreaParameter,
+    OnBorderSwitch,
     OnChargeInfo,
     OnChargeState,
     OnCleanInfo,
@@ -122,6 +125,7 @@ def apply() -> None:
     for message in (
         OnAnimProtect,
         OnAreaParameter,
+        OnBorderSwitch,
         OnChargeInfo,
         OnChargeState,
         OnCleanInfo,
@@ -206,6 +210,19 @@ def verify_capabilities(capabilities: Capabilities, class_: str) -> None:
             f"{[type(c).__name__ for c in commands]} instead of "
             f"[MowerStateRefresh]"
         )
+
+    if profile is not None and (profile.edge_cutting or profile.edge_mode):
+        # The edge entities refuse a write until the mower has reported both
+        # fields, and this read is the only report most classes are known to
+        # give. If the wiring stopped reaching the device, the entity would
+        # stay unknown and unwritable with nothing saying why (issue #166).
+        edge_commands = capabilities.get_refresh_commands(MowerBorderSwitchEvent)
+        if [type(command) for command in edge_commands] != [GetBorderSwitchMower]:
+            _fail(
+                f"the edge setting commands for {class_} are "
+                f"{[type(c).__name__ for c in edge_commands]} instead of "
+                f"[GetBorderSwitchMower]"
+            )
 
     if profile is not None and profile.area_parameters:
         # One HA-facing event represents the whole area capability. Its refresh
