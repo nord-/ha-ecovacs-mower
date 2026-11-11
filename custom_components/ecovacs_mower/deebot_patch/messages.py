@@ -31,17 +31,18 @@ parses the answer to ``getStats``, and ``OnStatsMower`` below parses the
 ``onStats`` push that some classes send and others never do (issue #55).
 
 ``MowerJobEdgeEvent`` republishes the task bury points that mark a job's own
-boundaries — ``onFwBuryPoint-bd_task-mow-<type>-{start,stop}`` for the four
-types ``auto``, ``schedule``, ``spotarea`` and ``border``, plus the ``pause``
-and ``resume`` edges of ``schedule`` and ``spotarea``, twelve more messages
-the library has no handler for. They are the only thing on the wire that
-separates a job which has finished from one parked to charge, which ``State``
-reports identically (issue #73), and a completion carries the two areas its
-final percentage is computed from. All four job types are registered because
-the middle topic segment is the type, not the trigger: a zone job started from
-the app ends on ``mow-spotarea-stop``, an edge cut on ``mow-border-stop``, and
-a job started from Home Assistant on ``mow-auto-stop`` — ``auto`` is the type
-the library's own start command sends (issue #74).
+boundaries — ``onFwBuryPoint-bd_task-mow-<type>-{start,stop}`` for the five
+types ``auto``, ``schedule``, ``spotarea``, ``border`` and ``borderrotate``,
+plus the ``pause`` and ``resume`` edges of ``schedule``, ``spotarea`` and
+``borderrotate``, sixteen more messages the library has no handler for. They
+are the only thing on the wire that separates a job which has finished from
+one parked to charge, which ``State`` reports identically (issue #73), and a
+completion carries the two areas its final percentage is computed from. All
+five job types are registered because the middle topic segment is the type,
+not the trigger: a zone job started from the app ends on
+``mow-spotarea-stop``, an edge cut on ``mow-border-stop``, and a job started
+from Home Assistant on ``mow-auto-stop`` — ``auto`` is the type the library's
+own start command sends (issue #74).
 ``OnReturnNormalStart`` handles one more task bury point,
 ``onFwBuryPoint-bd_task-return-normal-start``. It is not a job edge and
 publishes no ``MowerJobEdgeEvent``; it writes RETURNING for the trip home
@@ -182,9 +183,10 @@ class MowerJobEdgeEvent(Event):
     trigger: a zone job started from the app ends on ``mow-spotarea-stop``,
     and a job started from Home Assistant on ``mow-auto-stop``, ``auto`` being
     the type the library's start command sends. ``start`` and ``stop`` are
-    registered for all four types, and ``pause`` and ``resume`` for
-    ``schedule`` and ``spotarea``, the two types they have been observed on
-    (issue #120); another is one subclass each.
+    registered for all five types, and ``pause`` and ``resume`` for
+    ``schedule`` and ``spotarea`` (issue #120) and for ``mow-border-rotate``,
+    the app's Trimming job and the fifth type (issue #138); a pause or resume
+    on another type is one subclass each.
 
     The border and auto points speak a different dialect of the same payload:
     ``triggerType`` where the others say ``trigger``, and ``cuttedArea`` on a
@@ -198,13 +200,14 @@ class MowerJobEdgeEvent(Event):
     ``trigger`` is the raw string, and what it means is the consumer's
     business — see ``MowerTriggerEvent`` for the same rule stated at length.
     The vocabulary observed so far is ``schedule``/``app``/``reborn`` on a
-    start, ``continue``/``schedule`` on a resume, ``lowBattery``/``schedule``
-    on a pause and ``workComplete``/``app`` on a stop; a ``stop`` is therefore
-    not necessarily a completion, and a ``start`` is not necessarily a new
-    job.
+    start, ``continue``/``schedule``/``app`` on a resume,
+    ``lowBattery``/``schedule``/``app`` on a pause and ``workComplete``/``app``
+    on a stop; a ``stop`` is therefore not necessarily a completion, and a
+    ``start`` is not necessarily a new job.
 
     ``job_type`` is the topic's middle segment — ``schedule``, ``spotarea``,
-    ``border`` or ``auto`` — taken from the handler class, not the payload.
+    ``border``, ``borderrotate`` or ``auto`` — taken from the handler class,
+    not the payload.
     It is the one signal that names the schedule's job the same way on every
     firmware: the O1200's ``trigger: continue`` and the G1-800's
     ``triggerType: schedule`` both arrive on ``mow-schedule-resume`` (issue
@@ -438,6 +441,30 @@ class OnMowBorderStop(_OnMowJobEdge):
     NAME = "onFwBuryPoint-bd_task-mow-border-stop"
     PHASE = "stop"
     JOB_TYPE = "border"
+
+
+class OnMowBorderRotatePause(_OnMowJobEdge):
+    """A trimming job pauses (issue #138).
+
+    Captured on an O1200 LiDAR Pro on firmware 1.15.16, paused from the app:
+    ``trigger`` is ``app``, and the payload carries both areas, as a stop does.
+    """
+
+    NAME = "onFwBuryPoint-bd_task-mow-border-rotate-pause"
+    PHASE = "pause"
+    JOB_TYPE = "borderrotate"
+
+
+class OnMowBorderRotateResume(_OnMowJobEdge):
+    """A paused trimming job resumes (issue #138).
+
+    From the same capture as the pause: ``trigger`` is ``app`` and there are
+    no areas.
+    """
+
+    NAME = "onFwBuryPoint-bd_task-mow-border-rotate-resume"
+    PHASE = "resume"
+    JOB_TYPE = "borderrotate"
 
 
 class OnMowBorderRotateStart(_OnMowJobEdge):
