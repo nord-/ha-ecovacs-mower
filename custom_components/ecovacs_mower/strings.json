@@ -63,6 +63,7 @@
       "end_task": { "name": "End mowing task" },
       "log_area_parameters": { "name": "Log area parameters" },
       "mow_border": { "name": "Mow border" },
+      "mow_trim": { "name": "Trim edges" },
       "play_sound": { "name": "Locate mower" },
       "reset_lifespan_blade": { "name": "Reset blades" },
       "reset_lifespan_lens_brush": { "name": "Reset lens brush" },

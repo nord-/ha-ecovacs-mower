@@ -21,21 +21,14 @@ changing those parameters is out of scope.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from deebot_client.command import Command
 from deebot_client.commands.json.clean import Clean, CleanV2
-from deebot_client.message import HandlingResult
 from deebot_client.models import CleanAction, CleanMode
 
-from .commands import _AdaptiveFamily, _TaskClean
+from .commands import _TaskClean, _TaskStart
 from .families import Family
-from .state_precedence import record_for
-
-if TYPE_CHECKING:
-    from deebot_client.authentication import Authenticator
-    from deebot_client.event_bus import EventBus
-    from deebot_client.models import ApiDeviceInfo
 
 
 _TYPE_SPOT_AREA = "spotArea"
@@ -56,12 +49,14 @@ class _ZoneCleanV2(_ZoneClean, CleanV2):
     """Send the spot-area payload on the ``clean_V2`` topic."""
 
 
-class MowArea(_AdaptiveFamily, Clean):
+class MowArea(_TaskStart):
     """Mow saved area IDs using the GOAT ``spotArea`` command.
 
     The command family is selected at runtime because GOAT firmware versions
     exist that answer only one of ``clean`` and ``clean_V2``.
     """
+
+    _JOB_TYPE = _TYPE_SPOT_AREA
 
     def __init__(
         self,
@@ -86,24 +81,8 @@ class MowArea(_AdaptiveFamily, Clean):
         # in ``commands.py`` for the same equality-only pattern and rationale.
         return {"act": action.value, "area": tuple(self._area)}
 
-    def _delegate(self, family: Family) -> Command:
-        """Return the command for the selected wire family."""
-        return self._delegates[family]
-
-    async def _execute(
-        self,
-        authenticator: Authenticator,
-        device_info: ApiDeviceInfo,
-        event_bus: EventBus,
-    ) -> tuple[HandlingResult, dict[str, Any]]:
-        """Build the two wire variants and let the adaptive family choose."""
-        # Written here, not just sent: closes the window between issuing a
-        # start and the first onCleanInfo push, where a quick pause would
-        # otherwise echo whatever the previous job left behind (issue #94).
-        if (record := record_for(event_bus)) is not None:
-            record.job_type = _TYPE_SPOT_AREA
-        self._delegates = {
+    def _make_delegates(self) -> dict[Family, Command]:
+        return {
             Family.NON_V2: _ZoneCleanNonV2(self._area),
             Family.V2: _ZoneCleanV2(self._area),
         }
-        return await super()._execute(authenticator, device_info, event_bus)

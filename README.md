@@ -256,8 +256,9 @@ above), that loop returns for the vacuum.
 ## What you get
 
 Forty-six fixed entities on the mower's device page, across eight platforms —
-forty-seven on the A3000 LiDAR Pro, which also gets the "Mow border" button, and
-fifty on the G1-800, which gets that button, a core-temperature sensor and the
+forty-seven on the O1200 LiDAR Pro, which also gets the "Trim edges" button,
+forty-eight on the A3000 LiDAR Pro, which gets that button and "Mow border", and
+fifty on the G1-800, which gets "Mow border", a core-temperature sensor and the
 two beacon-update entities — plus one writable entity per setting of each saved
 mowing area on the A1600 LiDAR Pro (`e4gqia`), A3000 LiDAR Pro (`51rcxt`),
 O1200 LiDAR Pro (`2i0fns`) and A1600 RTK (`xmp9ds`), and one per UWB beacon on
@@ -271,7 +272,7 @@ the models that use them:
 | `switch` | 8, 9 on the G1-800 | Advanced mode, TrueDetect obstacle avoidance, child lock, lift warning, boundary crossing warning, safety protection, rain detection, animal protection (see below) and, on the G1-800, edge cutting (see below) |
 | `select` | 1 on the A1600 RTK and the O800 RTK `2px96q`, none elsewhere | Edge mode (see below) |
 | `number` | 3 + one per setting per saved area (four on the A1600, A3000 and O1200 LiDAR Pro, three on the A1600 RTK); on the A1600 RTK 2 + four Auto settings + three per saved area | Notification volume, cutting direction, rain delay duration, plus cutting height, mowing speed, obstacle height and, where the model has it per area, cutting direction for each saved area; on the A1600 RTK also the four Auto mode settings for the whole mower, whose cutting direction replaces the device-wide one (see below) |
-| `button` | 8, 9 on the G1-800 and A3000 LiDAR Pro | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), "Clear fault" (releases the latched fault; see below), "End mowing task" (ends the current job for good; see below), "Log area parameters" (diagnostic, disabled by default; shows the raw per-area values to help support another model, see below) and, on the G1-800 and A3000 LiDAR Pro, "Mow border" (starts a border job; see below) |
+| `button` | 8, 9 on the G1-800 and O1200 LiDAR Pro, 10 on the A3000 LiDAR Pro | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), "Clear fault" (releases the latched fault; see below), "End mowing task" (ends the current job for good; see below), "Log area parameters" (diagnostic, disabled by default; shows the raw per-area values to help support another model, see below), "Mow border" on the G1-800 and A3000 LiDAR Pro (starts a border job; see below) and "Trim edges" on the O1200 LiDAR Pro and A3000 LiDAR Pro (starts the trimming job; see below) |
 | `event` | 2 | Last mowing job (finished / finished with warnings / manually stopped — see below) and Job started (what started or resumed the job — see below) |
 | `image` | 1 | The mower's map — lawn boundary, mowed coverage or, on the O800 RTK `9bts2s`, what is still to cut (see below), no-go zones, detected obstacles, the dock and the mower's position. A map that holds several lawns reports one outline per lawn and all of them are drawn, along with the passages between them, the stretches of edge the mower is told to mow flush against, and, on the O800 RTK `9bts2s`, each area's name where the mower itself puts it. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, `onMapTrace` on firmware 1.17, and `onMapInfo_V2` on 1.36 — that last one only ever arrives in answer to a `getMapInfo_V2` the integration now sends, as `onMI` does on a non-V2 mower in answer to `getMI`); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only. The mower's position, its heading, the dock and the path it has driven are also attributes of the entity (`position_x`, `position_y`, `heading`, `dock_x`, `dock_y`, `track`) — millimetres in the map's own frame, with the dock as the origin, `heading` in degrees as the mower reports it (counter-clockwise from the frame's +x axis, measured on the G1-800 at firmware 1.36.208 only), and `track` a list of `[x, y]` points thinned to at most about 250 — so a card can draw the mower on something other than the SVG. `position_x`, `position_y` and `heading` are `null` until the mower has reported a position since Home Assistant started |
 
@@ -607,8 +608,8 @@ The button exists only on classes where a border job has been confirmed: the
 GOAT G1-800 (`77atlz`), where the request the app sends was captured, and the
 A3000 LiDAR Pro (`51rcxt`), where a border job started from the button ran to
 completion. The A3000's app offers no border job of its own; its *Trimming*
-job, which runs the string trimmer, is a different task the button does not
-start ([#138](https://github.com/nord-/ha-ecovacs-mower/issues/138)). If you
+job, which runs the string trimmer, is a different task with a button of its
+own (see "Trimming" below). If you
 have another mower and would like the button, open an issue with a debug log
 of the app starting a border job; the request shape and the device class are
 what it needs.
@@ -618,6 +619,24 @@ the map messages the mower sends. Right after a restart that can take a few
 seconds; pressing the button before then answers "The mower has not reported
 its map yet; try again in a moment" and asks the mower for its map, so the
 next press works.
+
+### Trimming
+
+The **Trim edges** button starts the app's *Trimming* job, which runs the
+string trimmer along the perimeter. It is a different task from border mowing:
+the mower reports it as `borderrotate`, and the job events carry that as
+their `job_type`. The app offers no choice of area for it, and neither does the
+button.
+
+The button exists on the O1200 LiDAR Pro (`2i0fns`) and the A3000 LiDAR Pro
+(`51rcxt`), the two classes where the request the app sends was captured
+([#138](https://github.com/nord-/ha-ecovacs-mower/issues/138)). It has not yet
+been started from Home Assistant on either, so a first run is worth a look: the
+job should start, `lawn_mower` should report `mowing`, and *Job started* should
+fire with `job_type: borderrotate`. If it does not, a debug log of the press
+and the mower's answer is what is needed. Pause, resume and *End mowing task*
+should work for a trim without anything extra, since they send the same request
+the app does, but they have not been tried from Home Assistant on a trim either.
 
 ### Ending a task
 
@@ -1100,7 +1119,7 @@ a bug: if one of these looks blank or "unavailable," this is why.
 | `select` | 1 of 1, where it exists | edge mode |
 | `number` | 3 of the 3 fixed ones (2 of 2 on the A1600 RTK) | all of them: volume, cutting direction and rain delay duration; the A1600 RTK has no device-wide cutting direction (see "Mower-wide (Auto mode) settings"). The per-area and Auto settings are enabled |
 | `sensor` | 4 of the 16 fixed ones (18 on the G1-800) | IP address, Wi-Fi signal strength, Wi-Fi network name, and **error code**. The per-beacon sensors and the beacon update state are enabled |
-| `button` | 5 of 8 (5 of 9 on the G1-800 and A3000 LiDAR Pro) | the four consumable-lifespan resets (blade, lens brush, trimmer brush, weed rope) and "Log area parameters" — "Locate mower", "Clear fault", "End mowing task" and, on the G1-800 and A3000 LiDAR Pro, "Mow border" are enabled by default |
+| `button` | 5 of 8 (5 of 9 on the G1-800 and O1200 LiDAR Pro, 5 of 10 on the A3000 LiDAR Pro) | the four consumable-lifespan resets (blade, lens brush, trimmer brush, weed rope) and "Log area parameters" — "Locate mower", "Clear fault", "End mowing task" and, where they exist, "Mow border" and "Trim edges" are enabled by default |
 
 **If you're planning anything on the error sensor** — an alarm, a
 notification, a dashboard card — note that it does not exist as an

@@ -106,7 +106,7 @@ class MowerStateRecord:
         the next job's first push depends on whether an ordinary automatic
         job's ``onCleanInfo`` carries ``content: {"type": "auto"}`` —
         unconfirmed, no device log of one exists yet. ``CleanMower``,
-        ``MowArea`` and ``MowBorder`` write their own type here the moment
+        ``MowArea``, ``MowBorder`` and ``MowTrim`` write their own type here the moment
         they issue a start, which closes the window between pressing start
         and the first push for a job this integration begins; it does not
         help a job the mower starts on its own schedule.

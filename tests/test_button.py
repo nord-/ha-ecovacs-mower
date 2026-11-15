@@ -146,10 +146,51 @@ def test_the_clear_fault_button_stays_available_when_the_mower_is_not() -> None:
     assert EcovacsClearFaultButtonEntity._always_available is True
 
 
-def test_the_mower_command_buttons_are_border_and_end_task() -> None:
+def test_the_mower_command_buttons_are_border_trim_and_end_task() -> None:
     from custom_components.ecovacs_mower.button import MOWER_COMMAND_DESCRIPTIONS
 
-    assert {d.key for d in MOWER_COMMAND_DESCRIPTIONS} == {"mow_border", "end_task"}
+    assert {d.key for d in MOWER_COMMAND_DESCRIPTIONS} == {
+        "mow_border",
+        "mow_trim",
+        "end_task",
+    }
+
+
+def test_the_trim_button_is_gated_on_the_trim_mowing_flag() -> None:
+    from custom_components.ecovacs_mower.button import MOWER_COMMAND_DESCRIPTIONS
+    from custom_components.ecovacs_mower.deebot_patch.hardware import MowerProfile
+
+    by_key = {d.key: d for d in MOWER_COMMAND_DESCRIPTIONS}
+    trim_gate = by_key["mow_trim"].profile_fn
+    assert trim_gate is not None
+    assert trim_gate(MowerProfile("x", trim_mowing=True)) is True
+    assert trim_gate(MowerProfile("x")) is False
+    # border_mowing says nothing about the trimmer: the G1-800 has a border
+    # job and no trimmer.
+    assert trim_gate(MowerProfile("x", border_mowing=True)) is False
+    assert by_key["mow_trim"].starts_job is True
+
+
+async def test_the_trim_button_sends_a_trim_and_restarts_polling() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from custom_components.ecovacs_mower.button import (
+        MOWER_COMMAND_DESCRIPTIONS,
+        EcovacsMowerCommandButtonEntity,
+    )
+    from custom_components.ecovacs_mower.deebot_patch.border import MowTrim
+
+    description = next(d for d in MOWER_COMMAND_DESCRIPTIONS if d.key == "mow_trim")
+    device = MagicMock()
+    device.device_info = {"did": "test-did", "class": "2i0fns"}
+    controller = MagicMock()
+    entity = EcovacsMowerCommandButtonEntity(device, controller, description)
+    entity._execute_command = AsyncMock()
+
+    await entity.async_press()
+
+    controller.start_polling.assert_called_once_with(device)
+    entity._execute_command.assert_awaited_once_with(MowTrim())
 
 
 def test_the_border_button_is_gated_on_the_border_mowing_flag() -> None:
@@ -284,7 +325,14 @@ def test_mower_command_buttons_are_built_per_class() -> None:
     controller = MagicMock()
     # "abc123" stands for a mower class nobody has reported: no profile, so no
     # profile-gated button, but end_task is ungated and reaches it as before.
-    controller.devices = [mower("77atlz"), mower("2px96q"), mower("abc123"), vacuum]
+    controller.devices = [
+        mower("77atlz"),
+        mower("2i0fns"),
+        mower("51rcxt"),
+        mower("2px96q"),
+        mower("abc123"),
+        vacuum,
+    ]
 
     built = {
         (e._device.device_info["class"], e.entity_description.key)
@@ -293,6 +341,11 @@ def test_mower_command_buttons_are_built_per_class() -> None:
     assert built == {
         ("77atlz", "mow_border"),
         ("77atlz", "end_task"),
+        ("2i0fns", "mow_trim"),
+        ("2i0fns", "end_task"),
+        ("51rcxt", "mow_trim"),
+        ("51rcxt", "mow_border"),
+        ("51rcxt", "end_task"),
         ("2px96q", "end_task"),
         ("abc123", "end_task"),
     }

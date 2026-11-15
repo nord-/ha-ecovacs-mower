@@ -69,7 +69,9 @@ class MowerProfile:
     service checks for. ``border_mowing`` gives it the ``mow_border`` button;
     that one gates an entity rather than a capability, because
     ``Capabilities`` has no field for a border job, and ``button.py`` reads it
-    from the profile. ``area_nogo`` reads section 2 of a chain-dialect
+    from the profile. ``trim_mowing`` gives it the ``mow_trim`` button, the
+    app's Trimming job, and gates an entity for the same reason
+    (issue #138). ``area_nogo`` reads section 2 of a chain-dialect
     ``onArI`` as this class's no-go zones and lets it outrank
     ``onSpecialContour``; without it the section joins the mowing zones,
     which is what every class did before one of them was checked.
@@ -110,6 +112,7 @@ class MowerProfile:
     remaining_plan: bool = False
     zone_mowing: bool = False
     border_mowing: bool = False
+    trim_mowing: bool = False
     uwb_beacons: bool = False
     core_temperature: bool = False
     beacon_ota: bool = False
@@ -296,6 +299,14 @@ class MowerProfile:
 #                     onCleanInfo, so the start went out in the non-V2 shape
 #                     — see border.py. The app offers no border job on this
 #                     model, only its trimming job (borderrotate, issue #138).
+#   trim_mowing     — 51rcxt, 2i0fns: the app's Trimming request captured on
+#                     both LiDAR Pro classes (issue #138): clean with
+#                     {"type": "borderrotate", "value": "reid:1"}, on
+#                     firmware 1.13.10 and, for the O1200, 1.15.16; the
+#                     mower acknowledged it and ran the job. Not yet started
+#                     from Home Assistant on either class. The G1-800 has a
+#                     border job and no trimmer, so border_mowing says
+#                     nothing about this flag.
 #   uwb_beacons     — 77atlz: the app's getLifeSpan request captured on the
 #                     G1-800, firmware 1.36.208 (issue #100): {"data": []},
 #                     answered with blade, one uwbCell per beacon and lens
@@ -353,7 +364,9 @@ class MowerProfile:
 #                     but its app shows no Auto settings to check them
 #                     against.
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
-    "2i0fns": MowerProfile("2i0fns", area_parameters=True, zone_mowing=True),
+    "2i0fns": MowerProfile(
+        "2i0fns", area_parameters=True, zone_mowing=True, trim_mowing=True
+    ),
     "9bts2s": MowerProfile(
         "9bts2s",
         area_names=True,
@@ -379,7 +392,11 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "6n9pcz": MowerProfile("6n9pcz"),
     "0jbd6s": MowerProfile("0jbd6s"),
     "51rcxt": MowerProfile(
-        "51rcxt", area_parameters=True, zone_mowing=True, border_mowing=True
+        "51rcxt",
+        area_parameters=True,
+        zone_mowing=True,
+        border_mowing=True,
+        trim_mowing=True,
     ),
     "qhq6i0": MowerProfile("qhq6i0", zone_mowing=True),
     "300lc5": MowerProfile("300lc5"),
