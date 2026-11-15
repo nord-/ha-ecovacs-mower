@@ -949,7 +949,9 @@ Two things worth knowing:
   been observed not to. Where it arrives, the reading tracks the mower, and a
   whole percent has to change before the entity writes a new state. Where it
   does not, a poll fills in: one request at startup to sync, then every five
-  minutes while a run is in progress, stopping when the mower parks. A run
+  minutes while a run is in progress, stopping when the mower parks. On a
+  G1-800 that tick asks for the state and the stats together, in the one
+  batched request the Ecovacs app uses, instead of three separate ones. A run
   interrupted by charging needs no special case — the mower docks, the poll
   stops, and it starts again when the job resumes. The poll is also why the
   final figure comes from elsewhere: its five-minute cadence rarely lands on the

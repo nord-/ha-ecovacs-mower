@@ -103,6 +103,10 @@ class MowerProfile:
     entities that show them. It is a flag of its own, apart from
     ``area_parameters``, because those settings are read and written with
     different commands, so one says nothing about the other.
+    ``get_info`` makes the five-minute tick ask for the charge state, the
+    clean info and the stats in one ``getInfo`` request instead of three
+    (issue #85). It wires nothing into the capabilities: the controller
+    reads it when the tick runs.
     """
 
     device_class: str
@@ -119,6 +123,7 @@ class MowerProfile:
     edge_cutting: bool = False
     edge_mode: bool = False
     auto_parameters: bool = False
+    get_info: bool = False
 
 
 # Device classes this integration patches, and how each one was confirmed:
@@ -363,6 +368,12 @@ class MowerProfile:
 #                     A1600 LiDAR Pro (e4gqia) answers the four reads too,
 #                     but its app shows no Auto settings to check them
 #                     against.
+#   get_info        — 77atlz: on the G1-800, firmware 1.36.208, getInfo
+#                     sent through devmanager.do answers a list the caller
+#                     chooses, leaves an unknown name out without an error,
+#                     and comes back with no replies at all once the whole
+#                     answer would pass about 1 KB (issue #85). No other
+#                     class has been asked.
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile(
         "2i0fns", area_parameters=True, zone_mowing=True, trim_mowing=True
@@ -383,6 +394,7 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
         core_temperature=True,
         beacon_ota=True,
         edge_cutting=True,
+        get_info=True,
     ),
     "e4gqia": MowerProfile("e4gqia", area_parameters=True, zone_mowing=True),
     "xmp9ds": MowerProfile(

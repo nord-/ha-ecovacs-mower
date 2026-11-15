@@ -85,6 +85,14 @@ def test_profile_flags_default_to_off() -> None:
     assert profile.trim_mowing is False
     assert profile.uwb_beacons is False
     assert profile.core_temperature is False
+    assert profile.get_info is False
+
+
+def test_get_info_is_enabled_only_for_the_class_it_was_measured_on() -> None:
+    """Every getInfo probe on issue #85 ran on a G1-800; nothing else was asked."""
+    assert {
+        class_ for class_, profile in SUPPORTED_CLASSES.items() if profile.get_info
+    } == {"77atlz"}
 
 
 def test_core_temperature_is_enabled_only_for_the_validated_class() -> None:

@@ -763,6 +763,53 @@ async def test_poll_refreshes_state_stats_and_network() -> None:
     assert asked == {StateEvent, StatsEvent, NetworkInfoEvent}
 
 
+async def test_poll_asks_a_g1_for_the_state_and_the_stats_in_one_request() -> None:
+    # Charge state, clean info and stats in one getInfo, as the app asks for
+    # them, on the one class that was checked for it (issue #85).
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deebot_client.events import NetworkInfoEvent
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.commands import GetPosMower
+    from custom_components.ecovacs_mower.deebot_patch.info import state_and_stats
+
+    controller = EcovacsController.__new__(EcovacsController)
+    device = MagicMock()
+    device.device_info = {"did": "did-1", "class": "77atlz"}
+    device.execute_command = AsyncMock(return_value={})
+
+    await controller._poll(device, None)
+
+    sent = [call.args[0] for call in device.execute_command.await_args_list]
+    assert sent[0] == state_and_stats()
+    assert [type(command) for command in sent[1:]] == [GetPosMower]
+    # The state and the stats are not asked for again through the bus.
+    asked = [call.args[0] for call in device.events.request_refresh.call_args_list]
+    assert asked == [NetworkInfoEvent]
+
+
+async def test_poll_does_not_batch_on_a_class_that_was_not_checked() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deebot_client.events import NetworkInfoEvent, StateEvent, StatsEvent
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.info import GetInfo
+
+    controller = EcovacsController.__new__(EcovacsController)
+    device = MagicMock()
+    device.device_info = {"did": "did-1", "class": "2i0fns"}
+    device.execute_command = AsyncMock(return_value={})
+
+    await controller._poll(device, None)
+
+    sent = [call.args[0] for call in device.execute_command.await_args_list]
+    assert not any(isinstance(command, GetInfo) for command in sent)
+    asked = {call.args[0] for call in device.events.request_refresh.call_args_list}
+    assert asked == {StateEvent, StatsEvent, NetworkInfoEvent}
+
+
 async def test_poll_asks_the_mower_where_it_is() -> None:
     # The G1-800 does not push onPos on every run, and deebot-client has no
     # map capability for it to refresh through, so the tick asks directly.

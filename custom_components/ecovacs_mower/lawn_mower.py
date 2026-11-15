@@ -7,7 +7,7 @@ from typing import override
 
 from deebot_client.capabilities import Capabilities, DeviceType
 from deebot_client.device import Device
-from deebot_client.events import StateEvent, StatsEvent
+from deebot_client.events import StateEvent
 from deebot_client.models import CleanAction, CleanMode, State
 from homeassistant.components.lawn_mower import (
     LawnMowerActivity,
@@ -111,9 +111,15 @@ class EcovacsMower(EcovacsEntity[Capabilities], LawnMowerEntity):
         Also what the update_entity service calls, which stays reachable while
         docked on purpose: asking by hand is how the 2026-08-21 state was
         corrected in the first place (see POLL_INTERVAL in const.py).
+
+        The state and the stats go through the controller, which asks for
+        them the way its own tick does: in one ``getInfo`` on a class
+        checked for it, as the two refreshes everywhere else (issue #85).
+        Whatever else this entity subscribes to is refreshed as before.
         """
-        await super().async_update()
-        self._device.events.request_refresh(StatsEvent)
+        for event_type in self._subscribed_events - {StateEvent}:
+            self._device.events.request_refresh(event_type)
+        await self._controller.refresh_state_and_stats(self._device)
 
     async def _clean_command(self, action: CleanAction) -> None:
         if action is CleanAction.START:
