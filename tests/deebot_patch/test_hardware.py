@@ -264,17 +264,18 @@ async def test_patch_preserves_the_area_command_of_a_non_zone_class() -> None:
     the sibling field must survive. Rebuilding ``CapabilityCleanAction`` from
     scratch instead would silently drop it.
 
-    Asserted on ``O800_ALT``, the one O800 RTK class string whose profile
-    leaves zone mowing off: on a zone class the patch replaces that field
-    with ``MowArea`` deliberately, which is what the profile tests cover.
+    Asserted on ``A3000_LIDAR_ALT``, a class whose profile leaves zone mowing
+    off while its definition, like the O800's, carries the library's area
+    command: on a zone class the patch replaces that field with ``MowArea``
+    deliberately, which is what the profile tests cover.
     """
-    before = await get_static_device_info(O800_ALT)
+    before = await get_static_device_info(A3000_LIDAR_ALT)
     area_before = before.capabilities.clean.action.area
     assert area_before is not None
-    _DEVICES.pop(O800_ALT, None)
+    _DEVICES.pop(A3000_LIDAR_ALT, None)
 
-    await patch_device_info(O800_ALT)
-    after = await get_static_device_info(O800_ALT)
+    await patch_device_info(A3000_LIDAR_ALT)
+    after = await get_static_device_info(A3000_LIDAR_ALT)
 
     assert after.capabilities.clean.action.area is area_before
 

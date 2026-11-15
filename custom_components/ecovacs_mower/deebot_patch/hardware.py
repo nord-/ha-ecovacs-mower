@@ -251,6 +251,12 @@ class MowerProfile:
 #                     qhq6i0: a mow_area call on the O1200 RTK, firmware
 #                     1.17.11, after adding the class locally (issue #140);
 #                     the user reported it working, with no detail beyond that.
+#                     2px96q: mow_area calls on the O800 RTK, firmware
+#                     1.17.21, integration 0.15.0, after adding the flag
+#                     locally (issue #98): with two areas the zone runs
+#                     worked, and a start naming several areas showed up in
+#                     the app with exactly those areas, as if started from
+#                     the app.
 #   border_mowing   — 77atlz: the app's border-job request captured on the
 #                     G1-800, firmware 1.36.208 (issue #12): clean_V2 with
 #                     {"type": "border", "value": "mid:<mid>"}, acknowledged
@@ -294,7 +300,7 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
         remaining_plan=True,
         zone_mowing=True,
     ),
-    "2px96q": MowerProfile("2px96q"),
+    "2px96q": MowerProfile("2px96q", zone_mowing=True),
     "77atlz": MowerProfile(
         "77atlz",
         zone_mowing=True,
