@@ -60,7 +60,7 @@ from . import EcovacsMowerConfigEntry
 from .const import SUPPORTED_LIFESPANS
 from .controller import EcovacsController
 from .debug import AreaParameterLog, DebugLog, Execute
-from .deebot_patch.border import MowBorder
+from .deebot_patch.border import MowBorder, MowTrim
 from .deebot_patch.commands import CleanMower
 from .deebot_patch.hardware import MowerProfile, profile_for_class
 from .deebot_patch.map_messages import MowerMapInfoEvent
@@ -164,6 +164,14 @@ MOWER_COMMAND_DESCRIPTIONS: tuple[EcovacsMowerCommandButtonEntityDescription, ..
         starts_job=True,
         # No entity_category, for the reason play_sound gives above: a
         # control, not diagnostics or configuration.
+    ),
+    EcovacsMowerCommandButtonEntityDescription(
+        key="mow_trim",
+        translation_key="mow_trim",
+        # No map id: the app sends the constant reid:1 (issue #138).
+        command_fn=lambda device: MowTrim(),
+        profile_fn=lambda profile: profile.trim_mowing,
+        starts_job=True,
     ),
     EcovacsMowerCommandButtonEntityDescription(
         key="end_task",

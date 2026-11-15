@@ -8,8 +8,11 @@ from deebot_client.commands.json.clean import Clean, CleanV2
 
 from custom_components.ecovacs_mower.deebot_patch.border import (
     MowBorder,
+    MowTrim,
     _BorderCleanNonV2,
     _BorderCleanV2,
+    _TrimCleanNonV2,
+    _TrimCleanV2,
 )
 from custom_components.ecovacs_mower.deebot_patch.families import Family, selected
 from custom_components.ecovacs_mower.deebot_patch.state_precedence import register
@@ -107,4 +110,71 @@ async def test_mow_border_falls_back_to_v2_and_commits_family() -> None:
 
     assert sent == ["clean", "clean_V2"]
     assert command._delegate(Family.V2)._args == _CAPTURED_ARGS
+    assert selected(_DEVICE_INFO["did"]) is Family.V2
+
+
+# The Trimming request the Ecovacs app sent on a GOAT A3000 LiDAR Pro (51rcxt,
+# fw 1.13.10, issue #138) and on an O1200 LiDAR Pro (2i0fns, fw 1.13.10 and
+# 1.15.16). ``reid`` read ``reid:1`` every time, on a map whose id is a
+# different nine-digit number, so it is sent as a constant.
+_TRIM_ARGS = {
+    "act": "start",
+    "content": {"type": "borderrotate", "value": "reid:1"},
+}
+
+
+def test_trim_delegates_are_clean_commands() -> None:
+    assert issubclass(_TrimCleanNonV2, Clean)
+    assert issubclass(_TrimCleanV2, CleanV2)
+
+
+def test_trim_payload_is_the_captured_request() -> None:
+    for delegate, name in ((_TrimCleanNonV2, "clean"), (_TrimCleanV2, "clean_V2")):
+        command = delegate()
+        assert command.NAME == name
+        assert command._args == _TRIM_ARGS
+
+
+def test_trim_delegates_bypass_the_action_rewrite() -> None:
+    # A press while paused must start a trim, not resume the paused job.
+    from custom_components.ecovacs_mower.deebot_patch.commands import _NoActionRewrite
+
+    for delegate, topic_base in ((_TrimCleanNonV2, Clean), (_TrimCleanV2, CleanV2)):
+        mro = delegate.__mro__
+        assert mro.index(_NoActionRewrite) < mro.index(topic_base)
+
+
+def test_mow_trim_keeps_clean_contract() -> None:
+    assert issubclass(MowTrim, Clean)
+    assert MowTrim.NAME == "clean"
+    assert MowTrim() == MowTrim()
+    assert MowTrim() != MowBorder("1")
+
+
+async def test_mow_trim_writes_borderrotate_into_the_record_before_the_first_push() -> (
+    None
+):
+    bus = _bus()
+    record = register(bus)
+    record.note_job({"type": "auto"})
+    fake, sent = _transport(_OK)
+    command = MowTrim()
+
+    with patch.object(Command, "_execute", fake):
+        await command._execute(AsyncMock(), _DEVICE_INFO, bus)
+
+    assert sent == ["clean"]
+    assert command._delegate(Family.NON_V2)._args == _TRIM_ARGS
+    assert record.job_type == "borderrotate"
+
+
+async def test_mow_trim_falls_back_to_v2_and_commits_family() -> None:
+    fake, sent = _transport(_NO_ANSWER, _OK)
+    command = MowTrim()
+
+    with patch.object(Command, "_execute", fake):
+        await command._execute(AsyncMock(), _DEVICE_INFO, AsyncMock())
+
+    assert sent == ["clean", "clean_V2"]
+    assert command._delegate(Family.V2)._args == _TRIM_ARGS
     assert selected(_DEVICE_INFO["did"]) is Family.V2

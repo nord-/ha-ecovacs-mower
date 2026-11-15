@@ -1,4 +1,4 @@
-"""Border mowing for GOAT mowers (issue #12).
+"""Border mowing (issue #12) and trimming (issue #138) for GOAT mowers.
 
 Border mowing is a task type of its own, not the ``Edge`` setting the
 ``border_switch`` entity toggles: that setting decides whether an ordinary job
@@ -22,21 +22,14 @@ button off every class where neither shape has been confirmed.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from deebot_client.command import Command
 from deebot_client.commands.json.clean import Clean, CleanV2
-from deebot_client.message import HandlingResult
 from deebot_client.models import CleanAction
 
-from .commands import _AdaptiveFamily, _TaskClean
+from .commands import _TaskClean, _TaskStart
 from .families import Family
-from .state_precedence import record_for
-
-if TYPE_CHECKING:
-    from deebot_client.authentication import Authenticator
-    from deebot_client.event_bus import EventBus
-    from deebot_client.models import ApiDeviceInfo
 
 
 _TYPE_BORDER = "border"
@@ -57,13 +50,10 @@ class _BorderCleanV2(_BorderClean, CleanV2):
     """Send the border payload on the ``clean_V2`` topic."""
 
 
-class MowBorder(_AdaptiveFamily, Clean):
-    """Start a border job, on whichever clean command the mower answers.
+class MowBorder(_TaskStart):
+    """Start a border job, on whichever clean command the mower answers."""
 
-    Still a ``Clean`` subclass for the reasons ``CleanMower`` gives:
-    ``ExecuteCommand`` supplies the concrete ``_handle_body``, and the patch
-    layer promises that its mow commands are ``Clean`` commands.
-    """
+    _JOB_TYPE = _TYPE_BORDER
 
     def __init__(self, map_id: str) -> None:
         """Build a border start for the map *map_id*."""
@@ -81,24 +71,59 @@ class MowBorder(_AdaptiveFamily, Clean):
         # tell two instances apart — see CleanMower._get_args for the pattern.
         return {"act": action.value, "mid": self._map_id}
 
-    def _delegate(self, family: Family) -> Command:
-        """Return the command for the selected wire family."""
-        return self._delegates[family]
-
-    async def _execute(
-        self,
-        authenticator: Authenticator,
-        device_info: ApiDeviceInfo,
-        event_bus: EventBus,
-    ) -> tuple[HandlingResult, dict[str, Any]]:
-        """Build the two wire variants and let the adaptive family choose."""
-        # Written here, not just sent: closes the window between issuing a
-        # start and the first onCleanInfo push, where a quick pause would
-        # otherwise echo whatever the previous job left behind (issue #94).
-        if (record := record_for(event_bus)) is not None:
-            record.job_type = _TYPE_BORDER
-        self._delegates = {
+    def _make_delegates(self) -> dict[Family, Command]:
+        return {
             Family.NON_V2: _BorderCleanNonV2(self._map_id),
             Family.V2: _BorderCleanV2(self._map_id),
         }
-        return await super()._execute(authenticator, device_info, event_bus)
+
+
+# The trimming job (issue #138): the edge cut with the string trimmer, which
+# the app calls Trimming. Captured from the app on an A3000 LiDAR Pro
+# (``51rcxt``) and an O1200 LiDAR Pro (``2i0fns``), always on ``clean``::
+#
+#     clean  {"act": "start", "content": {"type": "borderrotate", "value": "reid:1"}}
+#
+# ``reid`` read ``reid:1`` on every capture. It is not the map id — the
+# O1200's map has a different nine-digit one — and the app offers no choice of
+# area for a trim, so it is sent as a constant. Stop, pause and resume reuse
+# the job type the mower last reported and need nothing here.
+_TYPE_TRIM = "borderrotate"
+_TRIM_VALUE = "reid:1"
+
+
+class _TrimClean(_TaskClean):
+    """The trimming payload, before a topic is chosen."""
+
+    def __init__(self) -> None:
+        super().__init__(_TYPE_TRIM, _TRIM_VALUE)
+
+
+class _TrimCleanNonV2(_TrimClean, Clean):
+    """Send the trimming payload on the ``clean`` topic."""
+
+
+class _TrimCleanV2(_TrimClean, CleanV2):
+    """Send the trimming payload on the ``clean_V2`` topic."""
+
+
+class MowTrim(_TaskStart):
+    """Start a trimming job, on whichever clean command the mower answers."""
+
+    _JOB_TYPE = _TYPE_TRIM
+
+    def __init__(self) -> None:
+        """Build a trimming start; it takes no argument."""
+        self._delegates: dict[Family, Command] = {}
+        super().__init__(CleanAction.START)
+
+    def _get_args(self, action: CleanAction) -> dict[str, Any]:
+        # Inert as a wire payload, like MowBorder's: the delegates build their
+        # own. The job type keeps repr() apart from the other task starts.
+        return {"act": action.value, "type": _TYPE_TRIM}
+
+    def _make_delegates(self) -> dict[Family, Command]:
+        return {
+            Family.NON_V2: _TrimCleanNonV2(),
+            Family.V2: _TrimCleanV2(),
+        }

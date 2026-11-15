@@ -660,6 +660,18 @@ def test_border_mowing_is_flagged_on_the_classes_where_it_was_confirmed() -> Non
     } == {G1_800, A3000_LIDAR_PRO}
 
 
+def test_trim_mowing_is_flagged_on_the_classes_where_the_app_request_was_captured() -> None:
+    # The app's Trimming request (borderrotate, issue #138) is captured on both
+    # LiDAR Pro classes. Not yet run from Home Assistant on either.
+    from custom_components.ecovacs_mower.deebot_patch import hardware
+
+    assert {
+        class_
+        for class_, profile in hardware.SUPPORTED_CLASSES.items()
+        if profile.trim_mowing
+    } == {O1200, A3000_LIDAR_PRO}
+
+
 @pytest.mark.parametrize("class_", SUPPORTED_CLASSES)
 async def test_the_beacon_update_read_is_wired_for_beacon_ota_classes_only(
     class_: str,

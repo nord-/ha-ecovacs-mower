@@ -42,6 +42,9 @@
       "mow_border": {
         "default": "mdi:vector-square"
       },
+      "mow_trim": {
+        "default": "mdi:content-cut"
+      },
       "play_sound": {
         "default": "mdi:map-marker-radius"
       },

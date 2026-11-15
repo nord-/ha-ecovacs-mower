@@ -357,7 +357,7 @@ class _AdaptiveFamily:
 def has_family(command: Command) -> bool:
     """Whether *command* is one of the commands whose wire format depends on the
     mower's dialect (issue #42) — CleanMower, GetCleanInfoMower,
-    GetMapInfoMower, MowArea and MowBorder today — the only commands
+    GetMapInfoMower, MowArea, MowBorder and MowTrim today — the only commands
     ``family_name()`` means anything for.
 
     Used by ``entity.py`` to decide whether to name the family in the
@@ -400,7 +400,8 @@ class _NoActionRewrite:
 class _TaskClean(_NoActionRewrite):
     """A ``start`` for one named task type, on whichever topic the subclass adds.
 
-    ``spotArea`` (issue #11) and ``border`` (issue #12) share the shape
+    ``spotArea`` (issue #11), ``border`` (issue #12) and ``borderrotate`` (issue #138)
+    share the shape
     ``{"act": "start", "content": {"type": <task>, "value": <argument>}}``
     and differ only in the two strings. One builder keeps them identical the
     day the firmware wants a third field, and keeps the action-rewrite bypass
@@ -418,6 +419,42 @@ class _TaskClean(_NoActionRewrite):
             "act": action.value,
             "content": {"type": self._task, "value": self._value},
         }
+
+
+class _TaskStart(_AdaptiveFamily, Clean):
+    """A task start on whichever clean command the mower answers.
+
+    Still a ``Clean`` subclass for the reasons ``CleanMower`` gives:
+    ``ExecuteCommand`` supplies the concrete ``_handle_body``, and the patch
+    layer promises that its mow commands are ``Clean`` commands. A subclass
+    names the job type it writes into the record and builds the two wire
+    variants.
+    """
+
+    _JOB_TYPE: str
+
+    def _make_delegates(self) -> dict[Family, Command]:
+        """Build the non-V2 and V2 variants of this start."""
+        raise NotImplementedError
+
+    def _delegate(self, family: Family) -> Command:
+        """Return the command for the selected wire family."""
+        return self._delegates[family]
+
+    async def _execute(
+        self,
+        authenticator: Authenticator,
+        device_info: ApiDeviceInfo,
+        event_bus: EventBus,
+    ) -> tuple[HandlingResult, dict[str, Any]]:
+        """Build the two wire variants and let the adaptive family choose."""
+        # Written here, not just sent: closes the window between issuing a
+        # start and the first onCleanInfo push, where a quick pause would
+        # otherwise echo whatever the previous job left behind (issue #94).
+        if (record := record_for(event_bus)) is not None:
+            record.job_type = self._JOB_TYPE
+        self._delegates = self._make_delegates()
+        return await super()._execute(authenticator, device_info, event_bus)
 
 
 class _CleanNonV2(_NoActionRewrite, Clean):

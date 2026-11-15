@@ -82,6 +82,7 @@ def test_profile_flags_default_to_off() -> None:
     assert profile.remaining_plan is False
     assert profile.zone_mowing is False
     assert profile.border_mowing is False
+    assert profile.trim_mowing is False
     assert profile.uwb_beacons is False
     assert profile.core_temperature is False
 

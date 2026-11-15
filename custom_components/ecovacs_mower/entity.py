@@ -108,7 +108,7 @@ class EcovacsEntity[CapabilityEntityT](Entity):
 
         ``command.NAME`` alone would mislead once a family switch has happened:
         every ``_AdaptiveFamily`` command — ``CleanMower``, ``GetCleanInfoMower``,
-        ``MowArea`` and ``MowBorder`` alike — keeps the non-V2 spelling on the
+        ``MowArea``, ``MowBorder`` and ``MowTrim`` alike — keeps the non-V2 spelling on the
         wrapper regardless of which delegate actually went out on the wire, so
         the family is named alongside it — a user asked to send logs needs to
         know whether ``clean`` or ``clean_V2`` was really sent. Only for those,
