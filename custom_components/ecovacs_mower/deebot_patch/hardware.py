@@ -23,6 +23,7 @@ from deebot_client.hardware import _DEVICES, get_static_device_info
 
 from .areas import MowerAreaEvent
 from .commands import (
+    AUTO_PARAMETERS,
     CleanMower,
     GetAnimProtect,
     GetAreaParameter,
@@ -94,6 +95,12 @@ class MowerProfile:
     They are two flags because what a class's app offers differs: an on/off
     with no mode on one, a mode with no off on another (issue #166). A class
     with neither gets no entity for the setting.
+    ``auto_parameters`` gives the class the refresh of the mower-wide (Auto
+    mode) settings, read with their own commands (``AUTO_PARAMETERS``), and,
+    together with the class's ``auto`` entry in ``area_numbers.py``, the
+    entities that show them. It is a flag of its own, apart from
+    ``area_parameters``, because those settings are read and written with
+    different commands, so one says nothing about the other.
     """
 
     device_class: str
@@ -108,6 +115,7 @@ class MowerProfile:
     beacon_ota: bool = False
     edge_cutting: bool = False
     edge_mode: bool = False
+    auto_parameters: bool = False
 
 
 # Device classes this integration patches, and how each one was confirmed:
@@ -201,8 +209,8 @@ class MowerProfile:
 #                     two speeds do not, and its areas have no angle. The
 #                     app values of the per-area levels are taken from the
 #                     same settings read in Auto mode; height raw 2-5 are
-#                     inferred, and no write from Home Assistant has run on
-#                     this class yet.
+#                     inferred. Writes from Home Assistant landed as the app
+#                     shows them on a test version (issue #158).
 #   area_names      — 9bts2s: the ar response captured on a three-lawn O800
 #                     RTK, firmware 1.13.8 (issue #41), after renaming the
 #                     areas in the app:
@@ -333,6 +341,17 @@ class MowerProfile:
 #                     Off for e4gqia on purpose: the A1600 LiDAR Pro reports
 #                     {"enable": 1, "mode": 1} but its app shows no edge
 #                     setting at all.
+#   auto_parameters — xmp9ds: the app's Auto mode writes captured on the
+#                     A1600 RTK, firmware 1.17.11 (issue #23); every value
+#                     the app offers then read back with the Log area
+#                     parameters button, all four reads answering and each
+#                     change in the app arriving within a second (issue
+#                     #163). On firmware 1.17.21 the owner ran the entities
+#                     from Home Assistant: values match the app, and changes
+#                     land both ways (issue #163). Off everywhere else: the
+#                     A1600 LiDAR Pro (e4gqia) answers the four reads too,
+#                     but its app shows no Auto settings to check them
+#                     against.
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile("2i0fns", area_parameters=True, zone_mowing=True),
     "9bts2s": MowerProfile(
@@ -353,7 +372,9 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
         edge_cutting=True,
     ),
     "e4gqia": MowerProfile("e4gqia", area_parameters=True, zone_mowing=True),
-    "xmp9ds": MowerProfile("xmp9ds", area_parameters=True, edge_mode=True),
+    "xmp9ds": MowerProfile(
+        "xmp9ds", area_parameters=True, auto_parameters=True, edge_mode=True
+    ),
     "o4kvvk": MowerProfile("o4kvvk"),
     "6n9pcz": MowerProfile("6n9pcz"),
     "0jbd6s": MowerProfile("0jbd6s"),
@@ -408,6 +429,12 @@ async def patch_device_info(class_: str) -> None:
     * ``MowerBorderSwitchEvent``: given ``GetBorderSwitchMower`` on a class
       with ``edge_cutting`` or ``edge_mode`` only. The library's own
       ``getBorderSwitch`` drops ``mode``, which a write has to send back.
+    * ``CutHeightEvent``, ``CutEfficiencyEvent`` and ``ObstacleHeightEvent``:
+      given their reads on a class with ``auto_parameters`` only, and
+      ``CutDirectionEvent`` the library's ``GetCutDirection`` where the
+      library has not already given it one. The mower pushes none of these
+      settings, so without the refresh a change made while Home Assistant
+      was not listening would never arrive.
     * ``MowerMapInfoEvent``: given ``GetMapInfoMower``, without which a V2
       mower never sends the lawn boundary at all — it answers the request and
       pushes at no other time (issue #81) — and a non-V2 mower does not name
@@ -556,6 +583,15 @@ async def patch_device_info(class_: str) -> None:
         # Names and label points only: getAreaParameter has no validated
         # reading on this class, and nothing here needs one.
         events[MowerAreaEvent] = [GetAreaSet()]
+    if profile.auto_parameters:
+        # Each mower-wide setting is its own event with its own read, asked
+        # when its entity first subscribes and again on every reconnect, so a
+        # change made while Home Assistant was not listening is still picked
+        # up. setdefault, because the direction's event is the library's
+        # CutDirectionEvent, which the library already refreshes with its
+        # own getCutDirection.
+        for parameter in AUTO_PARAMETERS:
+            events.setdefault(parameter.event, [parameter.read()])
 
     object.__setattr__(patched, "_events", MappingProxyType(events))
 

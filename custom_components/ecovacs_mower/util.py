@@ -6,10 +6,12 @@ this integration does not have. ``get_supported_entities`` was restored in phase
 2: the sensor, switch, number and button platforms use it to build their
 entities from ``EcovacsCapabilityEntityDescription``. ``get_name_key`` was
 restored in the same phase for the event platform, which maps ``CleanJobStatus``
-to the state keys strings.json declares.
+to the state keys strings.json declares. ``get_supported_entities`` also takes
+an optional ``include`` predicate that core's does not have, so a platform can
+leave a description out for one device without copying the helper.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from enum import Enum
 import random
 import string
@@ -26,6 +28,8 @@ from .entity import (
 )
 
 if TYPE_CHECKING:
+    from deebot_client.device import Device
+
     from .controller import EcovacsController
 
 
@@ -47,13 +51,20 @@ def get_supported_entities(
     controller: "EcovacsController",
     entity_class: type[EcovacsDescriptionEntity],
     descriptions: tuple[EcovacsCapabilityEntityDescription, ...],
+    include: "Callable[[Device, EcovacsCapabilityEntityDescription], bool]"
+    | None = None,
 ) -> list[EcovacsEntity]:
-    """Return all supported entities for all devices."""
+    """Return all supported entities for all devices.
+
+    ``include``, when given, decides per device whether a supported
+    description becomes an entity after all.
+    """
     return [
         entity_class(device, capability, description)
         for device in controller.devices
         for description in descriptions
         if (capability := description.capability_fn(device.capabilities))
+        and (include is None or include(device, description))
     ]
 
 
