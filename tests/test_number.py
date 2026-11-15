@@ -233,3 +233,65 @@ async def test_the_rain_delay_refuses_to_write_before_it_knows_the_sensor() -> N
     with pytest.raises(HomeAssistantError):
         await entity.async_set_native_value(90.0)
     device.execute_command.assert_not_called()
+
+
+def _mower(class_: str):
+    from unittest.mock import MagicMock
+
+    device = MagicMock()
+    device.device_info = {"did": "did", "name": "name", "class": class_}
+    return device
+
+
+@pytest.mark.parametrize(("class_", "removed"), [("xmp9ds", True), ("e4gqia", False)])
+async def test_a_replaced_cut_direction_leaves_the_entity_registry(
+    hass, class_, removed
+) -> None:
+    # An A1600 RTK set up before it had the Auto direction keeps the old
+    # device-wide entity in the registry; setup removes it. Only that entity,
+    # and only on a class whose Auto direction replaces it.
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.ecovacs_mower.const import DOMAIN
+    from custom_components.ecovacs_mower.number import _remove_replaced_entities
+
+    registry = er.async_get(hass)
+    direction = registry.async_get_or_create("number", DOMAIN, "did_cut_direction")
+    volume = registry.async_get_or_create("number", DOMAIN, "did_volume")
+
+    _remove_replaced_entities(hass, [_mower(class_)])
+
+    assert (registry.async_get(direction.entity_id) is None) is removed
+    assert registry.async_get(volume.entity_id) is not None
+
+
+async def test_setup_leaves_out_the_cut_direction_an_auto_entity_replaces(
+    monkeypatch,
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from custom_components.ecovacs_mower import number
+
+    rtk, lidar = _mower("xmp9ds"), _mower("e4gqia")
+    created = []
+
+    def fake_get_supported_entities(controller, entity_class, descriptions, include):
+        created.extend(
+            (device.device_info["class"], description.key)
+            for device in controller.devices
+            for description in descriptions
+            if include(device, description)
+        )
+        return []
+
+    monkeypatch.setattr(number, "get_supported_entities", fake_get_supported_entities)
+    monkeypatch.setattr(number, "_remove_replaced_entities", MagicMock())
+    monkeypatch.setattr(number, "async_setup_area_numbers", AsyncMock())
+    entry = MagicMock()
+    entry.runtime_data.devices = [rtk, lidar]
+
+    await number.async_setup_entry(MagicMock(), entry, MagicMock())
+
+    assert ("xmp9ds", "cut_direction") not in created
+    assert ("xmp9ds", "volume") in created
+    assert ("e4gqia", "cut_direction") in created

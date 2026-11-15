@@ -52,3 +52,39 @@ def test_only_devices_with_the_capability_get_an_entity() -> None:
     created = get_supported_entities(controller, _Entity, (has_it, lacks_it))
 
     assert len(created) == 1
+
+
+def test_include_leaves_a_description_out_for_one_device() -> None:
+    """The predicate decides per device, after the capability filter."""
+    from dataclasses import dataclass
+    from unittest.mock import Mock
+
+    from custom_components.ecovacs_mower.entity import (
+        EcovacsCapabilityEntityDescription,
+    )
+    from custom_components.ecovacs_mower.util import get_supported_entities
+
+    @dataclass(kw_only=True, frozen=True)
+    class _Description(EcovacsCapabilityEntityDescription):
+        pass
+
+    class _Entity:
+        def __init__(
+            self, device: object, capability: object, description: object
+        ) -> None:
+            self.device = device
+            self.description = description
+
+    description = _Description(key="it", capability_fn=lambda caps: caps.battery)
+    kept, dropped = Mock(), Mock()
+    controller = Mock()
+    controller.devices = [kept, dropped]
+
+    created = get_supported_entities(
+        controller,
+        _Entity,
+        (description,),
+        include=lambda device, _description: device is kept,
+    )
+
+    assert [entity.device for entity in created] == [kept]
