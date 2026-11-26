@@ -29,6 +29,11 @@ grows with every beacon. A getter still unanswered when it is alone in its
 batch, or left out of an answer that carries others, is sent as the plain
 command it is, and so is every getter of a batch refused any other way.
 
+The sizes still save requests where they are known: a batch is cut before it
+is asked, where the replies measured on the issue say its answer would pass
+the cap, so a list that would certainly be refused is not sent whole first.
+The split stays behind the estimate for whatever it gets wrong.
+
 No other class has been checked, so a class gets this only through the
 ``get_info`` flag on its ``MowerProfile``.
 """
@@ -36,7 +41,8 @@ No other class has been checked, so a class gets this only through the
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Final
 
 from deebot_client.command import CommandWithMessageHandling
 from deebot_client.commands.json.common import (
@@ -63,6 +69,41 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 _FAILED = HandlingResult(HandlingState.FAILED)
+
+# How large a getInfo answer will be, estimated before it is asked for, in
+# bytes of the whole devmanager.do answer as compact JSON: what an answer
+# with no replies comes to, and what each getter's reply adds on top of its
+# name, two quotes, a colon and a comma. Measured on a G1-800 (77atlz,
+# firmware 1.36.208) from the app's own batches on the issue, for the
+# getters this integration refreshes on that class.
+_EMPTY_ANSWER = 196
+_REPLY_SIZES: Final = MappingProxyType(
+    {
+        "getAnimProtect": 68,
+        "getBattery": 52,
+        "getBorderSwitch": 50,
+        "getChargeState": 59,
+        "getChildLock": 37,
+        "getCleanInfo_V2": 62,
+        "getCrossMapBorderWarning": 41,
+        "getCutDirection": 49,
+        "getError": 39,
+        "getMoveupWarning": 41,
+        "getProtectState": 107,
+        "getRainDelay": 53,
+        "getSafeProtect": 41,
+        "getStats": 88,
+        "getUWBOta": 58,
+        "getVolume": 52,
+    }
+)
+# A getter nobody measured counts as a reply larger than all but one of the
+# measured ones: the cost of guessing too large is a batch cut early, the
+# cost of guessing too small an answer refused and asked again in halves.
+_UNMEASURED_REPLY = 100
+# An answer of 1069 bytes came back and one of about 1081 did not, so a
+# batch is closed before its estimate passes 1000.
+_ANSWER_BUDGET = 1000
 
 
 class _InfoRequest(JsonCommand):
@@ -181,7 +222,7 @@ class GetInfo(JsonCommandWithMessageHandling):
         # Set once a request got no answer: what it came back with, and the
         # end of asking, in batches or alone.
         unanswered: tuple[HandlingResult, dict[str, Any]] | None = None
-        pending = [members]
+        pending = _chunks(members)
         while pending:
             batch = pending.pop(0)
             try:
@@ -264,6 +305,32 @@ class GetInfo(JsonCommandWithMessageHandling):
         if reached:
             return HandlingResult.success(), last_response
         return unanswered if unanswered is not None else (_FAILED, last_response)
+
+
+def _chunks(members: list[_Member]) -> list[list[_Member]]:
+    """*members* in their order, cut into batches whose answers should fit.
+
+    Greedy: a batch takes getters until the next one would carry its
+    estimated answer past ``_ANSWER_BUDGET``. A getter estimated over the
+    budget on its own still gets a batch of its own, which the mower then
+    answers or refuses; either way it ends up answered or sent alone.
+    """
+    chunks: list[list[_Member]] = []
+    size = 0
+    for member in members:
+        reply = _reply_size(member.name)
+        if chunks and size + reply <= _ANSWER_BUDGET:
+            chunks[-1].append(member)
+            size += reply
+        else:
+            chunks.append([member])
+            size = _EMPTY_ANSWER + reply
+    return chunks
+
+
+def _reply_size(name: str) -> int:
+    """What the reply of the getter *name* is expected to add to an answer."""
+    return len(name) + 4 + _REPLY_SIZES.get(name, _UNMEASURED_REPLY)
 
 
 def _answers(
