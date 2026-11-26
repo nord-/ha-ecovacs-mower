@@ -65,6 +65,7 @@ from .deebot_patch import (
 )
 from .deebot_patch.areas import MowerAreaEvent
 from .deebot_patch.commands import GetMapTrack, GetPosMower
+from .deebot_patch.info import state_and_stats
 from .deebot_patch.hardware import (
     SUPPORTED_CLASSES,
     patch_device_info,
@@ -478,6 +479,9 @@ class EcovacsController:
     async def _poll(self, device: Device, now: datetime) -> None:
         """One tick: refresh the state, stats, network info and position.
 
+        The state and the stats are one ``getInfo`` on a class that has
+        been checked for it; see ``refresh_state_and_stats``.
+
         One getStats notifies both StatsEvent and MowerStatsEvent, so
         refreshing StatsEvent — which Device.__init__ always subscribes to —
         covers the mowing_progress sensor too without depending on it being
@@ -512,13 +516,37 @@ class EcovacsController:
         is a complete plan for the job it is on, which update_remaining
         treats as the mower's own word and nothing is lost either way.
         """
-        device.events.request_refresh(StateEvent)
-        device.events.request_refresh(StatsEvent)
+        await self.refresh_state_and_stats(device)
         device.events.request_refresh(NetworkInfoEvent)
         await device.execute_command(GetPosMower())
         profile = profile_for_class(device.device_info["class"])
         if profile is not None and profile.remaining_plan:
             await device.execute_command(GetMapTrack())
+
+    async def refresh_state_and_stats(self, device: Device) -> None:
+        """Ask for the mower's state and stats, in one request where it can be.
+
+        A class whose profile has ``get_info`` is asked with one ``getInfo``
+        for the charge state, the clean info and the stats (issue #85).
+        Every other class gets the two refreshes it always had, which are
+        three requests.
+
+        The batch goes out as a command of its own and not through the event
+        bus, which refreshes one event type at a time and so has no place
+        for a request that answers two. The replies still reach the same
+        handlers and publish the same events. Unlike the bus, this awaits
+        the answer, and the bus's skip of a refresh that is already running
+        does not apply: two calls close together are two requests.
+
+        Public: ``lawn_mower.py`` calls it from ``async_update``, which is
+        what the ``update_entity`` service runs.
+        """
+        profile = profile_for_class(device.device_info["class"])
+        if profile is not None and profile.get_info:
+            await device.execute_command(state_and_stats())
+            return
+        device.events.request_refresh(StateEvent)
+        device.events.request_refresh(StatsEvent)
 
     async def teardown(self) -> None:
         """Disconnect controller."""

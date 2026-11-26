@@ -83,21 +83,50 @@ async def test_one_tick_asks_for_the_state_and_the_stats() -> None:
     asked for directly: Device.__init__ always subscribes to it, so the stats
     round trip does not depend on the progress sensor being enabled.
     """
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
 
-    from deebot_client.events import StateEvent, StatsEvent
+    from deebot_client.events import AvailabilityEvent, StateEvent, StatsEvent
 
+    from custom_components.ecovacs_mower.controller import EcovacsController
     from custom_components.ecovacs_mower.lawn_mower import EcovacsMower
 
     device = MagicMock()
-    device.device_info = {"did": "did"}
-    mower = EcovacsMower(device, MagicMock())
-    mower._subscribed_events = {StateEvent}
+    device.device_info = {"did": "did", "class": "2i0fns"}
+    device.execute_command = AsyncMock(return_value={})
+    mower = EcovacsMower(device, EcovacsController.__new__(EcovacsController))
+    mower._subscribed_events = {AvailabilityEvent, StateEvent}
 
     await mower.async_update()
 
     asked = {call.args[0] for call in device.events.request_refresh.call_args_list}
-    assert asked == {StateEvent, StatsEvent}
+    assert asked == {AvailabilityEvent, StateEvent, StatsEvent}
+    assert device.events.request_refresh.call_count == 3
+    device.execute_command.assert_not_awaited()
+
+
+async def test_an_update_asks_a_g1_for_the_state_and_the_stats_in_one_request() -> None:
+    """The same batch the tick sends, reachable while docked (issue #85)."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deebot_client.events import AvailabilityEvent, StateEvent
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.info import state_and_stats
+    from custom_components.ecovacs_mower.lawn_mower import EcovacsMower
+
+    device = MagicMock()
+    device.device_info = {"did": "did", "class": "77atlz"}
+    device.execute_command = AsyncMock(return_value={})
+    mower = EcovacsMower(device, EcovacsController.__new__(EcovacsController))
+    mower._subscribed_events = {AvailabilityEvent, StateEvent}
+
+    await mower.async_update()
+
+    device.execute_command.assert_awaited_once_with(state_and_stats())
+    # Whatever else the entity subscribes to is still refreshed, and the
+    # state is not asked for a second time through the bus.
+    asked = [call.args[0] for call in device.events.request_refresh.call_args_list]
+    assert asked == [AvailabilityEvent]
 
 
 async def test_a_dropped_leaving_push_is_still_bounded_by_the_poll() -> None:
