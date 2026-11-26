@@ -696,6 +696,15 @@ class MowerStateRefresh(JsonCommandWithMessageHandling):
         # some future path does reach it, the log says so.
         return HandlingResult.analyse()
 
+    @staticmethod
+    def halves() -> tuple[GetChargeStateMower, GetCleanInfoMower]:
+        """The two commands this one stands for, in the order they are sent.
+
+        ``GetInfo`` names the same two when a batch carries the state
+        refresh, and hands their replies over in this order.
+        """
+        return GetChargeStateMower(), GetCleanInfoMower()
+
     async def _execute(
         self,
         authenticator: Authenticator,
@@ -703,7 +712,8 @@ class MowerStateRefresh(JsonCommandWithMessageHandling):
         event_bus: EventBus,
     ) -> tuple[HandlingResult, dict[str, Any]]:
         """Ask for the charge state, then for the clean info."""
-        result, response = await GetChargeStateMower()._execute(
+        charge, clean = self.halves()
+        result, response = await charge._execute(
             authenticator, device_info, event_bus
         )
         if response.get("errno") == 4200:
@@ -727,9 +737,7 @@ class MowerStateRefresh(JsonCommandWithMessageHandling):
         # because neither GetChargeState nor GetChargeStateMower ever
         # populates that field. If a future charge handler starts requesting
         # follow-up commands, they would be swallowed here without a trace.
-        return await GetCleanInfoMower()._execute(
-            authenticator, device_info, event_bus
-        )
+        return await clean._execute(authenticator, device_info, event_bus)
 
 
 class GetProtectState(JsonCommandWithMessageHandling, OnProtectState):

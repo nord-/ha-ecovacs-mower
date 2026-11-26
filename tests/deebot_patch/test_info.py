@@ -27,6 +27,7 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
     GetChargeStateMower,
     GetCleanInfoMower,
     GetStatsMower,
+    MowerStateRefresh,
 )
 from custom_components.ecovacs_mower.deebot_patch.families import (
     Family,
@@ -524,14 +525,66 @@ async def test_the_device_does_not_count_as_reached_when_none_did() -> None:
     assert result.device_reached is False
 
 
-def test_the_poll_asks_for_charge_state_clean_info_and_stats_in_that_order() -> None:
+def test_the_poll_asks_for_the_state_refresh_and_the_stats() -> None:
+    # The state is the refresh every patched class has, whose halves are
+    # the charge state and the clean info, in that order (issue #67).
     batch = state_and_stats()
 
     assert [type(command) for command in batch._commands] == [
-        GetChargeStateMower,
-        GetCleanInfoMower,
+        MowerStateRefresh,
         GetStatsMower,
     ]
+    assert [type(half) for half in MowerStateRefresh.halves()] == [
+        GetChargeStateMower,
+        GetCleanInfoMower,
+    ]
+
+
+async def test_a_getter_asked_alone_holds_back_only_its_own_command() -> None:
+    # The clean info of a dialect not learned yet is left out of the batch
+    # and waits out an errno 500 alone. The stats arrived in the same answer
+    # and are handled before that, not after.
+    bus = _bus()
+    handled_before: list[bool] = []
+    mower = _Mower(unknown=frozenset({"getCleanInfo"}))
+
+    async def transport(command, authenticator, device_info):
+        if command.NAME == "getCleanInfo":
+            handled_before.append(bus.get_last_event(StatsEvent) is not None)
+        return await mower(command, authenticator, device_info)
+
+    with patch.object(Command, "_execute_api_request", _transport(transport)):
+        await state_and_stats()._execute(AsyncMock(), _DEVICE_INFO, bus)
+
+    assert handled_before == [True]
+
+
+async def test_two_commands_that_read_one_getter_name_it_once() -> None:
+    # The library's GetBorderSwitch and the patch layer's GetBorderSwitchMower
+    # both read getBorderSwitch and publish different events: one name in the
+    # request, and the reply goes to both.
+    from deebot_client.commands.json import GetBorderSwitch
+    from deebot_client.events import BorderSwitchEvent
+
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        GetBorderSwitchMower,
+    )
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerBorderSwitchEvent,
+    )
+
+    reply = {"code": 0, "msg": "ok", "data": {"enable": 1, "mode": 0}}
+    mower = _Mower()
+    bus = _bus()
+    library = _collect(bus, BorderSwitchEvent)
+    patched = _collect(bus, MowerBorderSwitchEvent)
+
+    with patch.dict(_REPLIES, {"getBorderSwitch": reply}):
+        await _run(mower, GetInfo([GetBorderSwitch(), GetBorderSwitchMower()]), bus)
+
+    assert mower.sent == [("getInfo", "getBorderSwitch")]
+    assert len(library) == 1
+    assert len(patched) == 1
 
 
 def test_two_batches_of_the_same_getters_are_equal() -> None:

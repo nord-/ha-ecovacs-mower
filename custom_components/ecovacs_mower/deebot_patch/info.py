@@ -34,18 +34,26 @@ is asked, where the replies measured on the issue say its answer would pass
 the cap, so a list that would certainly be refused is not sent whole first.
 The split stays behind the estimate for whatever it gets wrong.
 
+Two callers send it. The five-minute tick asks for the state and the stats
+(``state_and_stats``), and ``RefreshBatch`` carries the event bus's own
+refreshes: it holds the getters among them for as long as a burst of
+refreshes lasts, at startup and when the mower is reached again after being
+unavailable, and sends them together.
+
 No other class has been checked, so a class gets this only through the
 ``get_info`` flag on its ``MowerProfile``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, TypeGuard
 
-from deebot_client.command import CommandWithMessageHandling
+from deebot_client.command import Command, CommandWithMessageHandling
 from deebot_client.commands.json.common import (
+    ExecuteCommand,
     JsonCommand,
     JsonCommandWithMessageHandling,
 )
@@ -53,9 +61,9 @@ from deebot_client.exceptions import ApiTimeoutError
 from deebot_client.message import HandlingResult, HandlingState
 
 from .commands import (
-    GetChargeStateMower,
     GetCleanInfoMower,
     GetStatsMower,
+    MowerStateRefresh,
     _AdaptiveFamily,
 )
 
@@ -63,6 +71,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from deebot_client.authentication import Authenticator
+    from deebot_client.device import DeviceCommandExecute
     from deebot_client.event_bus import EventBus
     from deebot_client.models import ApiDeviceInfo
 
@@ -157,15 +166,20 @@ class GetInfo(JsonCommandWithMessageHandling):
     arguments: a batch names getters and has no place for anything else.
     Each reply is handed to its command's own handler, in the order the
     commands were given, so whatever a handler records or publishes it still
-    does, and a handler that relies on another having run first can say so by
-    its place in the list. The state poll does: the charge state is read
-    before the clean info is interpreted (issue #67).
+    does. A command stands for one getter, except ``MowerStateRefresh``,
+    which stands for its two halves, handled in turn: the charge state is
+    read before the clean info is interpreted (issue #67). Two commands that
+    read the same getter share its name in the request and its reply.
 
     A getter the batch did not answer is asked alone, as the command it is,
-    at its place in that same order. That covers a name this firmware does
+    once every reply that did arrive has been handled, and the halves of its
+    command that come after it wait with it. So a slow one holds back
+    nothing else: the clean info of a mower whose dialect has not been
+    learned yet waits out an ``errno 500`` of about 20 seconds before the
+    other family is tried (issue #42). That covers a name this firmware does
     not know in a batch, a getter whose reply carries a failure code, and
-    the clean-info getter on a mower whose dialect has not been learned yet,
-    which only the plain command can find out.
+    that same clean-info getter, whose dialect only the plain command can
+    find out.
 
     Nothing is retried when a request itself gets no answer: an offline
     mower or a timeout would only be waited out again, once per getter. The
@@ -210,10 +224,15 @@ class GetInfo(JsonCommandWithMessageHandling):
         event_bus: EventBus,
     ) -> tuple[HandlingResult, dict[str, Any]]:
         """Ask for every getter, splitting a batch that comes back empty."""
-        members = [
-            _Member(command, device_info["did"]) for command in self._commands
+        did = device_info["did"]
+        groups = [
+            [_Member(part, did) for part in _parts(command)]
+            for command in self._commands
         ]
-        if not members:
+        names = list(
+            dict.fromkeys(member.name for group in groups for member in group)
+        )
+        if not names:
             return _FAILED, {}
 
         replies: dict[str, dict[str, Any]] = {}
@@ -222,13 +241,13 @@ class GetInfo(JsonCommandWithMessageHandling):
         # Set once a request got no answer: what it came back with, and the
         # end of asking, in batches or alone.
         unanswered: tuple[HandlingResult, dict[str, Any]] | None = None
-        pending = _chunks(members)
+        pending = _chunks(names)
         while pending:
             batch = pending.pop(0)
             try:
-                response = await _InfoRequest(
-                    [member.name for member in batch]
-                )._execute_api_request(authenticator, device_info)
+                response = await _InfoRequest(batch)._execute_api_request(
+                    authenticator, device_info
+                )
             except ApiTimeoutError:
                 _LOGGER.warning(
                     "Could not execute command %s for %s: Timeout reached",
@@ -252,15 +271,11 @@ class GetInfo(JsonCommandWithMessageHandling):
 
             last_response = response
             answered, header, too_large = _answers(response)
-            found = {
-                member.name: answered[member.name]
-                for member in batch
-                if member.name in answered
-            }
+            found = {name: answered[name] for name in batch if name in answered}
             if not found and too_large and len(batch) > 1:
                 _LOGGER.debug(
                     "getInfo answered none of %s; asking again in two halves",
-                    [member.name for member in batch],
+                    batch,
                 )
                 middle = len(batch) // 2
                 pending[:0] = [batch[:middle], batch[middle:]]
@@ -272,16 +287,29 @@ class GetInfo(JsonCommandWithMessageHandling):
                 # getter not answered yet goes out as the plain command.
                 _LOGGER.debug(
                     "getInfo answered none of %s: %s; asking for each alone",
-                    [member.name for member in batch],
+                    batch,
                     response.get("resp"),
                 )
                 break
             replies.update(found)
 
         reached = False
-        for member in members:
+        # Every reply that arrived is handled first; a getter that has to be
+        # asked alone comes after, with the halves of its own command that
+        # follow it.
+        later: list[_Member] = []
+        for group in groups:
+            for index, member in enumerate(group):
+                reply = replies.get(member.name)
+                if not _usable(reply):
+                    later.extend(group[index:])
+                    break
+                member.wire.handle(event_bus, {"header": header, "body": reply})
+                reached = True
+
+        for member in later:
             reply = replies.get(member.name)
-            if reply is not None and reply.get("code", 0) == 0:
+            if _usable(reply):
                 member.wire.handle(event_bus, {"header": header, "body": reply})
                 reached = True
                 continue
@@ -307,23 +335,37 @@ class GetInfo(JsonCommandWithMessageHandling):
         return unanswered if unanswered is not None else (_FAILED, last_response)
 
 
-def _chunks(members: list[_Member]) -> list[list[_Member]]:
-    """*members* in their order, cut into batches whose answers should fit.
+def _parts(
+    command: CommandWithMessageHandling,
+) -> tuple[CommandWithMessageHandling, ...]:
+    """The getters *command* stands for, in the order they are handled."""
+    if isinstance(command, MowerStateRefresh):
+        return command.halves()
+    return (command,)
+
+
+def _usable(reply: dict[str, Any] | None) -> TypeGuard[dict[str, Any]]:
+    """Whether *reply* is one a getter's handler can take: there, and ``code`` 0."""
+    return reply is not None and reply.get("code", 0) == 0
+
+
+def _chunks(names: list[str]) -> list[list[str]]:
+    """*names* in their order, cut into batches whose answers should fit.
 
     Greedy: a batch takes getters until the next one would carry its
     estimated answer past ``_ANSWER_BUDGET``. A getter estimated over the
     budget on its own still gets a batch of its own, which the mower then
     answers or refuses; either way it ends up answered or sent alone.
     """
-    chunks: list[list[_Member]] = []
+    chunks: list[list[str]] = []
     size = 0
-    for member in members:
-        reply = _reply_size(member.name)
+    for name in names:
+        reply = _reply_size(name)
         if chunks and size + reply <= _ANSWER_BUDGET:
-            chunks[-1].append(member)
+            chunks[-1].append(name)
             size += reply
         else:
-            chunks.append([member])
+            chunks.append([name])
             size = _EMPTY_ANSWER + reply
     return chunks
 
@@ -370,9 +412,132 @@ def _answers(
 def state_and_stats() -> GetInfo:
     """What the five-minute tick asks: charge state, clean info and stats.
 
-    The charge state comes first for the reason ``MowerStateRefresh`` awaits
-    it first: the clean info is interpreted against the dock record the
-    charge handler writes (issue #67). One answer cannot race itself, and
-    the replies are handled in this order.
+    The state is ``MowerStateRefresh``, the patched classes' state refresh,
+    so its two halves go out in its order: the clean info is interpreted
+    against the dock record the charge handler writes (issue #67). One
+    answer cannot race itself, and the replies are handled in this order.
     """
-    return GetInfo([GetChargeStateMower(), GetCleanInfoMower(), GetStatsMower()])
+    return GetInfo([MowerStateRefresh(), GetStatsMower()])
+
+
+def _batchable(command: Command) -> bool:
+    """Whether *command* can be named in a ``getInfo``.
+
+    A batch names getters and carries nothing else, so a getter qualifies
+    when its request is its bare name: no arguments, the library's own
+    payload, and no ``_execute`` of its own, which would mean it sends
+    something other than that one request. Of what a G1-800 is refreshed
+    with, two do not: ``GetLifeSpanMower``, whose payload is an explicit
+    empty list (issue #101), which the probes on the issue found no way to
+    batch, and ``GetMapInfoMower``, which names a map type and sends an
+    ``appping`` first. Two commands with an ``_execute`` of their own do
+    qualify, because
+    ``GetInfo`` knows how to name them: the clean info, through the delegate
+    of its family, and ``MowerStateRefresh``, through its halves. An action
+    never does, whatever its arguments.
+    """
+    if isinstance(command, MowerStateRefresh | GetCleanInfoMower):
+        return True
+    return (
+        isinstance(command, JsonCommandWithMessageHandling)
+        and not isinstance(command, ExecuteCommand)
+        and not command._args
+        and type(command)._get_payload is JsonCommand._get_payload
+        and type(command)._execute is Command._execute
+    )
+
+
+# A burst of refreshes is over once nothing has joined it for this long, and
+# is sent after the longest wait at the latest, however many are still coming.
+_QUIET = 0.25
+_LONGEST = 2.0
+
+
+class RefreshBatch:
+    """Stands between a mower's event bus and the device, batching getters.
+
+    The bus refreshes one event at a time, each with its own commands, and
+    asks for nearly every refresh at once on two occasions: while the
+    entities subscribe at startup, and when the mower is reached again after
+    being unavailable. On a G1-800 that is twenty-odd requests within a
+    second (issue #85). Held here for a moment, the getters among them go
+    out together as one ``GetInfo``, which cuts them into batches where the
+    answer would get too large.
+
+    The first refresh of a burst waits for the burst to end and sends it.
+    It runs in one of the bus's own tasks, as every refresh does, and the
+    bus cancels those at teardown, so nothing here outlives the device.
+
+    While a refresh waits here, the bus counts its event's refresh as
+    running, as it does while a request is in flight, and skips a second one
+    for that event in the meantime. Nothing waits longer than about
+    ``_LONGEST``. A burst that turns out to hold a single command
+    sends that command as it is, and so does a refresh that cannot be named
+    in a batch (see ``_batchable``): nothing changes for a refresh that
+    comes alone.
+    """
+
+    def __init__(self, execute: DeviceCommandExecute) -> None:
+        """Initialize the batch in front of the device's *execute*."""
+        self._execute = execute
+        self._held: list[tuple[Command, asyncio.Future[dict[str, Any]]]] = []
+
+    async def __call__(self, command: Command) -> dict[str, Any]:
+        """Send *command* for the bus, held with the rest of its burst."""
+        if not _batchable(command):
+            return await self._execute(command)
+        sent: asyncio.Future[dict[str, Any]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._held.append((command, sent))
+        if len(self._held) == 1:
+            await self._send_when_quiet()
+        return await sent
+
+    async def _send_when_quiet(self) -> None:
+        """Wait for the burst to end, then send it and release its refreshes."""
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        try:
+            while True:
+                held = len(self._held)
+                await asyncio.sleep(_QUIET)
+                if len(self._held) == held or loop.time() - started >= _LONGEST:
+                    break
+        except asyncio.CancelledError:
+            # Teardown: whatever joined is cancelled with it rather than
+            # left waiting on a burst nobody will send.
+            burst, self._held = self._held, []
+            for _, sent in burst:
+                sent.cancel()
+            raise
+
+        burst, self._held = self._held, []
+        response: dict[str, Any] = {}
+        try:
+            response = await self._send([command for command, _ in burst])
+        finally:
+            for _, sent in burst:
+                if not sent.done():
+                    sent.set_result(response)
+
+    async def _send(self, commands: list[Command]) -> dict[str, Any]:
+        """Send *commands*, each once, as one ``GetInfo`` or as the one there is.
+
+        Two refreshes with the same command are one: the bus refreshes
+        ``StatsEvent`` and ``MowerStatsEvent`` with the same ``getStats``, and
+        ``AvailabilityEvent`` and ``BatteryEvent`` with the same
+        ``getBattery``. Same means the same class as well as the same name,
+        which ``Command.__eq__`` does not check: the library's
+        ``GetBorderSwitch`` and ``GetBorderSwitchMower`` are equal there and
+        publish different events.
+        """
+        unique: dict[tuple[type[Command], str], Command] = {}
+        for command in commands:
+            unique.setdefault((type(command), command.NAME), command)
+        if len(unique) == 1:
+            (command,) = unique.values()
+            return await self._execute(command)
+        batch = GetInfo(list(unique.values()))  # type: ignore[arg-type]
+        _LOGGER.debug("Refreshing %d commands in one getInfo: %s", len(unique), batch)
+        return await self._execute(batch)

@@ -372,6 +372,18 @@ async def test_the_profile_is_registered_with_the_devices_bus(hass) -> None:
     assert profile.area_nogo is True
 
 
+async def test_only_a_class_checked_for_getinfo_has_its_refreshes_batched(
+    hass,
+) -> None:
+    """Issue #85: the bus's refreshes go out as getInfo on a G1-800 alone."""
+    from custom_components.ecovacs_mower.deebot_patch.info import RefreshBatch
+
+    g1, other = await _initialize_with(hass, ("77atlz", "2i0fns"))
+
+    assert isinstance(g1.events._execute_command, RefreshBatch)
+    assert not isinstance(other.events._execute_command, RefreshBatch)
+
+
 async def test_supported_mowers_are_verified(hass, caplog) -> None:
     """Every supported class must pass the verification, without a warning."""
     import logging

@@ -104,9 +104,11 @@ class MowerProfile:
     ``area_parameters``, because those settings are read and written with
     different commands, so one says nothing about the other.
     ``get_info`` makes the five-minute tick ask for the charge state, the
-    clean info and the stats in one ``getInfo`` request instead of three
-    (issue #85). It wires nothing into the capabilities: the controller
-    reads it when the tick runs.
+    clean info and the stats in one ``getInfo`` request instead of three,
+    and sends the event bus's refreshes through a ``RefreshBatch``, so that
+    the burst of them at startup and on reconnect goes out as ``getInfo``
+    batches too (issue #85). It wires nothing into the capabilities: the
+    controller reads it when it builds the device and when the tick runs.
     """
 
     device_class: str
@@ -372,8 +374,11 @@ class MowerProfile:
 #                     sent through devmanager.do answers a list the caller
 #                     chooses, leaves an unknown name out without an error,
 #                     and comes back with no replies at all once the whole
-#                     answer would pass about 1 KB (issue #85). No other
-#                     class has been asked.
+#                     answer would pass about 1 KB (issue #85). The getters
+#                     the bus refreshes this class with were answered inside
+#                     a batch on the issue, except getNetInfo, never asked
+#                     in one, and getLifeSpan, which fails there and is not
+#                     batched. No other class has been asked.
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile(
         "2i0fns", area_parameters=True, zone_mowing=True, trim_mowing=True

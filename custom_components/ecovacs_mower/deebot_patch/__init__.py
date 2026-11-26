@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from importlib.metadata import version
 import logging
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 from deebot_client.capabilities import Capabilities
 from deebot_client.commands import COMMANDS_WITH_MQTT_P2P_HANDLING
@@ -37,6 +37,7 @@ from .hardware import (
     patch_device_info,
     profile_for_class,
 )
+from .info import RefreshBatch
 from .map_messages import (
     OnArI,
     OnMapInfo,
@@ -83,6 +84,9 @@ from .messages import (
 from .state_precedence import register as register_mower_bus
 from .zonal import MowArea
 
+if TYPE_CHECKING:
+    from deebot_client.event_bus import EventBus
+
 __all__ = [
     "SUPPORTED_CLASSES",
     "AccountAuthenticator",
@@ -96,6 +100,7 @@ __all__ = [
     "SetAreaParameter",
     "apply",
     "attempted_family_name",
+    "batch_refreshes",
     "has_family",
     "patch_device_info",
     "profile_for_class",
@@ -275,3 +280,24 @@ def verify_capabilities(capabilities: Capabilities, class_: str) -> None:
                 f"{[type(c).__name__ for c in area_commands]} instead of "
                 f"[GetAreaSet]"
             )
+
+
+def batch_refreshes(event_bus: EventBus) -> None:
+    """Send *event_bus*'s refreshes through a ``RefreshBatch`` from now on.
+
+    The bus holds the device's ``execute_command`` as ``_execute_command``
+    and sends a refresh through nothing else (``_call_refresh_function``),
+    so wrapping that one attribute catches every refresh it sends and
+    nothing an entity sends itself. The commands an entity sends go out as
+    before.
+
+    The caller must not yield to the event loop between ``Device()`` and
+    this call. The constructor's own subscriptions have already asked for
+    their first refreshes, each in a task of its own, and a task looks the
+    attribute up only once it starts.
+    """
+    execute = getattr(event_bus, "_execute_command", None)
+    if not callable(execute):
+        _fail("EventBus no longer sends its refreshes through _execute_command")
+    if not isinstance(execute, RefreshBatch):
+        event_bus._execute_command = RefreshBatch(execute)  # type: ignore[misc]
