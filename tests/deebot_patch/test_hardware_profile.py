@@ -31,14 +31,23 @@ def test_zone_mowing_is_enabled_only_for_validated_class() -> None:
     both O800 RTK class strings and the O1200 RTK."""
     assert {
         class_ for class_, profile in SUPPORTED_CLASSES.items() if profile.zone_mowing
-    } == {"e4gqia", "77atlz", "2i0fns", "51rcxt", "9bts2s", "2px96q", "qhq6i0"}
+    } == {
+        "e4gqia",
+        "77atlz",
+        "2i0fns",
+        "51rcxt",
+        "9bts2s",
+        "2px96q",
+        "qhq6i0",
+        "7hwfxz",
+    }
 
 
 def test_area_names_are_enabled_only_for_the_validated_class() -> None:
     """The ar row's shape is not inferred from another class's."""
     assert {
         class_ for class_, profile in SUPPORTED_CLASSES.items() if profile.area_names
-    } == {"9bts2s"}
+    } == {"9bts2s", "7hwfxz"}
 
 
 def test_area_nogo_is_enabled_only_for_the_validated_class() -> None:

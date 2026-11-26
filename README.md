@@ -119,6 +119,7 @@ merely that the class string was seen:
 | **Ecovacs GOAT O1200 RTK** | `qhq6i0` | a user, firmware 1.17.11 — zone mowing confirmed ([#140](https://github.com/nord-/ha-ecovacs-mower/issues/140)). Not the O1200 LiDAR Pro above: the RTK and LiDAR Pro variants are different machines |
 | **Ecovacs GOAT O500 Panorama** | `300lc5` | a user — start, pause, resume and dock confirmed ([#152](https://github.com/nord-/ha-ecovacs-mower/issues/152)) |
 | **Ecovacs GOAT A3000 LiDAR** | `cr0e4u` | a user — start, pause and state confirmed ([#168](https://github.com/nord-/ha-ecovacs-mower/issues/168)). A second class reported as the A3000 LiDAR, besides `o4kvvk`; not the A3000 LiDAR Pro (`51rcxt`) |
+| **Ecovacs GOAT O600 RTK** | `7hwfxz` | a user, firmware 2.13.8 — controls and state, zone mowing and area names confirmed ([#176](https://github.com/nord-/ha-ecovacs-mower/issues/176)). A second class string for the O600 RTK besides `6n9pcz` |
 
 The A1600 ships as two machines, and they report different device classes:
 the LiDAR Pro is `e4gqia`, the RTK is `xmp9ds`. Both rows above are real, and
@@ -274,7 +275,7 @@ the models that use them:
 | `number` | 3 + one per setting per saved area (four on the A1600, A3000 and O1200 LiDAR Pro, three on the A1600 RTK); on the A1600 RTK 2 + four Auto settings + three per saved area | Notification volume, cutting direction, rain delay duration, plus cutting height, mowing speed, obstacle height and, where the model has it per area, cutting direction for each saved area; on the A1600 RTK also the four Auto mode settings for the whole mower, whose cutting direction replaces the device-wide one (see below) |
 | `button` | 8, 9 on the G1-800 and O1200 LiDAR Pro, 10 on the A3000 LiDAR Pro | Reset each of the four consumable lifespans, "Locate mower" (plays a sound on the device), "Clear fault" (releases the latched fault; see below), "End mowing task" (ends the current job for good; see below), "Log area parameters" (diagnostic, disabled by default; shows the raw per-area values to help support another model, see below), "Mow border" on the G1-800 and A3000 LiDAR Pro (starts a border job; see below) and "Trim edges" on the O1200 LiDAR Pro and A3000 LiDAR Pro (starts the trimming job; see below) |
 | `event` | 2 | Last mowing job (finished / finished with warnings / manually stopped — see below) and Job started (what started or resumed the job — see below) |
-| `image` | 1 | The mower's map — lawn boundary, mowed coverage or, on the O800 RTK `9bts2s`, what is still to cut (see below), no-go zones, detected obstacles, the dock and the mower's position. A map that holds several lawns reports one outline per lawn and all of them are drawn, along with the passages between them, the stretches of edge the mower is told to mow flush against, and, on the O800 RTK `9bts2s`, each area's name where the mower itself puts it. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, `onMapTrace` on firmware 1.17, and `onMapInfo_V2` on 1.36 — that last one only ever arrives in answer to a `getMapInfo_V2` the integration now sends, as `onMI` does on a non-V2 mower in answer to `getMI`); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only. The mower's position, its heading, the dock and the path it has driven are also attributes of the entity (`position_x`, `position_y`, `heading`, `dock_x`, `dock_y`, `track`) — millimetres in the map's own frame, with the dock as the origin, `heading` in degrees as the mower reports it (counter-clockwise from the frame's +x axis, measured on the G1-800 at firmware 1.36.208 only), and `track` a list of `[x, y]` points thinned to at most about 250 — so a card can draw the mower on something other than the SVG. `position_x`, `position_y` and `heading` are `null` until the mower has reported a position since Home Assistant started |
+| `image` | 1 | The mower's map — lawn boundary, mowed coverage or, on the O800 RTK `9bts2s`, what is still to cut (see below), no-go zones, detected obstacles, the dock and the mower's position. A map that holds several lawns reports one outline per lawn and all of them are drawn, along with the passages between them, the stretches of edge the mower is told to mow flush against, and, on the O800 RTK `9bts2s` and the O600 RTK `7hwfxz`, each area's name where the mower itself puts it. Add it to a dashboard with a `picture-entity` card. Decoded from the GOAT's own map messages (`onMI`/`onArI`/`onMapTrack`/`onSpecialContour`, `onMapTrace` on firmware 1.17, and `onMapInfo_V2` on 1.36 — that last one only ever arrives in answer to a `getMapInfo_V2` the integration now sends, as `onMI` does on a non-V2 mower in answer to `getMI`); see `map.py` and `deebot_patch/map_messages.py` for the decoding. Geometry survives restarts; the position track is live-only. The mower's position, its heading, the dock and the path it has driven are also attributes of the entity (`position_x`, `position_y`, `heading`, `dock_x`, `dock_y`, `track`) — millimetres in the map's own frame, with the dock as the origin, `heading` in degrees as the mower reports it (counter-clockwise from the frame's +x axis, measured on the G1-800 at firmware 1.36.208 only), and `track` a list of `[x, y]` points thinned to at most about 250 — so a card can draw the mower on something other than the SVG. `position_x`, `position_y` and `heading` are `null` until the mower has reported a position since Home Assistant started |
 
 Not included yet: **RTK diagnostics** (position and satellite data). RTK is
 planned for the next release.
@@ -406,11 +407,11 @@ specified zone IDs using the mower's `spotArea` command.
 
 Zone mowing is currently confirmed on the A1600 LiDAR Pro (`e4gqia`), the
 A3000 LiDAR Pro (`51rcxt`), the G1-800 (`77atlz`), the O800 RTK (both
-`9bts2s` and `2px96q`) and the O1200 RTK (`qhq6i0`), and enabled on the
-O1200 LiDAR Pro (`2i0fns`), where the app's own zone start was captured and
-matches what the service sends. If you have another mower class, zone
-mowing is not yet verified on that hardware; please report the device class
-in a new issue if you test it.
+`9bts2s` and `2px96q`), the O1200 RTK (`qhq6i0`) and the O600 RTK
+(`7hwfxz`), and enabled on the O1200 LiDAR Pro (`2i0fns`), where the app's
+own zone start was captured and matches what the service sends. If you have
+another mower class, zone mowing is not yet verified on that hardware;
+please report the device class in a new issue if you test it.
 
 The service requires a mower entity as its target and accepts one or more
 integer `area_ids` between `0` and `999`:

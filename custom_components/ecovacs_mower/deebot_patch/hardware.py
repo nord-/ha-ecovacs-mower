@@ -189,6 +189,12 @@ class MowerProfile:
 #            LiDAR Pro (51rcxt). Upstream's docstring calls it "GOAT G1"; its
 #            module is byte-identical to 9bts2s.py apart from that docstring,
 #            so the O800 RTK's patch applies unchanged.
+#   7hwfxz — GOAT O600 RTK (issue #176, firmware 2.13.8, model
+#            GOAT_O600_RTK_AU — start, pause, resume and dock, with the state
+#            following, user-verified after adding the class locally). A
+#            second class string for the O600 RTK besides 6n9pcz. Upstream's
+#            7hwfxz.py is byte-identical to 9bts2s.py, docstring included, so
+#            the O800 RTK's patch applies unchanged.
 #
 # Presence in this mapping means the class is supported by the integration.
 # Capability flags are deliberately narrower: they are enabled only where the
@@ -224,6 +230,12 @@ class MowerProfile:
 #                     areas in the app:
 #                     [["1","1","Hinten","","-16900","13900","0-0"], …] —
 #                     ids, the new names, and a point inside each area.
+#                     7hwfxz: the ar response on the O600 RTK, firmware
+#                     2.13.8 (issue #176): the same request and reply fields,
+#                     one 227-byte list of five areas, and the names drawn on
+#                     the map at their own points. Area 2 comes back with an
+#                     empty name although the app shows one, so it gets no
+#                     label: the integration shows what the mower reports.
 #   area_nogo       — 9bts2s: the three-area onArI captured on the O800 RTK,
 #                     firmware 1.13.8 (issue #41). Exactly one of its areas
 #                     carries a section-2 ring, and it is the area its owner
@@ -291,6 +303,10 @@ class MowerProfile:
 #                     worked, and a start naming several areas showed up in
 #                     the app with exactly those areas, as if started from
 #                     the app.
+#                     7hwfxz: a mow_area call for area 2 on the O600 RTK,
+#                     firmware 2.13.8, after adding the class locally (issue
+#                     #176): the mower mowed that area, about 120 m², then
+#                     finished and docked.
 #   border_mowing   — 77atlz: the app's border-job request captured on the
 #                     G1-800, firmware 1.36.208 (issue #12): clean_V2 with
 #                     {"type": "border", "value": "mid:<mid>"}, acknowledged
@@ -413,6 +429,7 @@ SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "qhq6i0": MowerProfile("qhq6i0", zone_mowing=True),
     "300lc5": MowerProfile("300lc5"),
     "cr0e4u": MowerProfile("cr0e4u"),
+    "7hwfxz": MowerProfile("7hwfxz", area_names=True, zone_mowing=True),
 }
 
 
