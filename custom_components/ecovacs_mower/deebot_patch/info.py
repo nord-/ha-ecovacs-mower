@@ -21,12 +21,13 @@ What was measured on a G1-800 (``77atlz``, firmware 1.36.208), and what
   are refused when four of them are large. The refusal says nothing: ``ret``
   is ``ok``, the body's ``code`` is 0, and ``data`` is an empty object.
 
-So a missing key means "not answered", whatever the reason, and a reply with
-every key missing is read as "too large": the batch is split in half and each
-half is asked again. That needs no sizes in advance, which matters because
-they are not constant: the beacon list alone grows with every beacon. A
-getter still unanswered when it is alone in its batch, or left out of an
-answer that carries others, is sent as the plain command it is.
+So a missing key means "not answered", whatever the reason, and that
+refusal, every key missing with ``code`` 0, is read as "too large": the batch
+is split in half and each half is asked again. That needs no sizes in
+advance, which matters because they are not constant: the beacon list alone
+grows with every beacon. A getter still unanswered when it is alone in its
+batch, or left out of an answer that carries others, is sent as the plain
+command it is, and so is every getter of a batch refused any other way.
 
 No other class has been checked, so a class gets this only through the
 ``get_info`` flag on its ``MowerProfile``.
@@ -127,7 +128,11 @@ class GetInfo(JsonCommandWithMessageHandling):
 
     Nothing is retried when a request itself gets no answer: an offline
     mower or a timeout would only be waited out again, once per getter. The
-    replies that had arrived by then are still handled.
+    replies that had arrived by then are still handled. An answer that has
+    no replies and is not the too-large refusal ends the batching instead:
+    the getters it left are sent as plain commands, so a firmware that
+    refused ``getInfo`` outright would cost one request more than sending
+    them alone, not one more per half.
 
     The device counts as reached when at least one getter was answered.
     """
@@ -205,13 +210,13 @@ class GetInfo(JsonCommandWithMessageHandling):
                 break
 
             last_response = response
-            answered, header = _answers(response)
+            answered, header, too_large = _answers(response)
             found = {
                 member.name: answered[member.name]
                 for member in batch
                 if member.name in answered
             }
-            if not found and len(batch) > 1:
+            if not found and too_large and len(batch) > 1:
                 _LOGGER.debug(
                     "getInfo answered none of %s; asking again in two halves",
                     [member.name for member in batch],
@@ -219,6 +224,17 @@ class GetInfo(JsonCommandWithMessageHandling):
                 middle = len(batch) // 2
                 pending[:0] = [batch[:middle], batch[middle:]]
                 continue
+            if not found and not too_large:
+                # An empty answer other than the one measured for a batch
+                # too large: the request itself is being refused, and every
+                # further batch would only be refused the same way. Each
+                # getter not answered yet goes out as the plain command.
+                _LOGGER.debug(
+                    "getInfo answered none of %s: %s; asking for each alone",
+                    [member.name for member in batch],
+                    response.get("resp"),
+                )
+                break
             replies.update(found)
 
         reached = False
@@ -252,8 +268,14 @@ class GetInfo(JsonCommandWithMessageHandling):
 
 def _answers(
     response: dict[str, Any],
-) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    """The replies of one ``getInfo`` answer, by getter name, and its header.
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any], bool]:
+    """One ``getInfo`` answer: its replies by getter name, its header, and
+    whether it is the refusal of a batch whose answer would be too large.
+
+    That refusal is the one measured on the issue: a body with ``code`` 0
+    and ``data`` an empty object. Any other answer without replies (a
+    non-zero ``code``, no ``data``, a shape this cannot take apart) is not
+    it, and splitting the batch would only ask again for what is refused.
 
     No replies for anything that is not the expected shape: the caller reads
     a missing key as "not answered", which is also the right reading of an
@@ -261,17 +283,20 @@ def _answers(
     """
     resp = response.get("resp")
     if not isinstance(resp, dict):
-        return {}, {}
+        return {}, {}, False
     header = resp.get("header")
     if not isinstance(header, dict):
         header = {}
     body = resp.get("body")
     data = body.get("data") if isinstance(body, dict) else None
     if not isinstance(data, dict):
-        return {}, header
+        return {}, header, False
+    if not data:
+        return {}, header, body.get("code") == 0
     return (
         {name: reply for name, reply in data.items() if isinstance(reply, dict)},
         header,
+        False,
     )
 
 

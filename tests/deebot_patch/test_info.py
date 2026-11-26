@@ -239,6 +239,59 @@ async def test_the_halves_are_split_again_while_they_come_back_empty() -> None:
     ]
 
 
+def _refusing(body: dict[str, Any], sent: list[tuple[str, ...]]):
+    """A transport whose every ``getInfo`` is answered with *body*."""
+
+    async def execute_api_request(self, authenticator, device_info):
+        if self.NAME != "getInfo":
+            sent.append((self.NAME,))
+            return _plain(_REPLIES[self.NAME])
+        sent.append(("getInfo", *self._args))
+        return {"ret": "ok", "resp": {"header": _HEADER, "body": body}}
+
+    return execute_api_request
+
+
+async def test_an_answer_refused_another_way_is_not_split() -> None:
+    # Only code 0 with an empty data object is the too-large refusal. Any
+    # other empty answer would be refused again for each half, so the three
+    # getters go out alone: four requests where splitting would send eight.
+    sent: list[tuple[str, ...]] = []
+    bus = _bus()
+    stats = _collect(bus, StatsEvent)
+
+    with patch.object(
+        Command, "_execute_api_request", _refusing({"code": 1, "msg": "fail"}, sent)
+    ):
+        result, _ = await state_and_stats()._execute(AsyncMock(), _DEVICE_INFO, bus)
+    await asyncio.sleep(0)
+
+    assert sent == [
+        ("getInfo", "getChargeState", "getCleanInfo", "getStats"),
+        ("getChargeState",),
+        ("getCleanInfo",),
+        ("getStats",),
+    ]
+    assert result.state is HandlingState.SUCCESS
+    assert len(stats) == 1
+
+
+async def test_an_answer_without_data_is_not_split() -> None:
+    sent: list[tuple[str, ...]] = []
+
+    with patch.object(
+        Command, "_execute_api_request", _refusing({"code": 0, "msg": "ok"}, sent)
+    ):
+        await state_and_stats()._execute(AsyncMock(), _DEVICE_INFO, _bus())
+
+    assert [request[0] for request in sent] == [
+        "getInfo",
+        "getChargeState",
+        "getCleanInfo",
+        "getStats",
+    ]
+
+
 async def test_a_getter_unanswered_alone_is_sent_as_the_plain_command() -> None:
     mower = _Mower(limit=0)
     bus = _bus()
