@@ -60,17 +60,18 @@ from .deebot_patch import (
     AccountAuthenticator,
     PatchContractError,
     apply as apply_deebot_patch,
+    batch_refreshes,
     register_mower_bus,
     verify_capabilities,
 )
 from .deebot_patch.areas import MowerAreaEvent
 from .deebot_patch.commands import GetMapTrack, GetPosMower
-from .deebot_patch.info import state_and_stats
 from .deebot_patch.hardware import (
     SUPPORTED_CLASSES,
     patch_device_info,
     profile_for_class,
 )
+from .deebot_patch.info import state_and_stats
 from .deebot_patch.map_messages import (
     MowerCoverageEvent,
     MowerRemainingEvent,
@@ -218,6 +219,14 @@ class EcovacsController:
                 mqtt_devices = [
                     Device(info, self._authenticator) for info in devices.mqtt
                 ]
+                for device in mqtt_devices:
+                    # Here rather than in _init below, and with no await in
+                    # between: Device() has already asked its bus for the
+                    # first refreshes, and those find the bus's sender only
+                    # once their tasks start, the next time the loop runs.
+                    profile = profile_for_class(device.device_info["class"])
+                    if profile is not None and profile.get_info:
+                        batch_refreshes(device.events)
                 async with asyncio.TaskGroup() as tg:
 
                     async def _init(device: Device) -> None:

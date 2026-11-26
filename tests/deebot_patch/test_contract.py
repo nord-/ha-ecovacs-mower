@@ -669,3 +669,62 @@ def test_a_followed_set_hands_its_arguments_to_its_read() -> None:
 
     source = inspect.getsource(SetCommand._handle_mqtt_p2p)
     assert "self.get_command.handle_set_args(event_bus, self._args)" in source
+
+
+async def test_a_refresh_goes_out_through_the_buss_sender_attribute() -> None:
+    # batch_refreshes replaces EventBus._execute_command and nothing else.
+    # That catches every refresh only while _call_refresh_function looks the
+    # attribute up when it sends, rather than holding a reference of its own.
+    import asyncio
+    from unittest.mock import AsyncMock, Mock
+
+    from deebot_client.commands.json import GetError
+    from deebot_client.event_bus import EventBus
+    from deebot_client.events import ErrorEvent
+
+    built_with = AsyncMock(return_value={})
+    replaced = AsyncMock(return_value={})
+    command = GetError()
+    bus = EventBus(built_with, Mock(get_refresh_commands=lambda _event: [command]))
+    bus._execute_command = replaced
+
+    async def on_error(_event: ErrorEvent) -> None:
+        pass
+
+    bus.subscribe(ErrorEvent, on_error)
+    await asyncio.sleep(0)
+
+    replaced.assert_awaited_once_with(command)
+    built_with.assert_not_awaited()
+
+
+async def test_a_devices_first_refreshes_start_after_its_constructor() -> None:
+    # Device() subscribes to several events itself, and each first
+    # subscription asks for a refresh in a task. batch_refreshes runs right
+    # after the constructor, with no await in between, and still catches
+    # those, because the tasks have not started yet when it does.
+    import asyncio
+    from unittest.mock import AsyncMock, Mock
+
+    from deebot_client.device import Device
+    from deebot_client.events import StatsEvent
+    from deebot_client.hardware import get_static_device_info
+    from deebot_client.models import DeviceInfo
+
+    static = await get_static_device_info("77atlz")
+    device = Device(
+        DeviceInfo(
+            {"class": "77atlz", "did": "did-1", "name": "n", "resource": "r"},
+            static,
+        ),
+        Mock(),
+    )
+    replaced = AsyncMock(return_value={})
+    device.events._execute_command = replaced
+    try:
+        await asyncio.sleep(0)
+
+        sent = [call.args[0] for call in replaced.await_args_list]
+        assert static.capabilities.get_refresh_commands(StatsEvent)[0] in sent
+    finally:
+        await device.teardown()

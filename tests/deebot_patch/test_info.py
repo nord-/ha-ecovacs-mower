@@ -15,17 +15,19 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 from deebot_client.command import Command
+from deebot_client.commands.json.common import JsonCommandWithMessageHandling
 from deebot_client.event_bus import EventBus
 from deebot_client.events import AvailabilityEvent, StateEvent, StatsEvent
 from deebot_client.events.base import Event
 from deebot_client.exceptions import ApiTimeoutError
-from deebot_client.message import HandlingState
+from deebot_client.message import HandlingResult, HandlingState, MessageBodyDataDict
 from deebot_client.models import State
 
 from custom_components.ecovacs_mower.deebot_patch.commands import (
     GetChargeStateMower,
     GetCleanInfoMower,
     GetStatsMower,
+    MowerStateRefresh,
 )
 from custom_components.ecovacs_mower.deebot_patch.families import (
     Family,
@@ -60,6 +62,8 @@ _REPLIES = {
     "getCleanInfo_V2": _PAUSED_PLAN,
     "getStats": _STATS,
 }
+# What a getter made up by a test is answered with.
+_OK = {"code": 0, "msg": "ok", "data": {}}
 
 _NO_ANSWER = {"ret": "fail", "errno": 500, "debug": "wait for response timed out"}
 _OFFLINE = {"ret": "fail", "errno": 4200}
@@ -123,7 +127,9 @@ class _Mower:
     ) -> dict[str, Any]:
         if command.NAME != "getInfo":
             self.sent.append((command.NAME,))
-            return self.plain.get(command.NAME, _plain(_REPLIES[command.NAME]))
+            return self.plain.get(
+                command.NAME, _plain(_REPLIES.get(command.NAME, _OK))
+            )
 
         names = tuple(command._args)
         self.sent.append(("getInfo", *names))
@@ -134,7 +140,7 @@ class _Mower:
                 name: (
                     {"code": 1124520, "msg": "fail"}
                     if name in self.failing
-                    else _REPLIES[name]
+                    else _REPLIES.get(name, _OK)
                 )
                 for name in names
                 if name not in self.unknown
@@ -156,6 +162,19 @@ async def _run(mower: _Mower, command: GetInfo, bus: EventBus):
         result = await command._execute(AsyncMock(), _DEVICE_INFO, bus)
     await asyncio.sleep(0)
     return result
+
+
+def _getter(name: str) -> JsonCommandWithMessageHandling:
+    """A getter called *name*, whose reply nothing reads."""
+
+    class Getter(JsonCommandWithMessageHandling, MessageBodyDataDict):
+        NAME = name
+
+        @classmethod
+        def _handle_body_data_dict(cls, event_bus, data):
+            return HandlingResult.success()
+
+    return Getter()
 
 
 async def test_three_getters_are_one_request() -> None:
@@ -236,6 +255,116 @@ async def test_the_halves_are_split_again_while_they_come_back_empty() -> None:
         ("getInfo", "getCleanInfo", "getStats"),
         ("getInfo", "getCleanInfo"),
         ("getInfo", "getStats"),
+    ]
+
+
+_SIZES = "custom_components.ecovacs_mower.deebot_patch.info._REPLY_SIZES"
+_UNMEASURED = "custom_components.ecovacs_mower.deebot_patch.info._UNMEASURED_REPLY"
+
+
+async def test_a_batch_is_cut_before_its_answer_would_pass_the_cap() -> None:
+    # 196 for the empty answer plus 308 for each of these: two fit under
+    # 1000, three would not, so the third goes in a batch of its own
+    # without the three being asked together first.
+    mower = _Mower()
+    getters = [_getter(name) for name in ("getAaaa", "getBbbb", "getCccc")]
+
+    with patch(_SIZES, {"getAaaa": 297, "getBbbb": 297, "getCccc": 297}):
+        await _run(mower, GetInfo(getters), _bus())
+
+    assert mower.sent == [
+        ("getInfo", "getAaaa", "getBbbb"),
+        ("getInfo", "getCccc"),
+    ]
+
+
+async def test_a_getter_nobody_measured_counts_at_the_default_size() -> None:
+    mower = _Mower()
+    getters = [_getter(name) for name in ("getAaaa", "getBbbb", "getCccc")]
+
+    with patch(_SIZES, {}), patch(_UNMEASURED, 297):
+        await _run(mower, GetInfo(getters), _bus())
+
+    assert [len(request) - 1 for request in mower.sent] == [2, 1]
+
+
+def test_the_measured_sizes_put_the_tick_in_one_batch() -> None:
+    from custom_components.ecovacs_mower.deebot_patch.info import (
+        _ANSWER_BUDGET,
+        _EMPTY_ANSWER,
+        _reply_size,
+    )
+
+    names = ("getChargeState", "getCleanInfo_V2", "getStats")
+    assert _EMPTY_ANSWER + sum(map(_reply_size, names)) <= _ANSWER_BUDGET
+
+
+async def test_an_answer_larger_than_its_estimate_is_still_split() -> None:
+    # The estimate only decides where the first requests are cut; the
+    # mower's own refusal still splits a batch it got wrong.
+    mower = _Mower(limit=1)
+    getters = [_getter(name) for name in ("getAaaa", "getBbbb")]
+
+    with patch(_SIZES, {"getAaaa": 1, "getBbbb": 1}):
+        await _run(mower, GetInfo(getters), _bus())
+
+    assert mower.sent == [
+        ("getInfo", "getAaaa", "getBbbb"),
+        ("getInfo", "getAaaa"),
+        ("getInfo", "getBbbb"),
+    ]
+
+
+def _refusing(body: dict[str, Any], sent: list[tuple[str, ...]]):
+    """A transport whose every ``getInfo`` is answered with *body*."""
+
+    async def execute_api_request(self, authenticator, device_info):
+        if self.NAME != "getInfo":
+            sent.append((self.NAME,))
+            return _plain(_REPLIES[self.NAME])
+        sent.append(("getInfo", *self._args))
+        return {"ret": "ok", "resp": {"header": _HEADER, "body": body}}
+
+    return execute_api_request
+
+
+async def test_an_answer_refused_another_way_is_not_split() -> None:
+    # Only code 0 with an empty data object is the too-large refusal. Any
+    # other empty answer would be refused again for each half, so the three
+    # getters go out alone: four requests where splitting would send eight.
+    sent: list[tuple[str, ...]] = []
+    bus = _bus()
+    stats = _collect(bus, StatsEvent)
+
+    with patch.object(
+        Command, "_execute_api_request", _refusing({"code": 1, "msg": "fail"}, sent)
+    ):
+        result, _ = await state_and_stats()._execute(AsyncMock(), _DEVICE_INFO, bus)
+    await asyncio.sleep(0)
+
+    assert sent == [
+        ("getInfo", "getChargeState", "getCleanInfo", "getStats"),
+        ("getChargeState",),
+        ("getCleanInfo",),
+        ("getStats",),
+    ]
+    assert result.state is HandlingState.SUCCESS
+    assert len(stats) == 1
+
+
+async def test_an_answer_without_data_is_not_split() -> None:
+    sent: list[tuple[str, ...]] = []
+
+    with patch.object(
+        Command, "_execute_api_request", _refusing({"code": 0, "msg": "ok"}, sent)
+    ):
+        await state_and_stats()._execute(AsyncMock(), _DEVICE_INFO, _bus())
+
+    assert [request[0] for request in sent] == [
+        "getInfo",
+        "getChargeState",
+        "getCleanInfo",
+        "getStats",
     ]
 
 
@@ -396,14 +525,66 @@ async def test_the_device_does_not_count_as_reached_when_none_did() -> None:
     assert result.device_reached is False
 
 
-def test_the_poll_asks_for_charge_state_clean_info_and_stats_in_that_order() -> None:
+def test_the_poll_asks_for_the_state_refresh_and_the_stats() -> None:
+    # The state is the refresh every patched class has, whose halves are
+    # the charge state and the clean info, in that order (issue #67).
     batch = state_and_stats()
 
     assert [type(command) for command in batch._commands] == [
-        GetChargeStateMower,
-        GetCleanInfoMower,
+        MowerStateRefresh,
         GetStatsMower,
     ]
+    assert [type(half) for half in MowerStateRefresh.halves()] == [
+        GetChargeStateMower,
+        GetCleanInfoMower,
+    ]
+
+
+async def test_a_getter_asked_alone_holds_back_only_its_own_command() -> None:
+    # The clean info of a dialect not learned yet is left out of the batch
+    # and waits out an errno 500 alone. The stats arrived in the same answer
+    # and are handled before that, not after.
+    bus = _bus()
+    handled_before: list[bool] = []
+    mower = _Mower(unknown=frozenset({"getCleanInfo"}))
+
+    async def transport(command, authenticator, device_info):
+        if command.NAME == "getCleanInfo":
+            handled_before.append(bus.get_last_event(StatsEvent) is not None)
+        return await mower(command, authenticator, device_info)
+
+    with patch.object(Command, "_execute_api_request", _transport(transport)):
+        await state_and_stats()._execute(AsyncMock(), _DEVICE_INFO, bus)
+
+    assert handled_before == [True]
+
+
+async def test_two_commands_that_read_one_getter_name_it_once() -> None:
+    # The library's GetBorderSwitch and the patch layer's GetBorderSwitchMower
+    # both read getBorderSwitch and publish different events: one name in the
+    # request, and the reply goes to both.
+    from deebot_client.commands.json import GetBorderSwitch
+    from deebot_client.events import BorderSwitchEvent
+
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        GetBorderSwitchMower,
+    )
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerBorderSwitchEvent,
+    )
+
+    reply = {"code": 0, "msg": "ok", "data": {"enable": 1, "mode": 0}}
+    mower = _Mower()
+    bus = _bus()
+    library = _collect(bus, BorderSwitchEvent)
+    patched = _collect(bus, MowerBorderSwitchEvent)
+
+    with patch.dict(_REPLIES, {"getBorderSwitch": reply}):
+        await _run(mower, GetInfo([GetBorderSwitch(), GetBorderSwitchMower()]), bus)
+
+    assert mower.sent == [("getInfo", "getBorderSwitch")]
+    assert len(library) == 1
+    assert len(patched) == 1
 
 
 def test_two_batches_of_the_same_getters_are_equal() -> None:
