@@ -65,12 +65,12 @@ from .deebot_patch import (
 )
 from .deebot_patch.areas import MowerAreaEvent
 from .deebot_patch.commands import GetMapTrack, GetPosMower
-from .deebot_patch.info import state_and_stats
 from .deebot_patch.hardware import (
     SUPPORTED_CLASSES,
     patch_device_info,
     profile_for_class,
 )
+from .deebot_patch.info import state_and_stats
 from .deebot_patch.map_messages import (
     MowerCoverageEvent,
     MowerRemainingEvent,
