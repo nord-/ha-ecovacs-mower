@@ -83,11 +83,13 @@ _FAILED = HandlingResult(HandlingState.FAILED)
 # bytes of the whole devmanager.do answer as compact JSON: what an answer
 # with no replies comes to, and what each getter's reply adds on top of its
 # name, two quotes, a colon and a comma. Measured on a G1-800 (77atlz,
-# firmware 1.36.208) from the app's own batches on the issue, for the
-# getters this integration refreshes on that class.
+# firmware 1.36.208) for every getter this integration refreshes on that
+# class: from the app's own batches on the issue, and the four the app never
+# batches from this integration's own startup batch.
 _EMPTY_ANSWER = 196
 _REPLY_SIZES: Final = MappingProxyType(
     {
+        "getAdvancedMode": 41,
         "getAnimProtect": 68,
         "getBattery": 52,
         "getBorderSwitch": 50,
@@ -98,15 +100,21 @@ _REPLY_SIZES: Final = MappingProxyType(
         "getCutDirection": 49,
         "getError": 39,
         "getMoveupWarning": 41,
+        # Carries the address and the network name, so it is counted as the
+        # measured reply would be with the longest of both: an IPv4 address
+        # of 15 characters and an SSID of 32.
+        "getNetInfo": 149,
         "getProtectState": 107,
         "getRainDelay": 53,
         "getSafeProtect": 41,
         "getStats": 88,
+        "getTotalStats": 62,
+        "getTrueDetect": 68,
         "getUWBOta": 58,
         "getVolume": 52,
     }
 )
-# A getter nobody measured counts as a reply larger than all but one of the
+# A getter nobody measured counts as a reply larger than all but two of the
 # measured ones: the cost of guessing too large is a batch cut early, the
 # cost of guessing too small an answer refused and asked again in halves.
 _UNMEASURED_REPLY = 100

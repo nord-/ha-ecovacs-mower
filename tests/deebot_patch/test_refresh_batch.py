@@ -318,3 +318,37 @@ async def test_what_a_g1_is_refreshed_with_is_batched_but_two() -> None:
         GetLifeSpanMower,
         GetMapInfoMower,
     }
+
+
+async def test_every_getter_a_g1_batches_has_a_measured_size() -> None:
+    # The estimate cuts the burst where it is measured, so a getter added to
+    # a G1-800's refreshes without a size would be counted at the default.
+    # The non-V2 clean info is the one exception: this firmware leaves that
+    # name out of an answer, so it adds nothing to one.
+    from deebot_client.hardware import _DEVICES, get_static_device_info
+
+    from custom_components.ecovacs_mower.deebot_patch import apply
+    from custom_components.ecovacs_mower.deebot_patch.hardware import (
+        patch_device_info,
+    )
+    from custom_components.ecovacs_mower.deebot_patch.info import (
+        _REPLY_SIZES,
+        _parts,
+    )
+
+    apply()
+    _DEVICES.pop("77atlz", None)
+    try:
+        await patch_device_info("77atlz")
+        capabilities = (await get_static_device_info("77atlz")).capabilities
+    finally:
+        _DEVICES.pop("77atlz", None)
+
+    names = {
+        part.NAME
+        for commands in capabilities._events.values()
+        for command in commands
+        if _batchable(command)
+        for part in _parts(command)
+    }
+    assert names - {"getCleanInfo"} <= set(_REPLY_SIZES)

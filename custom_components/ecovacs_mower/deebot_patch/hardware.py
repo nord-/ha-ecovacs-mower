@@ -374,11 +374,12 @@ class MowerProfile:
 #                     sent through devmanager.do answers a list the caller
 #                     chooses, leaves an unknown name out without an error,
 #                     and comes back with no replies at all once the whole
-#                     answer would pass about 1 KB (issue #85). The getters
-#                     the bus refreshes this class with were answered inside
-#                     a batch on the issue, except getNetInfo, never asked
-#                     in one, and getLifeSpan, which fails there and is not
-#                     batched. No other class has been asked.
+#                     answer would pass about 1 KB (issue #85). Every getter
+#                     the bus refreshes this class with answers inside a
+#                     batch (on the issue, and getNetInfo in this
+#                     integration's own startup batch), except getLifeSpan,
+#                     which fails there and is not batched. No other class
+#                     has been asked.
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile(
         "2i0fns", area_parameters=True, zone_mowing=True, trim_mowing=True
